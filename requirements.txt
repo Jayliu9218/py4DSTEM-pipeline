@@ -1,0 +1,7 @@
+PySide6
+pyqtgraph
+h5py
+numpy
+py4DSTEM
+matplotlib
+tifffile
