@@ -1,6 +1,9 @@
 # Packaging Guide
 
-This project uses the `4dstem` conda environment during development and packaging.
+This project keeps development and packaging environments separate:
+
+- `4dstem`: development and debugging
+- `.conda\py4dstem-pipeline-packaging`: packaging and release builds
 
 ## 1. Development
 
@@ -9,7 +12,29 @@ conda activate 4dstem
 python .\main.py
 ```
 
-Use this mode while developing and debugging the GUI.
+Do not install PyInstaller, Nuitka, or conda-pack into the development
+environment. Create or refresh the separate packaging environment with:
+
+```powershell
+.\scripts\setup_packaging_env.ps1
+```
+
+The build scripts fail immediately if this environment is missing or a build
+command fails.
+
+The setup script clones the `4dstem` runtime locally, installs the project
+runtime dependencies and packaging-only tools listed in
+`requirements.packaging.txt`, and then replaces py4DSTEM with the latest commit from
+`https://github.com/py4dstem/py4DSTEM.git@dev`. It validates the recorded Git
+source and commit before reporting success.
+
+The PyInstaller build also launches the packaged application briefly and fails
+the build if it exits early. Use `-SkipLaunchTest` only when running in an
+environment where desktop applications cannot be launched.
+
+The spec explicitly packages `libexpat.dll` from the dedicated packaging
+environment. This avoids accidentally collecting an incompatible DLL from the
+system Miniconda installation.
 
 ## 2. MVP Testing: PyInstaller onedir
 
@@ -20,7 +45,7 @@ Use this mode while developing and debugging the GUI.
 Output:
 
 ```text
-dist\py4DSTEM Pipeline\py4DSTEM Pipeline.exe
+dist\pyinstaller\py4DSTEM Pipeline\py4DSTEM Pipeline.exe
 ```
 
 This is the first distributable build style. It keeps files in a folder, which is easier to debug than a single executable.

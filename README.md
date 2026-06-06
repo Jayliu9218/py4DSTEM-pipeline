@@ -26,21 +26,29 @@ The current app is an MVP built with:
 - Run StrainMap when BraggVectors and calibration are available
 - Export virtual detector and strain map results
 
-## Recommended Environment
+## Environments
 
-Use the existing `4dstem` conda environment:
+Use the existing `4dstem` Conda environment for development:
 
 ```powershell
 conda activate 4dstem
 python .\main.py
 ```
 
-If dependencies need to be refreshed:
+Use the separate repository-local `.conda\py4dstem-pipeline-packaging`
+environment for release builds:
 
 ```powershell
-conda activate 4dstem
-python -m pip install -r .\requirements.txt
+.\scripts\setup_packaging_env.ps1
+.\packaging\build_pyinstaller.ps1
 ```
+
+The packaging environment is cloned from `4dstem`, augmented with the tools in
+`requirements.packaging.txt`, then installs py4DSTEM directly from the
+[`dev` branch](https://github.com/py4dstem/py4DSTEM/tree/dev). It disables
+Python user-site packages and validates the recorded Git source and commit.
+PyInstaller builds also run a short packaged-application launch check by
+default.
 
 ## Project Layout
 
@@ -75,7 +83,7 @@ packaging/
 
 ### 1. Development
 
-Run directly inside the conda environment:
+Run directly inside the independent development environment:
 
 ```powershell
 conda activate 4dstem
@@ -93,7 +101,7 @@ Build a PyInstaller onedir package:
 Output:
 
 ```text
-dist\py4DSTEM Pipeline\
+dist\pyinstaller\py4DSTEM Pipeline\
 ```
 
 ### 3. Group Distribution
@@ -133,4 +141,6 @@ See [packaging/README_packaging.md](packaging/README_packaging.md).
 - Keep py4DSTEM algorithms inside `app/services/`.
 - Keep UI pages thin: they should collect parameters, start workers, display results, and log status.
 - Put expensive calculations in workers so the UI remains responsive.
-- Prefer testing inside `4dstem` before trying packaged builds.
+- Test and debug inside `4dstem`.
+- Keep packaging-only tools and release builds inside
+  `.conda\py4dstem-pipeline-packaging`.

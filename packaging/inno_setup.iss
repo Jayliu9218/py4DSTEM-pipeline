@@ -19,7 +19,7 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
 
 [Files]
-Source: "..\dist\py4DSTEM Pipeline\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\pyinstaller\py4DSTEM Pipeline\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

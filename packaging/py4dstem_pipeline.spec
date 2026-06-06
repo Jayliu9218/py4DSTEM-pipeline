@@ -1,10 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 
 datas = []
-binaries = []
+binaries = [(str(Path(sys.prefix) / "Library" / "bin" / "libexpat.dll"), ".")]
 hiddenimports = []
 
 for package_name in [
