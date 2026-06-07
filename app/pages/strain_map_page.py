@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
+from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 from app.widgets.progress_stream import ProgressStream
@@ -54,11 +55,13 @@ class StrainMapPage(QWidget):
         braggvectors_provider: Callable[[], object | None],
         service: BraggStrainService,
         log_panel: LogPanel,
+        workflow_state: WorkflowState,
     ) -> None:
         super().__init__()
         self.braggvectors_provider = braggvectors_provider
         self.service = service
         self.log_panel = log_panel
+        self.workflow_state = workflow_state
         self.result: StrainMapResult | None = None
         self.worker_thread: QThread | None = None
         self.worker: StrainMapWorker | None = None
@@ -91,6 +94,7 @@ class StrainMapPage(QWidget):
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
 
         self.viewer_tabs = QTabWidget()
         self.viewers = {name: ImageViewer() for name in ["exx", "eyy", "exy", "theta"]}
@@ -99,6 +103,8 @@ class StrainMapPage(QWidget):
 
         self.run_button.clicked.connect(self.run_strain_map)
         self.export_button.clicked.connect(self.export_result)
+        self._watch_parameters()
+        self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
 
     def notify_braggvectors_ready(self) -> None:
@@ -220,6 +226,7 @@ class StrainMapPage(QWidget):
         self.export_button.setEnabled(True)
         self.log_panel.log(f"Strain map completed in {result.elapsed_seconds:.2f} s.")
         self.log_panel.process_finished("StrainMap", f"elapsed={result.elapsed_seconds:.2f} s")
+        self.workflow_state.mark_completed(WorkflowStep.STRAIN_MAP)
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -243,3 +250,26 @@ class StrainMapPage(QWidget):
         if "NumPy archive" in selected_filter and path.suffix.lower() != ".npz":
             return path.with_suffix(".npz")
         return path
+
+    def _watch_parameters(self) -> None:
+        for spin in [
+            self.rotation_spin,
+            self.max_spacing_spin,
+            self.min_abs_spin,
+            self.min_rel_spin,
+            self.min_spacing_spin,
+            self.edge_spin,
+            self.max_peaks_spin,
+            self.roi_rx_start,
+            self.roi_rx_end,
+            self.roi_ry_start,
+            self.roi_ry_end,
+        ]:
+            self.workflow_state.watch(spin, WorkflowStep.STRAIN_MAP, "valueChanged")
+        self.workflow_state.watch(
+            self.reference_mode, WorkflowStep.STRAIN_MAP, "currentTextChanged"
+        )
+
+    def _refresh_stale_status(self) -> None:
+        if self.workflow_state.is_stale(WorkflowStep.STRAIN_MAP):
+            self.status_label.setText(STALE_RESULTS_MESSAGE)

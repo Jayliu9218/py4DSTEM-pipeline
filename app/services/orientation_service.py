@@ -24,6 +24,14 @@ class OrientationPlanParams:
 
 
 @dataclass(frozen=True)
+class OrientationMatchParams:
+    num_matches_return: int = 1
+    min_angle_between_matches_deg: float = 5
+    min_number_peaks: int = 3
+    inversion_symmetry: bool = True
+
+
+@dataclass(frozen=True)
 class OrientationResult:
     orientation_map: Any
     preview: np.ndarray
@@ -69,7 +77,11 @@ class OrientationService:
             raise OrientationServiceError(f"Orientation plan failed: {exc}") from exc
         return perf_counter() - start
 
-    def match(self, braggvectors: Any | None) -> OrientationResult:
+    def match(
+        self,
+        braggvectors: Any | None,
+        params: OrientationMatchParams,
+    ) -> OrientationResult:
         crystal = self._require_crystal()
         if braggvectors is None:
             raise OrientationServiceError("Run full BraggVectors before orientation matching.")
@@ -83,10 +95,10 @@ class OrientationService:
         try:
             orientation_map = crystal.match_orientations(
                 braggvectors,
-                num_matches_return=2,
-                min_angle_between_matches_deg=5,
-                min_number_peaks=3,
-                inversion_symmetry=True,
+                num_matches_return=params.num_matches_return,
+                min_angle_between_matches_deg=params.min_angle_between_matches_deg,
+                min_number_peaks=params.min_number_peaks,
+                inversion_symmetry=params.inversion_symmetry,
                 progress_bar=False,
             )
             images, fig, _ = crystal.plot_orientation_maps(
