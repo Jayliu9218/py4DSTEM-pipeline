@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.bragg_strain_service import BraggStrainService, CalibrationActionResult
+from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 from app.widgets.progress_stream import ProgressStream
@@ -51,15 +52,18 @@ class CalibrationPage(QWidget):
         braggvectors_provider: Callable[[], object | None],
         service: BraggStrainService,
         log_panel: LogPanel,
+        workflow_state: WorkflowState,
     ) -> None:
         super().__init__()
         self.datacube_provider = datacube_provider
         self.braggvectors_provider = braggvectors_provider
         self.service = service
         self.log_panel = log_panel
+        self.workflow_state = workflow_state
         self.worker_thread: QThread | None = None
         self.worker: CalibrationWorker | None = None
         self.current_process_name = "Calibration step"
+        self.current_process_step = WorkflowStep.CALIBRATION_APPLY
 
         self.source_label = QLabel("-")
         self.origin_label = QLabel("-")
@@ -69,6 +73,7 @@ class CalibrationPage(QWidget):
         self.complete_label = QLabel("-")
         self.applied_label = QLabel("none")
         self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
         self.ellipse_inner = self._float_spin(0.1, 100000, 290)
         self.ellipse_outer = self._float_spin(0.1, 100000, 360)
         self.sampling_spin = QSpinBox()
@@ -101,6 +106,7 @@ class CalibrationPage(QWidget):
             lambda: self._run(
                 lambda: self.service.calibrate_origin(self.braggvectors_provider()),
                 "Measure and fit origin",
+                WorkflowStep.CALIBRATION_ORIGIN,
             )
         )
         self.ellipse_button.clicked.connect(
@@ -112,6 +118,7 @@ class CalibrationPage(QWidget):
                     self.sampling_spin.value(),
                 ),
                 "Fit ellipticity",
+                WorkflowStep.CALIBRATION_ELLIPSE,
             )
         )
         self.pixel_button.clicked.connect(
@@ -120,6 +127,7 @@ class CalibrationPage(QWidget):
                     self.braggvectors_provider(), self.pixel_spin.value()
                 ),
                 "Set Q pixel size",
+                WorkflowStep.CALIBRATION_PIXEL,
             )
         )
         self.rotation_button.clicked.connect(
@@ -128,6 +136,7 @@ class CalibrationPage(QWidget):
                     self.braggvectors_provider(), self.rotation_spin.value()
                 ),
                 "Set QR rotation",
+                WorkflowStep.CALIBRATION_ROTATION,
             )
         )
         self.apply_button.clicked.connect(
@@ -140,8 +149,11 @@ class CalibrationPage(QWidget):
                     self.rotate_check.isChecked(),
                 ),
                 "Apply calibration corrections",
+                WorkflowStep.CALIBRATION_APPLY,
             )
         )
+        self._watch_parameters()
+        self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
 
     def _build_layout(self) -> None:
@@ -203,16 +215,26 @@ class CalibrationPage(QWidget):
         self.complete_label.setText("yes" if status.complete else "no")
         if braggvectors is not None:
             state = braggvectors.calstate
-            self.center_check.setChecked(state.get("center", False))
-            self.ellipse_check.setChecked(state.get("ellipse", False))
-            self.pixel_check.setChecked(state.get("pixel", False))
-            self.rotate_check.setChecked(state.get("rotate", False))
+            for checkbox, name in [
+                (self.center_check, "center"),
+                (self.ellipse_check, "ellipse"),
+                (self.pixel_check, "pixel"),
+                (self.rotate_check, "rotate"),
+            ]:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(state.get(name, False))
+                checkbox.blockSignals(False)
             enabled = [name for name, value in state.items() if value]
             self.applied_label.setText(", ".join(enabled) if enabled else "none")
         else:
             self.applied_label.setText("none")
 
-    def _run(self, operation, process_name: str = "Calibration step") -> None:
+    def _run(
+        self,
+        operation,
+        process_name: str = "Calibration step",
+        process_step: str = WorkflowStep.CALIBRATION_APPLY,
+    ) -> None:
         if self.braggvectors_provider() is None:
             QMessageBox.information(self, "Calibration", "Run full BraggVectors first.")
             return
@@ -220,6 +242,7 @@ class CalibrationPage(QWidget):
             button.setEnabled(False)
         self.status_label.setText("Running calibration step...")
         self.current_process_name = process_name
+        self.current_process_step = process_step
         self.log_panel.process_started(process_name)
         self.worker_thread = QThread()
         self.worker = CalibrationWorker(operation)
@@ -245,6 +268,7 @@ class CalibrationPage(QWidget):
             viewer.set_image(image)
             self.viewers.addTab(viewer, name)
         self.refresh_status()
+        self.workflow_state.mark_completed(self.current_process_step)
 
     def _failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -264,3 +288,31 @@ class CalibrationPage(QWidget):
         spin.setDecimals(decimals)
         spin.setValue(value)
         return spin
+
+    def _watch_parameters(self) -> None:
+        for spin in [self.ellipse_inner, self.ellipse_outer, self.sampling_spin]:
+            self.workflow_state.watch(spin, WorkflowStep.CALIBRATION_ELLIPSE, "valueChanged")
+        self.workflow_state.watch(
+            self.pixel_spin, WorkflowStep.CALIBRATION_PIXEL, "valueChanged"
+        )
+        self.workflow_state.watch(
+            self.rotation_spin, WorkflowStep.CALIBRATION_ROTATION, "valueChanged"
+        )
+        for checkbox in [
+            self.center_check,
+            self.ellipse_check,
+            self.pixel_check,
+            self.rotate_check,
+        ]:
+            self.workflow_state.watch(checkbox, WorkflowStep.CALIBRATION_APPLY, "toggled")
+
+    def _refresh_stale_status(self) -> None:
+        steps = [
+            WorkflowStep.CALIBRATION_ORIGIN,
+            WorkflowStep.CALIBRATION_ELLIPSE,
+            WorkflowStep.CALIBRATION_PIXEL,
+            WorkflowStep.CALIBRATION_ROTATION,
+            WorkflowStep.CALIBRATION_APPLY,
+        ]
+        if self.workflow_state.any_stale(steps):
+            self.status_label.setText(STALE_RESULTS_MESSAGE)

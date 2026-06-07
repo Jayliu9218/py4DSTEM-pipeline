@@ -29,6 +29,7 @@ from app.services.bragg_strain_service import (
     ProbeKernelResult,
     SelectedPeaksResult,
 )
+from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.image_grid_viewer import ImageGridViewer
 from app.widgets.log_panel import LogPanel
@@ -142,12 +143,14 @@ class BraggPeaksPage(QWidget):
         shape_provider: Callable[[], tuple[int, int, int, int] | None],
         service: BraggStrainService,
         log_panel: LogPanel,
+        workflow_state: WorkflowState,
     ) -> None:
         super().__init__()
         self.datacube_provider = datacube_provider
         self.shape_provider = shape_provider
         self.service = service
         self.log_panel = log_panel
+        self.workflow_state = workflow_state
         self.worker_thread: QThread | None = None
         self.worker: QObject | None = None
 
@@ -177,6 +180,7 @@ class BraggPeaksPage(QWidget):
         self.run_selected_button = QPushButton("Check 6 Selected Positions")
         self.run_full_button = QPushButton("Run Full BraggVectors")
         self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
         self.count_label = QLabel("Peaks: -")
         self.viewer = ImageViewer()
         self.selected_grid = ImageGridViewer()
@@ -193,6 +197,8 @@ class BraggPeaksPage(QWidget):
         self.run_current_button.clicked.connect(self.run_current_pattern)
         self.run_selected_button.clicked.connect(self.run_selected_positions)
         self.run_full_button.clicked.connect(self.run_full_braggvectors)
+        self._watch_parameters()
+        self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
 
     def refresh_from_datacube(self) -> None:
@@ -382,6 +388,7 @@ class BraggPeaksPage(QWidget):
             "Bragg calculation", f"single position, {len(result.peaks)} peaks"
         )
         self.visual_tabs.setCurrentWidget(self.viewer)
+        self.workflow_state.mark_completed(WorkflowStep.BRAGG_SINGLE)
 
     def _handle_braggvectors_result(self, result: BraggVectorsResult) -> None:
         count = "unknown" if result.peak_count is None else str(result.peak_count)
@@ -392,6 +399,7 @@ class BraggPeaksPage(QWidget):
         self.full_map_viewer.set_image(result.bragg_vector_map)
         self.visual_tabs.setCurrentWidget(self.full_map_viewer)
         self.braggvectors_ready.emit()
+        self.workflow_state.mark_completed(WorkflowStep.BRAGG_FULL)
 
     def _handle_probe_kernel_result(self, result: ProbeKernelResult) -> None:
         self.status_label.setText(f"Probe kernel ready in {result.elapsed_seconds:.2f} s")
@@ -400,6 +408,7 @@ class BraggPeaksPage(QWidget):
             f"radius={result.probe_radius:.3g}, center=({result.center_x:.3g}, {result.center_y:.3g})."
         )
         self.log_panel.process_finished("Bragg calculation", "vacuum-probe kernel ready")
+        self.workflow_state.mark_completed(WorkflowStep.PROBE_KERNEL)
 
     def _handle_selected_result(self, result: SelectedPeaksResult) -> None:
         self.table.setHorizontalHeaderLabels(["rx", "ry", "peak count"])
@@ -424,6 +433,7 @@ class BraggPeaksPage(QWidget):
                 peaks,
             )
         self.visual_tabs.setCurrentWidget(self.selected_grid)
+        self.workflow_state.mark_completed(WorkflowStep.BRAGG_SELECTED)
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -445,3 +455,41 @@ class BraggPeaksPage(QWidget):
         self.run_full_button.setEnabled(True)
         self.run_selected_button.setEnabled(True)
         self.prepare_kernel_button.setEnabled(True)
+
+    def _watch_parameters(self) -> None:
+        all_detection_steps = [
+            WorkflowStep.BRAGG_SINGLE,
+            WorkflowStep.BRAGG_SELECTED,
+            WorkflowStep.BRAGG_FULL,
+        ]
+        self.workflow_state.watch(self.rx_spin, WorkflowStep.BRAGG_SINGLE, "valueChanged")
+        self.workflow_state.watch(self.ry_spin, WorkflowStep.BRAGG_SINGLE, "valueChanged")
+        for spin in [
+            self.min_abs_spin,
+            self.min_rel_spin,
+            self.spacing_spin,
+            self.edge_spin,
+            self.max_peaks_spin,
+            self.sigma_spin,
+        ]:
+            self.workflow_state.watch(spin, all_detection_steps, "valueChanged")
+        self.workflow_state.watch(
+            self.subpixel_combo, all_detection_steps, "currentTextChanged"
+        )
+        for spin in [
+            self.roi_rx_start,
+            self.roi_rx_end,
+            self.roi_ry_start,
+            self.roi_ry_end,
+        ]:
+            self.workflow_state.watch(spin, WorkflowStep.PROBE_KERNEL, "valueChanged")
+
+    def _refresh_stale_status(self) -> None:
+        steps = [
+            WorkflowStep.PROBE_KERNEL,
+            WorkflowStep.BRAGG_SINGLE,
+            WorkflowStep.BRAGG_SELECTED,
+            WorkflowStep.BRAGG_FULL,
+        ]
+        if self.workflow_state.any_stale(steps):
+            self.status_label.setText(STALE_RESULTS_MESSAGE)

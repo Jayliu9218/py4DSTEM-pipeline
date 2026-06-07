@@ -30,6 +30,7 @@ from app.pages.strain_map_page import StrainMapPage
 from app.services.bragg_strain_service import BraggStrainService
 from app.services.hdf5_service import Hdf5Service
 from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
+from app.services.workflow_state import WorkflowState
 from app.widgets.hdf5_tree_widget import Hdf5TreeWidget
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
@@ -44,6 +45,7 @@ class MainWindow(QMainWindow):
         self.hdf5_service = Hdf5Service()
         self.py4dstem_service = Py4DSTEMService()
         self.bragg_strain_service = BraggStrainService()
+        self.workflow_state = WorkflowState()
         self.current_file: h5py.File | None = None
         self.current_file_path: Path | None = None
         self.current_dataset_path: str | None = None
@@ -59,27 +61,32 @@ class MainWindow(QMainWindow):
             shape_provider=self._get_current_4d_shape,
             probe_geometry_provider=self._get_probe_geometry,
             log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
         )
         self.bragg_peaks_page = BraggPeaksPage(
             datacube_provider=self._get_py4dstem_datacube,
             shape_provider=self._get_current_4d_shape,
             service=self.bragg_strain_service,
             log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
         )
         self.calibration_page = CalibrationPage(
             datacube_provider=self._get_py4dstem_datacube,
             braggvectors_provider=self._get_braggvectors,
             service=self.bragg_strain_service,
             log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
         )
         self.strain_map_page = StrainMapPage(
             braggvectors_provider=self._get_braggvectors,
             service=self.bragg_strain_service,
             log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
         )
         self.orientation_page = OrientationPage(
             braggvectors_provider=self._get_braggvectors,
             log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
         )
 
         self.datacube_name_label = QLabel("-")
@@ -205,6 +212,7 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strainmap = None
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
+            self.workflow_state.data_source_updated()
             self.log_panel.log(f"Opened file: {file_path}")
 
             try:
@@ -356,6 +364,7 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strainmap = None
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
+            self.workflow_state.data_source_updated()
             scan_image = self.py4dstem_service.get_scan_image()
             self.scan_viewer.set_image(scan_image)
             self.current_4d_source = "py4dstem"
@@ -392,6 +401,7 @@ class MainWindow(QMainWindow):
 
         dataset = self.current_file[hdf5_path]
         info = self.py4dstem_service.load_raw_4d_array(dataset, hdf5_path)
+        self.workflow_state.data_source_updated()
         scan_image = self.hdf5_service.read_4d_scan_image(dataset)
         self.scan_viewer.set_image(scan_image)
         self.current_4d_source = "hdf5"

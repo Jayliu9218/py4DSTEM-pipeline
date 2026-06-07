@@ -25,6 +25,7 @@ from app.services.virtual_detector_service import (
     VirtualDetectorResult,
     VirtualDetectorService,
 )
+from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 
@@ -58,12 +59,14 @@ class VirtualDetectorPage(QWidget):
         shape_provider: Callable[[], tuple[int, int, int, int] | None],
         probe_geometry_provider: Callable[[], object | None],
         log_panel: LogPanel,
+        workflow_state: WorkflowState,
     ) -> None:
         super().__init__()
         self.source_provider = source_provider
         self.shape_provider = shape_provider
         self.probe_geometry_provider = probe_geometry_provider
         self.log_panel = log_panel
+        self.workflow_state = workflow_state
         self.service = VirtualDetectorService()
         self.result: np.ndarray | None = None
         self.worker_thread: QThread | None = None
@@ -87,11 +90,14 @@ class VirtualDetectorPage(QWidget):
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
+        self.status_label.setWordWrap(True)
         self.viewer = ImageViewer()
 
         self.run_button.clicked.connect(self.run_detector)
         self.export_button.clicked.connect(self.export_result)
         self.mode_combo.currentTextChanged.connect(self._sync_mode_state)
+        self._watch_parameters()
+        self.workflow_state.changed.connect(self._refresh_stale_status)
 
         self._build_layout()
         self._sync_mode_state()
@@ -221,6 +227,7 @@ class VirtualDetectorPage(QWidget):
         self.log_panel.process_finished(
             "Virtual detector", f"{result.mode}, elapsed={result.elapsed_seconds:.2f} s"
         )
+        self.workflow_state.mark_completed(WorkflowStep.VIRTUAL_DETECTOR)
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -237,6 +244,22 @@ class VirtualDetectorPage(QWidget):
     def _sync_mode_state(self) -> None:
         is_bf = self.mode_combo.currentText() == VirtualDetectorService.BRIGHT_FIELD
         self.inner_radius_spin.setEnabled(not is_bf)
+
+    def _watch_parameters(self) -> None:
+        self.workflow_state.watch(
+            self.mode_combo, WorkflowStep.VIRTUAL_DETECTOR, "currentTextChanged"
+        )
+        for spin in [
+            self.center_x_spin,
+            self.center_y_spin,
+            self.inner_radius_spin,
+            self.outer_radius_spin,
+        ]:
+            self.workflow_state.watch(spin, WorkflowStep.VIRTUAL_DETECTOR, "valueChanged")
+
+    def _refresh_stale_status(self) -> None:
+        if self.workflow_state.is_stale(WorkflowStep.VIRTUAL_DETECTOR):
+            self.status_label.setText(STALE_RESULTS_MESSAGE)
 
     def _write_result(self, path: Path, selected_filter: str) -> None:
         suffix = path.suffix.lower()

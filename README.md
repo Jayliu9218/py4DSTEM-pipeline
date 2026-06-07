@@ -28,6 +28,11 @@ The current app is an MVP built with:
 - Run full BraggVectors calculation
 - Measure/fit origin and ellipticity, then set pixel size and QR rotation
 - Explicitly choose and apply calibration corrections before orientation or strain analysis
+- Track parameter-to-step dependencies across the workflow; when parameters or
+  upstream results change after downstream calculations have completed, affected
+  pages show: `Parameters have been updated, but the calculation update has not yet been completed.`
+- Adjust orientation-plan and orientation-match parameters independently, following
+  the corresponding groups in `py4dstem_final_complete_workflow_fixed.ipynb`
 - Use consistent left-control/right-drawing layouts for Bragg, calibration,
   orientation, and strain stages
 - Mirror command-line calculation progress into the shared Calculation Process panel
