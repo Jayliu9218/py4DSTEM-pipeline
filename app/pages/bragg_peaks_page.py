@@ -5,6 +5,7 @@ from typing import Callable
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -22,6 +23,8 @@ from app.services.bragg_strain_service import (
     BraggStrainService,
     BraggVectorsResult,
     PeakDetectionResult,
+    ProbeKernelResult,
+    SelectedPeaksResult,
 )
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
@@ -63,6 +66,43 @@ class BraggVectorsWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ProbeKernelWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, service: BraggStrainService, datacube, roi: tuple[int, int, int, int]) -> None:
+        super().__init__()
+        self.service = service
+        self.datacube = datacube
+        self.roi = roi
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(self.service.prepare_probe_kernel(self.datacube, *self.roi))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class SelectedPeaksWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, service, datacube, positions, params) -> None:
+        super().__init__()
+        self.service = service
+        self.datacube = datacube
+        self.positions = positions
+        self.params = params
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(
+                self.service.detect_selected_positions(self.datacube, self.positions, self.params)
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class BraggPeaksPage(QWidget):
     braggvectors_ready = Signal()
 
@@ -83,20 +123,28 @@ class BraggPeaksPage(QWidget):
 
         self.rx_spin = QSpinBox()
         self.ry_spin = QSpinBox()
-        self.min_abs_spin = self._float_spin(0, 1e12, 0)
-        self.min_rel_spin = self._float_spin(0, 1, 0.005, decimals=4, step=0.001)
+        self.min_abs_spin = self._float_spin(0, 1e12, 2)
+        self.min_rel_spin = self._float_spin(0, 1, 0, decimals=4, step=0.001)
         self.spacing_spin = QSpinBox()
         self.spacing_spin.setRange(1, 10000)
-        self.spacing_spin.setValue(8)
+        self.spacing_spin.setValue(18)
         self.edge_spin = QSpinBox()
         self.edge_spin.setRange(0, 10000)
-        self.edge_spin.setValue(5)
+        self.edge_spin.setValue(2)
         self.max_peaks_spin = QSpinBox()
         self.max_peaks_spin.setRange(1, 10000)
-        self.max_peaks_spin.setValue(70)
+        self.max_peaks_spin.setValue(100)
         self.sigma_spin = self._float_spin(0.5, 1000, 2)
+        self.subpixel_combo = QComboBox()
+        self.subpixel_combo.addItems(["poly", "multicorr", "pixel"])
+        self.roi_rx_start = QSpinBox()
+        self.roi_rx_end = QSpinBox()
+        self.roi_ry_start = QSpinBox()
+        self.roi_ry_end = QSpinBox()
 
+        self.prepare_kernel_button = QPushButton("Prepare Vacuum-Probe Kernel")
         self.run_current_button = QPushButton("Run Current Pattern")
+        self.run_selected_button = QPushButton("Check 6 Selected Positions")
         self.run_full_button = QPushButton("Run Full BraggVectors")
         self.status_label = QLabel("Idle")
         self.count_label = QLabel("Peaks: -")
@@ -105,7 +153,9 @@ class BraggPeaksPage(QWidget):
         self.table.setHorizontalHeaderLabels(["qx", "qy", "intensity"])
         self.table.horizontalHeader().setStretchLastSection(True)
 
+        self.prepare_kernel_button.clicked.connect(self.prepare_probe_kernel)
         self.run_current_button.clicked.connect(self.run_current_pattern)
+        self.run_selected_button.clicked.connect(self.run_selected_positions)
         self.run_full_button.clicked.connect(self.run_full_braggvectors)
         self._build_layout()
 
@@ -117,7 +167,35 @@ class BraggPeaksPage(QWidget):
         self.ry_spin.setMaximum(max(shape[1] - 1, 0))
         self.rx_spin.setValue(0)
         self.ry_spin.setValue(0)
+        for spin, maximum in [
+            (self.roi_rx_start, shape[0] - 1),
+            (self.roi_rx_end, shape[0]),
+            (self.roi_ry_start, shape[1] - 1),
+            (self.roi_ry_end, shape[1]),
+        ]:
+            spin.setRange(0, max(maximum, 0))
+        self.roi_rx_start.setValue(0)
+        self.roi_ry_start.setValue(0)
+        self.roi_rx_end.setValue(max(min(5, shape[0]), 1))
+        self.roi_ry_end.setValue(max(min(5, shape[1]), 1))
         self.log_panel.log("Bragg Peaks controls updated from current DataCube.")
+
+    def prepare_probe_kernel(self) -> None:
+        datacube = self.datacube_provider()
+        if datacube is None:
+            QMessageBox.information(self, "Probe Kernel", "Load a py4DSTEM DataCube first.")
+            return
+        roi = (
+            self.roi_rx_start.value(),
+            self.roi_rx_end.value(),
+            self.roi_ry_start.value(),
+            self.roi_ry_end.value(),
+        )
+        self._start_worker(
+            ProbeKernelWorker(self.service, datacube, roi),
+            self._handle_probe_kernel_result,
+            "Preparing vacuum-probe kernel...",
+        )
 
     def run_current_pattern(self) -> None:
         datacube = self.datacube_provider()
@@ -147,6 +225,28 @@ class BraggPeaksPage(QWidget):
             "Full BraggVectors calculation running...",
         )
 
+    def run_selected_positions(self) -> None:
+        datacube = self.datacube_provider()
+        shape = self.shape_provider()
+        if datacube is None or shape is None:
+            QMessageBox.information(self, "Bragg Peaks", "Load a py4DSTEM DataCube first.")
+            return
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        positions = [
+            (int(rx), int(ry))
+            for rx, ry in zip(
+                rng.integers(shape[0] // 3, max(2 * shape[0] // 3, shape[0] // 3 + 1), size=6),
+                rng.integers(shape[1] // 3, max(2 * shape[1] // 3, shape[1] // 3 + 1), size=6),
+            )
+        ]
+        self._start_worker(
+            SelectedPeaksWorker(self.service, datacube, positions, self._params()),
+            self._handle_selected_result,
+            "Checking selected scan positions...",
+        )
+
     def _build_layout(self) -> None:
         controls = QWidget()
         form = QFormLayout(controls)
@@ -158,9 +258,16 @@ class BraggPeaksPage(QWidget):
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
         form.addRow("template sigma", self.sigma_spin)
+        form.addRow("subpixel", self.subpixel_combo)
+        form.addRow("vacuum ROI rx start", self.roi_rx_start)
+        form.addRow("vacuum ROI rx end", self.roi_rx_end)
+        form.addRow("vacuum ROI ry start", self.roi_ry_start)
+        form.addRow("vacuum ROI ry end", self.roi_ry_end)
 
         buttons = QHBoxLayout()
+        buttons.addWidget(self.prepare_kernel_button)
         buttons.addWidget(self.run_current_button)
+        buttons.addWidget(self.run_selected_button)
         buttons.addWidget(self.run_full_button)
 
         left_layout = QVBoxLayout()
@@ -193,12 +300,15 @@ class BraggPeaksPage(QWidget):
             edge_boundary=self.edge_spin.value(),
             max_num_peaks=self.max_peaks_spin.value(),
             template_sigma=self.sigma_spin.value(),
+            subpixel=self.subpixel_combo.currentText(),
         )
 
     def _start_worker(self, worker: QObject, finished_slot, status: str) -> None:
         self.status_label.setText(status)
         self.run_current_button.setEnabled(False)
         self.run_full_button.setEnabled(False)
+        self.run_selected_button.setEnabled(False)
+        self.prepare_kernel_button.setEnabled(False)
         self.log_panel.log(status)
 
         self.worker_thread = QThread()
@@ -215,7 +325,9 @@ class BraggPeaksPage(QWidget):
         self.worker_thread.start()
 
     def _handle_peak_result(self, result: PeakDetectionResult) -> None:
+        self.table.setHorizontalHeaderLabels(["qx", "qy", "intensity"])
         self.viewer.set_image(result.diffraction_pattern)
+        self.viewer.clear_points()
         if len(result.peaks):
             self.viewer.set_points(result.peaks[:, 0], result.peaks[:, 1])
         self._fill_table(result.peaks)
@@ -229,6 +341,23 @@ class BraggPeaksPage(QWidget):
         self.count_label.setText(f"BraggVectors peaks: {count}")
         self.log_panel.log(f"Full BraggVectors completed: peaks={count}.")
         self.braggvectors_ready.emit()
+
+    def _handle_probe_kernel_result(self, result: ProbeKernelResult) -> None:
+        self.status_label.setText(f"Probe kernel ready in {result.elapsed_seconds:.2f} s")
+        self.log_panel.log(
+            "Vacuum-probe kernel prepared: "
+            f"radius={result.probe_radius:.3g}, center=({result.center_x:.3g}, {result.center_y:.3g})."
+        )
+
+    def _handle_selected_result(self, result: SelectedPeaksResult) -> None:
+        self.table.setHorizontalHeaderLabels(["rx", "ry", "peak count"])
+        self.table.setRowCount(len(result.positions))
+        for row, ((rx, ry), count) in enumerate(zip(result.positions, result.peak_counts)):
+            for col, value in enumerate((rx, ry, count)):
+                self.table.setItem(row, col, QTableWidgetItem(str(value)))
+        self.count_label.setText(f"Selected-position peaks: {sum(result.peak_counts)}")
+        self.status_label.setText(f"Selected positions done in {result.elapsed_seconds:.2f} s")
+        self.log_panel.log(f"Selected-position peak counts: {result.peak_counts}")
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -247,3 +376,5 @@ class BraggPeaksPage(QWidget):
         self.worker_thread = None
         self.run_current_button.setEnabled(True)
         self.run_full_button.setEnabled(True)
+        self.run_selected_button.setEnabled(True)
+        self.prepare_kernel_button.setEnabled(True)

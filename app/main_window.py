@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from app.pages.virtual_detector_page import VirtualDetectorPage
 from app.pages.bragg_peaks_page import BraggPeaksPage
 from app.pages.calibration_page import CalibrationPage
+from app.pages.orientation_page import OrientationPage
 from app.pages.strain_map_page import StrainMapPage
 from app.services.bragg_strain_service import BraggStrainService
 from app.services.hdf5_service import Hdf5Service
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page = VirtualDetectorPage(
             source_provider=self._get_virtual_detector_source,
             shape_provider=self._get_current_4d_shape,
+            probe_geometry_provider=self._get_probe_geometry,
             log_panel=self.log_panel,
         )
         self.bragg_peaks_page = BraggPeaksPage(
@@ -71,6 +73,10 @@ class MainWindow(QMainWindow):
         self.strain_map_page = StrainMapPage(
             braggvectors_provider=self._get_braggvectors,
             service=self.bragg_strain_service,
+            log_panel=self.log_panel,
+        )
+        self.orientation_page = OrientationPage(
+            braggvectors_provider=self._get_braggvectors,
             log_panel=self.log_panel,
         )
 
@@ -158,11 +164,12 @@ class MainWindow(QMainWindow):
         browser_layout.addWidget(main_splitter)
 
         tabs = QTabWidget()
-        tabs.addTab(browser_page, "Data Browser")
-        tabs.addTab(self.virtual_detector_page, "Virtual Detector")
-        tabs.addTab(self.bragg_peaks_page, "Bragg Peaks")
-        tabs.addTab(self.calibration_page, "Calibration")
-        tabs.addTab(self.strain_map_page, "Strain Map")
+        tabs.addTab(browser_page, "1-3 Import, Load & Visualise")
+        tabs.addTab(self.virtual_detector_page, "3.2 VBF / VADF")
+        tabs.addTab(self.bragg_peaks_page, "4-5 Probe & Bragg Disks")
+        tabs.addTab(self.calibration_page, "6 Calibration")
+        tabs.addTab(self.orientation_page, "7 Orientation Analysis")
+        tabs.addTab(self.strain_map_page, "8 StrainMap")
         self.setCentralWidget(tabs)
 
         self._set_index_controls_visible(False)
@@ -189,6 +196,7 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.braggvectors = None
             self.bragg_strain_service.strainmap = None
             self.bragg_strain_service.strain_result = None
+            self.bragg_strain_service.probe_kernel = None
             self.log_panel.log(f"Opened file: {file_path}")
 
             try:
@@ -336,12 +344,24 @@ class MainWindow(QMainWindow):
     def _try_load_py4dstem_datacube(self, hdf5_path: str, show_warning: bool = True) -> bool:
         try:
             info = self.py4dstem_service.load_datacube(hdf5_path)
+            self.bragg_strain_service.braggvectors = None
+            self.bragg_strain_service.strainmap = None
+            self.bragg_strain_service.strain_result = None
+            self.bragg_strain_service.probe_kernel = None
             scan_image = self.py4dstem_service.get_scan_image()
             self.scan_viewer.set_image(scan_image)
             self.current_4d_source = "py4dstem"
             self.current_dataset_path = hdf5_path
             self.current_dataset_shape = info.shape
             self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
+            try:
+                geometry = self.py4dstem_service.measure_probe_geometry()
+                self.log_panel.log(
+                    "Measured probe geometry: "
+                    f"radius={geometry.radius:.3g}, center=({geometry.center_x:.3g}, {geometry.center_y:.3g})."
+                )
+            except Py4DSTEMServiceError as exc:
+                self.log_panel.log(str(exc))
             self._configure_4d_controls(info.shape)
             self._display_4d_slice(0, 0)
             self.virtual_detector_page.refresh_defaults_from_datacube()
@@ -414,6 +434,7 @@ class MainWindow(QMainWindow):
         self.bragg_strain_service.braggvectors = None
         self.bragg_strain_service.strainmap = None
         self.bragg_strain_service.strain_result = None
+        self.bragg_strain_service.probe_kernel = None
 
     def _get_virtual_detector_source(self):
         if self.current_4d_source == "py4dstem":
@@ -429,6 +450,9 @@ class MainWindow(QMainWindow):
 
     def _get_braggvectors(self):
         return self.bragg_strain_service.braggvectors
+
+    def _get_probe_geometry(self):
+        return self.py4dstem_service.probe_geometry
 
     def _get_current_4d_shape(self) -> tuple[int, int, int, int] | None:
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:

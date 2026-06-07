@@ -20,10 +20,15 @@ The current app is an MVP built with:
   - Bright Field
   - Annular Dark Field
   - Custom Annular Detector
+- Measure probe center/radius from the mean diffraction pattern and use them as
+  virtual detector defaults
+- Prepare a sigmoid Bragg-detection kernel from a user-selected vacuum scan ROI
 - Run Bragg peak detection on the current diffraction pattern
+- Check a reproducible set of selected scan positions before running the full map
 - Run full BraggVectors calculation
-- Check calibration status for origin, ellipse, pixel, and rotation
-- Run StrainMap when BraggVectors and calibration are available
+- Measure/fit origin and ellipticity, then set pixel size and QR rotation
+- Load CIF crystal structures, create orientation plans, and match orientation maps
+- Run StrainMap using automatic valid points or a selected reference ROI
 - Export virtual detector and strain map results
 
 ## Environments
@@ -59,11 +64,13 @@ app/
   pages/
     bragg_peaks_page.py
     calibration_page.py
+    orientation_page.py
     strain_map_page.py
     virtual_detector_page.py
   services/
     bragg_strain_service.py
     hdf5_service.py
+    orientation_service.py
     py4dstem_service.py
     virtual_detector_service.py
   widgets/

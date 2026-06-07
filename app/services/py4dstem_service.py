@@ -21,12 +21,20 @@ class DataCubeInfo:
     diffraction_shape: tuple[int, int]
 
 
+@dataclass(frozen=True)
+class ProbeGeometry:
+    radius: float
+    center_x: float
+    center_y: float
+
+
 class Py4DSTEMService:
     def __init__(self) -> None:
         self.file_path: Path | None = None
         self.root: Any | None = None
         self.datacube: Any | None = None
         self.datacube_info: DataCubeInfo | None = None
+        self.probe_geometry: ProbeGeometry | None = None
 
     def open_file(self, file_path: str | Path) -> None:
         self.close()
@@ -49,6 +57,7 @@ class Py4DSTEMService:
         self.root = None
         self.datacube = None
         self.datacube_info = None
+        self.probe_geometry = None
 
     def load_datacube(self, datapath: str) -> DataCubeInfo:
         if self.file_path is None:
@@ -83,6 +92,7 @@ class Py4DSTEMService:
 
         self.datacube = obj
         self.datacube_info = info
+        self.probe_geometry = None
         return info
 
     def load_raw_4d_array(self, data: Any, datapath: str) -> DataCubeInfo:
@@ -94,6 +104,7 @@ class Py4DSTEMService:
             raise Py4DSTEMServiceError(f"Expected a 4D array, got shape {shape}.")
 
         self.datacube = None
+        self.probe_geometry = None
         info = DataCubeInfo(
             name=Path(datapath).name or "4D dataset",
             datapath=datapath,
@@ -143,6 +154,27 @@ class Py4DSTEMService:
         shape = self.get_datacube_shape()
         self._validate_scan_coordinates(rx, ry, shape[:2])
         return np.asarray(self.datacube.data[rx, ry, :, :])
+
+    def measure_probe_geometry(self) -> ProbeGeometry:
+        if self.datacube is None:
+            raise Py4DSTEMServiceError("No py4DSTEM DataCube is loaded.")
+
+        try:
+            dp_mean = np.asarray(self.datacube.get_dp_mean().data)
+            radius, center_x, center_y = self.datacube.get_probe_size(
+                dp=dp_mean,
+                plot=False,
+            )
+        except Exception as exc:
+            raise Py4DSTEMServiceError(f"Could not measure probe geometry: {exc}") from exc
+
+        geometry = ProbeGeometry(
+            radius=float(radius),
+            center_x=float(center_x),
+            center_y=float(center_y),
+        )
+        self.probe_geometry = geometry
+        return geometry
 
     def describe_current_datacube(self) -> dict[str, object]:
         if self.datacube_info is None:

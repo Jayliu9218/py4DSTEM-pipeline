@@ -18,3 +18,5 @@ env/
 *.log
 
 packaging/installer/
+
+data/

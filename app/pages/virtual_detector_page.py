@@ -56,11 +56,13 @@ class VirtualDetectorPage(QWidget):
         self,
         source_provider: Callable[[], object | None],
         shape_provider: Callable[[], tuple[int, int, int, int] | None],
+        probe_geometry_provider: Callable[[], object | None],
         log_panel: LogPanel,
     ) -> None:
         super().__init__()
         self.source_provider = source_provider
         self.shape_provider = shape_provider
+        self.probe_geometry_provider = probe_geometry_provider
         self.log_panel = log_panel
         self.service = VirtualDetectorService()
         self.result: np.ndarray | None = None
@@ -134,11 +136,22 @@ class VirtualDetectorPage(QWidget):
             return
 
         qx, qy = shape[2], shape[3]
-        self.center_x_spin.setValue((qx - 1) / 2)
-        self.center_y_spin.setValue((qy - 1) / 2)
-        self.inner_radius_spin.setValue(max(min(qx, qy) * 0.08, 1))
-        self.outer_radius_spin.setValue(max(min(qx, qy) * 0.25, 2))
-        self.log_panel.log("Virtual detector defaults updated from current DataCube.")
+        geometry = self.probe_geometry_provider()
+        if geometry is None:
+            self.center_x_spin.setValue((qx - 1) / 2)
+            self.center_y_spin.setValue((qy - 1) / 2)
+            self.inner_radius_spin.setValue(max(min(qx, qy) * 0.08, 1))
+            self.outer_radius_spin.setValue(max(min(qx, qy) * 0.25, 2))
+            self.log_panel.log("Virtual detector defaults updated from diffraction shape.")
+            return
+
+        self.center_x_spin.setValue(geometry.center_x)
+        self.center_y_spin.setValue(geometry.center_y)
+        self.inner_radius_spin.setValue(geometry.radius * 1.5)
+        self.outer_radius_spin.setValue(geometry.radius * 3.0)
+        self.log_panel.log(
+            "Virtual detector defaults updated from measured probe center and radius."
+        )
 
     def run_detector(self) -> None:
         source = self.source_provider()

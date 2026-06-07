@@ -5,6 +5,7 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -54,17 +55,29 @@ class StrainMapPage(QWidget):
         self.worker_thread: QThread | None = None
         self.worker: StrainMapWorker | None = None
 
-        self.rotation_spin = self._float_spin(-360, 360, 0)
+        self.rotation_spin = self._float_spin(-360, 360, -21.5)
         self.max_spacing_spin = self._float_spin(0.1, 1000, 3)
-        self.min_abs_spin = self._float_spin(0, 1e12, 0)
+        self.min_abs_spin = self._float_spin(0, 1e12, 1200)
         self.min_rel_spin = self._float_spin(0, 1, 0, decimals=4, step=0.001)
-        self.min_spacing_spin = self._float_spin(0, 1000, 0)
+        self.min_spacing_spin = self._float_spin(0, 1000, 2)
         self.edge_spin = QSpinBox()
         self.edge_spin.setRange(0, 10000)
         self.edge_spin.setValue(1)
         self.max_peaks_spin = QSpinBox()
         self.max_peaks_spin.setRange(1, 10000)
-        self.max_peaks_spin.setValue(10)
+        self.max_peaks_spin.setValue(150)
+        self.reference_mode = QComboBox()
+        self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask"])
+        self.roi_rx_start = QSpinBox()
+        self.roi_rx_end = QSpinBox()
+        self.roi_ry_start = QSpinBox()
+        self.roi_ry_end = QSpinBox()
+        for spin in [self.roi_rx_start, self.roi_rx_end, self.roi_ry_start, self.roi_ry_end]:
+            spin.setRange(0, 100000)
+        self.roi_rx_start.setValue(34)
+        self.roi_rx_end.setValue(42)
+        self.roi_ry_start.setValue(8)
+        self.roi_ry_end.setValue(16)
 
         self.run_button = QPushButton("Run Strain Map")
         self.export_button = QPushButton("Export")
@@ -139,6 +152,11 @@ class StrainMapPage(QWidget):
         form.addRow("minSpacing", self.min_spacing_spin)
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
+        form.addRow("8.1 reference mode", self.reference_mode)
+        form.addRow("reference ROI rx start", self.roi_rx_start)
+        form.addRow("reference ROI rx end", self.roi_rx_end)
+        form.addRow("reference ROI ry start", self.roi_ry_start)
+        form.addRow("reference ROI ry end", self.roi_ry_end)
 
         layout = QVBoxLayout(self)
         layout.addWidget(controls)
@@ -164,6 +182,11 @@ class StrainMapPage(QWidget):
             min_spacing=self.min_spacing_spin.value(),
             edge_boundary=self.edge_spin.value(),
             max_num_peaks=self.max_peaks_spin.value(),
+            reference_mode=self.reference_mode.currentText(),
+            roi_rx_start=self.roi_rx_start.value(),
+            roi_rx_end=self.roi_rx_end.value(),
+            roi_ry_start=self.roi_ry_start.value(),
+            roi_ry_end=self.roi_ry_end.value(),
         )
 
     def _handle_finished(self, result: StrainMapResult) -> None:
