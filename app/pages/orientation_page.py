@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -18,11 +20,13 @@ from PySide6.QtWidgets import (
 from app.services.orientation_service import OrientationPlanParams, OrientationResult, OrientationService
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
+from app.widgets.progress_stream import ProgressStream
 
 
 class OrientationWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, operation) -> None:
         super().__init__()
@@ -30,7 +34,10 @@ class OrientationWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.operation())
+            stream = ProgressStream(self.progress.emit)
+            with redirect_stdout(stream), redirect_stderr(stream):
+                self.finished.emit(self.operation())
+            stream.flush()
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -65,14 +72,24 @@ class OrientationPage(QWidget):
         form.addRow("k_max", self.k_max)
         form.addRow("zone-axis angle step", self.zone_step)
         form.addRow("in-plane angle step", self.plane_step)
-        row = QHBoxLayout()
+        row = QVBoxLayout()
         for button in self.buttons:
             row.addWidget(button)
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addLayout(row)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.viewer, 1)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.addLayout(form)
+        left_layout.addLayout(row)
+        left_layout.addWidget(self.status_label)
+        left_layout.addStretch(1)
+        left.setFixedWidth(430)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(self.viewer)
+        splitter.setSizes([430, 900])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout = QHBoxLayout(self)
+        layout.addWidget(splitter)
 
     def load_cif(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Load crystal structure", "", "CIF files (*.cif)")
@@ -96,12 +113,14 @@ class OrientationPage(QWidget):
         for button in self.buttons:
             button.setEnabled(False)
         self.status_label.setText("Running orientation step...")
+        self.log_panel.process_started("Orientation analysis")
         self.worker_thread = QThread()
         self.worker = OrientationWorker(operation)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._finished)
         self.worker.failed.connect(self._failed)
+        self.worker.progress.connect(self.log_panel.process_progress)
         self.worker.finished.connect(self.worker_thread.quit)
         self.worker.failed.connect(self.worker_thread.quit)
         self.worker_thread.finished.connect(self.worker.deleteLater)
@@ -116,10 +135,12 @@ class OrientationPage(QWidget):
         else:
             self.status_label.setText(f"Orientation plan ready in {float(result):.2f} s")
         self.log_panel.log(self.status_label.text())
+        self.log_panel.process_finished("Orientation analysis", self.status_label.text())
 
     def _failed(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.log_panel.log(f"Orientation failed: {message}")
+        self.log_panel.process_failed("Orientation analysis", message)
         QMessageBox.warning(self, "Orientation", message)
 
     def _clear(self) -> None:

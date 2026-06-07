@@ -73,6 +73,12 @@ class OrientationService:
         crystal = self._require_crystal()
         if braggvectors is None:
             raise OrientationServiceError("Run full BraggVectors before orientation matching.")
+        calstate = getattr(braggvectors, "calstate", {})
+        if not all(calstate.get(name, False) for name in ["center", "ellipse", "pixel", "rotate"]):
+            raise OrientationServiceError(
+                "Apply origin, ellipse, pixel, and rotation corrections manually in step 6 "
+                "before orientation matching."
+            )
         start = perf_counter()
         try:
             orientation_map = crystal.match_orientations(

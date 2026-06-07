@@ -38,6 +38,8 @@ class PeakDetectionResult:
 class SelectedPeaksResult:
     positions: list[tuple[int, int]]
     peak_counts: list[int]
+    patterns: list[np.ndarray]
+    peaks: list[np.ndarray]
     elapsed_seconds: float
 
 
@@ -45,6 +47,7 @@ class SelectedPeaksResult:
 class BraggVectorsResult:
     braggvectors: Any
     peak_count: int | None
+    bragg_vector_map: np.ndarray
     elapsed_seconds: float
 
 
@@ -205,9 +208,11 @@ class BraggStrainService:
 
         self.braggvectors = braggvectors
         peak_count = self._count_braggvectors(braggvectors)
+        bragg_vector_map = np.asarray(braggvectors.histogram(mode="raw").data)
         return BraggVectorsResult(
             braggvectors=braggvectors,
             peak_count=peak_count,
+            bragg_vector_map=bragg_vector_map,
             elapsed_seconds=perf_counter() - start,
         )
 
@@ -218,17 +223,25 @@ class BraggStrainService:
         params: BraggDetectionParams,
     ) -> SelectedPeaksResult:
         start = perf_counter()
-        counts = [len(self.detect_peaks(datacube, rx, ry, params).peaks) for rx, ry in positions]
-        return SelectedPeaksResult(positions, counts, perf_counter() - start)
+        results = [self.detect_peaks(datacube, rx, ry, params) for rx, ry in positions]
+        return SelectedPeaksResult(
+            positions,
+            [len(result.peaks) for result in results],
+            [result.diffraction_pattern for result in results],
+            [result.peaks for result in results],
+            perf_counter() - start,
+        )
 
     def calibrate_origin(self, braggvectors: Any | None) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
+        previous_state = dict(source.calstate)
         start = perf_counter()
         try:
             qx_meas, qy_meas, mask = source.measure_origin()
             qx_fit, qy_fit, qx_residuals, qy_residuals = source.fit_origin(plot=False, returncalc=True)
-            source.setcal(center=True)
+            source.setcal(**previous_state)
         except Exception as exc:
+            source.setcal(**previous_state)
             raise BraggStrainServiceError(f"Origin calibration failed: {exc}") from exc
         return CalibrationActionResult(
             "Origin measured and fitted.",
@@ -250,6 +263,7 @@ class BraggStrainService:
         sampling: int,
     ) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
+        previous_state = dict(source.calstate)
         if inner_radius <= 0 or outer_radius <= inner_radius:
             raise BraggStrainServiceError("Ellipse fit radii must satisfy 0 < inner < outer.")
         start = perf_counter()
@@ -261,8 +275,9 @@ class BraggStrainService:
                 fitradii=(inner_radius, outer_radius),
             )
             source.calibration.set_p_ellipse(p_ellipse)
-            source.setcal(ellipse=True)
+            source.setcal(**previous_state)
         except Exception as exc:
+            source.setcal(**previous_state)
             raise BraggStrainServiceError(f"Ellipticity calibration failed: {exc}") from exc
         return CalibrationActionResult(
             f"Ellipticity fitted: {p_ellipse}",
@@ -272,12 +287,13 @@ class BraggStrainService:
 
     def set_pixel_size(self, braggvectors: Any | None, pixel_size: float) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
+        previous_state = dict(source.calstate)
         if pixel_size <= 0:
             raise BraggStrainServiceError("Q pixel size must be greater than 0.")
         start = perf_counter()
         source.calibration.set_Q_pixel_size(pixel_size)
         source.calibration.set_Q_pixel_units("A^-1")
-        source.setcal(pixel=True)
+        source.setcal(**previous_state)
         return CalibrationActionResult(
             f"Q pixel size set to {pixel_size:g} A^-1.",
             {},
@@ -286,11 +302,33 @@ class BraggStrainService:
 
     def set_qr_rotation(self, braggvectors: Any | None, degrees: float) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
+        previous_state = dict(source.calstate)
         start = perf_counter()
         source.calibration.set_QR_rotation_degrees(degrees)
-        source.setcal(rotate=True)
+        source.setcal(**previous_state)
         return CalibrationActionResult(
             f"QR rotation set to {degrees:g} degrees.",
+            {},
+            perf_counter() - start,
+        )
+
+    def set_calibration_state(
+        self,
+        braggvectors: Any | None,
+        center: bool,
+        ellipse: bool,
+        pixel: bool,
+        rotate: bool,
+    ) -> CalibrationActionResult:
+        source = self._require_braggvectors(braggvectors)
+        start = perf_counter()
+        try:
+            source.setcal(center=center, ellipse=ellipse, pixel=pixel, rotate=rotate)
+        except Exception as exc:
+            raise BraggStrainServiceError(f"Could not apply calibration state: {exc}") from exc
+        enabled = [name for name, value in source.calstate.items() if value]
+        return CalibrationActionResult(
+            f"Applied corrections: {', '.join(enabled) if enabled else 'none'}.",
             {},
             perf_counter() - start,
         )
@@ -315,10 +353,10 @@ class BraggStrainService:
         if braggvectors is None:
             raise BraggStrainServiceError("No BraggVectors object is available. Run full BraggVectors first.")
 
-        status = self.calibration_status(braggvectors)
-        if not status.complete:
+        calstate = getattr(braggvectors, "calstate", {})
+        if not all(calstate.get(name, False) for name in ["center", "ellipse", "pixel", "rotate"]):
             raise BraggStrainServiceError(
-                "Calibration is incomplete. Required origin, ellipse, pixel, and rotate calibration "
+                "Apply origin, ellipse, pixel, and rotation corrections manually in step 6 "
                 "before strain mapping."
             )
 

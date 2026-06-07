@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -21,11 +24,13 @@ from PySide6.QtWidgets import (
 from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
+from app.widgets.progress_stream import ProgressStream
 
 
 class StrainMapWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, service: BraggStrainService, braggvectors, params: StrainMapParams) -> None:
         super().__init__()
@@ -35,7 +40,10 @@ class StrainMapWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.service.compute_strain_map(self.braggvectors, self.params))
+            stream = ProgressStream(self.progress.emit)
+            with redirect_stdout(stream), redirect_stderr(stream):
+                self.finished.emit(self.service.compute_strain_map(self.braggvectors, self.params))
+            stream.flush()
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -106,6 +114,10 @@ class StrainMapPage(QWidget):
         self.run_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.log_panel.log("Strain map calculation running...")
+        self.log_panel.process_started(
+            "StrainMap",
+            f"reference={self.reference_mode.currentText()}, rotation={self.rotation_spin.value():g}",
+        )
 
         self.worker_thread = QThread()
         self.worker = StrainMapWorker(self.service, braggvectors, self._params())
@@ -113,6 +125,7 @@ class StrainMapPage(QWidget):
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._handle_finished)
         self.worker.failed.connect(self._handle_failed)
+        self.worker.progress.connect(self.log_panel.process_progress)
         self.worker.finished.connect(self.worker_thread.quit)
         self.worker.failed.connect(self.worker_thread.quit)
         self.worker_thread.finished.connect(self.worker.deleteLater)
@@ -158,12 +171,22 @@ class StrainMapPage(QWidget):
         form.addRow("reference ROI ry start", self.roi_ry_start)
         form.addRow("reference ROI ry end", self.roi_ry_end)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(controls)
-        layout.addWidget(self.run_button)
-        layout.addWidget(self.export_button)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.viewer_tabs, 1)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.addWidget(controls)
+        left_layout.addWidget(self.run_button)
+        left_layout.addWidget(self.export_button)
+        left_layout.addWidget(self.status_label)
+        left_layout.addStretch(1)
+        left.setFixedWidth(430)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(self.viewer_tabs)
+        splitter.setSizes([430, 900])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout = QHBoxLayout(self)
+        layout.addWidget(splitter)
 
     def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -196,11 +219,13 @@ class StrainMapPage(QWidget):
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
         self.export_button.setEnabled(True)
         self.log_panel.log(f"Strain map completed in {result.elapsed_seconds:.2f} s.")
+        self.log_panel.process_finished("StrainMap", f"elapsed={result.elapsed_seconds:.2f} s")
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.export_button.setEnabled(self.result is not None)
         self.log_panel.log(f"Strain map failed: {message}")
+        self.log_panel.process_failed("StrainMap", message)
         QMessageBox.warning(self, "Strain Map", message)
 
     def _clear_worker(self) -> None:

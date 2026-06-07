@@ -164,6 +164,7 @@ class VirtualDetectorPage(QWidget):
         self.run_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.log_panel.log(f"Virtual detector started: {params.mode}")
+        self.log_panel.process_started("Virtual detector", params.mode)
 
         self.worker_thread = QThread()
         self.worker = VirtualDetectorWorker(self.service, source, params)
@@ -217,12 +218,16 @@ class VirtualDetectorPage(QWidget):
         self.log_panel.log(
             f"Virtual detector completed: {result.mode}, elapsed={result.elapsed_seconds:.2f} s"
         )
+        self.log_panel.process_finished(
+            "Virtual detector", f"{result.mode}, elapsed={result.elapsed_seconds:.2f} s"
+        )
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.run_button.setEnabled(True)
         self.export_button.setEnabled(self.result is not None)
         self.log_panel.log(f"Virtual detector failed: {message}")
+        self.log_panel.process_failed("Virtual detector", message)
         QMessageBox.warning(self, "Virtual Detector", message)
 
     def _clear_worker_refs(self) -> None:

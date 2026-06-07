@@ -6,6 +6,8 @@ import h5py
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
+    QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -153,15 +155,10 @@ class MainWindow(QMainWindow):
         top_splitter.addWidget(info_panel)
         top_splitter.setSizes([300, 650, 330])
 
-        main_splitter = QSplitter(Qt.Vertical)
-        main_splitter.addWidget(top_splitter)
-        main_splitter.addWidget(self.log_panel)
-        main_splitter.setSizes([650, 170])
-
         browser_page = QWidget()
         browser_layout = QHBoxLayout(browser_page)
         browser_layout.setContentsMargins(8, 8, 8, 8)
-        browser_layout.addWidget(main_splitter)
+        browser_layout.addWidget(top_splitter)
 
         tabs = QTabWidget()
         tabs.addTab(browser_page, "1-3 Import, Load & Visualise")
@@ -170,9 +167,20 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.calibration_page, "6 Calibration")
         tabs.addTab(self.orientation_page, "7 Orientation Analysis")
         tabs.addTab(self.strain_map_page, "8 StrainMap")
-        self.setCentralWidget(tabs)
+        workspace = QSplitter(Qt.Vertical)
+        workspace.addWidget(tabs)
+        workspace.addWidget(self.log_panel)
+        workspace.setSizes([650, 190])
+        self.setCentralWidget(workspace)
 
         self._set_index_controls_visible(False)
+        self._compact_input_controls()
+
+    def _compact_input_controls(self) -> None:
+        for widget_type in (QSpinBox, QDoubleSpinBox, QComboBox):
+            for widget in self.findChildren(widget_type):
+                widget.setMinimumWidth(110)
+                widget.setMaximumWidth(180)
 
     def open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(

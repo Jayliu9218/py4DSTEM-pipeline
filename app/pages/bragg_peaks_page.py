@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QComboBox,
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -27,12 +30,22 @@ from app.services.bragg_strain_service import (
     SelectedPeaksResult,
 )
 from app.widgets.image_viewer import ImageViewer
+from app.widgets.image_grid_viewer import ImageGridViewer
 from app.widgets.log_panel import LogPanel
+from app.widgets.progress_stream import ProgressStream
+
+
+def _run_with_progress(worker: QObject, operation) -> None:
+    stream = ProgressStream(worker.progress.emit)
+    with redirect_stdout(stream), redirect_stderr(stream):
+        operation()
+    stream.flush()
 
 
 class PeakDetectionWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, service: BraggStrainService, datacube, rx: int, ry: int, params: BraggDetectionParams) -> None:
         super().__init__()
@@ -44,7 +57,12 @@ class PeakDetectionWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.service.detect_peaks(self.datacube, self.rx, self.ry, self.params))
+            _run_with_progress(
+                self,
+                lambda: self.finished.emit(
+                    self.service.detect_peaks(self.datacube, self.rx, self.ry, self.params)
+                ),
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -52,6 +70,7 @@ class PeakDetectionWorker(QObject):
 class BraggVectorsWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, service: BraggStrainService, datacube, params: BraggDetectionParams) -> None:
         super().__init__()
@@ -61,7 +80,10 @@ class BraggVectorsWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.service.compute_braggvectors(self.datacube, self.params))
+            _run_with_progress(
+                self,
+                lambda: self.finished.emit(self.service.compute_braggvectors(self.datacube, self.params)),
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -69,6 +91,7 @@ class BraggVectorsWorker(QObject):
 class ProbeKernelWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, service: BraggStrainService, datacube, roi: tuple[int, int, int, int]) -> None:
         super().__init__()
@@ -78,7 +101,10 @@ class ProbeKernelWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.service.prepare_probe_kernel(self.datacube, *self.roi))
+            _run_with_progress(
+                self,
+                lambda: self.finished.emit(self.service.prepare_probe_kernel(self.datacube, *self.roi)),
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -86,6 +112,7 @@ class ProbeKernelWorker(QObject):
 class SelectedPeaksWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    progress = Signal(str)
 
     def __init__(self, service, datacube, positions, params) -> None:
         super().__init__()
@@ -96,8 +123,11 @@ class SelectedPeaksWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.finished.emit(
-                self.service.detect_selected_positions(self.datacube, self.positions, self.params)
+            _run_with_progress(
+                self,
+                lambda: self.finished.emit(
+                    self.service.detect_selected_positions(self.datacube, self.positions, self.params)
+                ),
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -149,6 +179,12 @@ class BraggPeaksPage(QWidget):
         self.status_label = QLabel("Idle")
         self.count_label = QLabel("Peaks: -")
         self.viewer = ImageViewer()
+        self.selected_grid = ImageGridViewer()
+        self.full_map_viewer = ImageViewer()
+        self.visual_tabs = QTabWidget()
+        self.visual_tabs.addTab(self.viewer, "Single Position")
+        self.visual_tabs.addTab(self.selected_grid, "Selected 6 Positions")
+        self.visual_tabs.addTab(self.full_map_viewer, "Full Bragg Vector Map")
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["qx", "qy", "intensity"])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -280,9 +316,15 @@ class BraggPeaksPage(QWidget):
         left = QWidget()
         left.setLayout(left_layout)
 
+        left.setFixedWidth(430)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(self.visual_tabs)
+        splitter.setSizes([430, 900])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
         layout = QHBoxLayout(self)
-        layout.addWidget(left, 0)
-        layout.addWidget(self.viewer, 1)
+        layout.addWidget(splitter)
 
     def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -310,6 +352,7 @@ class BraggPeaksPage(QWidget):
         self.run_selected_button.setEnabled(False)
         self.prepare_kernel_button.setEnabled(False)
         self.log_panel.log(status)
+        self.log_panel.process_started("Bragg calculation", status)
 
         self.worker_thread = QThread()
         self.worker = worker
@@ -317,6 +360,7 @@ class BraggPeaksPage(QWidget):
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(finished_slot)
         self.worker.failed.connect(self._handle_failed)
+        self.worker.progress.connect(self.log_panel.process_progress)
         self.worker.finished.connect(self.worker_thread.quit)
         self.worker.failed.connect(self.worker_thread.quit)
         self.worker_thread.finished.connect(self.worker.deleteLater)
@@ -334,12 +378,19 @@ class BraggPeaksPage(QWidget):
         self.count_label.setText(f"Peaks: {len(result.peaks)}")
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
         self.log_panel.log(f"Bragg peak detection completed: {len(result.peaks)} peaks.")
+        self.log_panel.process_finished(
+            "Bragg calculation", f"single position, {len(result.peaks)} peaks"
+        )
+        self.visual_tabs.setCurrentWidget(self.viewer)
 
     def _handle_braggvectors_result(self, result: BraggVectorsResult) -> None:
         count = "unknown" if result.peak_count is None else str(result.peak_count)
         self.status_label.setText(f"BraggVectors done in {result.elapsed_seconds:.2f} s")
         self.count_label.setText(f"BraggVectors peaks: {count}")
         self.log_panel.log(f"Full BraggVectors completed: peaks={count}.")
+        self.log_panel.process_finished("Bragg calculation", f"full map, peaks={count}")
+        self.full_map_viewer.set_image(result.bragg_vector_map)
+        self.visual_tabs.setCurrentWidget(self.full_map_viewer)
         self.braggvectors_ready.emit()
 
     def _handle_probe_kernel_result(self, result: ProbeKernelResult) -> None:
@@ -348,6 +399,7 @@ class BraggPeaksPage(QWidget):
             "Vacuum-probe kernel prepared: "
             f"radius={result.probe_radius:.3g}, center=({result.center_x:.3g}, {result.center_y:.3g})."
         )
+        self.log_panel.process_finished("Bragg calculation", "vacuum-probe kernel ready")
 
     def _handle_selected_result(self, result: SelectedPeaksResult) -> None:
         self.table.setHorizontalHeaderLabels(["rx", "ry", "peak count"])
@@ -358,10 +410,25 @@ class BraggPeaksPage(QWidget):
         self.count_label.setText(f"Selected-position peaks: {sum(result.peak_counts)}")
         self.status_label.setText(f"Selected positions done in {result.elapsed_seconds:.2f} s")
         self.log_panel.log(f"Selected-position peak counts: {result.peak_counts}")
+        self.log_panel.process_finished(
+            "Bragg calculation", f"selected counts={result.peak_counts}"
+        )
+        self.selected_grid.clear()
+        for index, (position, pattern, peaks, count) in enumerate(
+            zip(result.positions, result.patterns, result.peaks, result.peak_counts)
+        ):
+            self.selected_grid.set_result(
+                index,
+                f"({position[0]}, {position[1]}) | {count} peaks",
+                pattern,
+                peaks,
+            )
+        self.visual_tabs.setCurrentWidget(self.selected_grid)
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.log_panel.log(f"Bragg operation failed: {message}")
+        self.log_panel.process_failed("Bragg calculation", message)
         QMessageBox.warning(self, "Bragg Peaks", message)
 
     def _fill_table(self, peaks) -> None:

@@ -27,6 +27,10 @@ The current app is an MVP built with:
 - Check a reproducible set of selected scan positions before running the full map
 - Run full BraggVectors calculation
 - Measure/fit origin and ellipticity, then set pixel size and QR rotation
+- Explicitly choose and apply calibration corrections before orientation or strain analysis
+- Use consistent left-control/right-drawing layouts for Bragg, calibration,
+  orientation, and strain stages
+- Mirror command-line calculation progress into the shared Calculation Process panel
 - Load CIF crystal structures, create orientation plans, and match orientation maps
 - Run StrainMap using automatic valid points or a selected reference ROI
 - Export virtual detector and strain map results
