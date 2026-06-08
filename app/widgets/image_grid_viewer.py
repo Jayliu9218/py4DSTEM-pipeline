@@ -10,7 +10,11 @@ class ImageGridViewer(QWidget):
         super().__init__()
         self.viewers: list[ImageViewer] = []
         self.labels: list[QLabel] = []
-        layout = QGridLayout(self)
+        outer_layout = QVBoxLayout(self)
+        self.legend_label = QLabel("Red circles: detected Bragg disks")
+        outer_layout.addWidget(self.legend_label)
+        layout = QGridLayout()
+        outer_layout.addLayout(layout)
         for index in range(rows * columns):
             panel = QWidget()
             panel_layout = QVBoxLayout(panel)

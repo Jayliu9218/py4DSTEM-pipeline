@@ -5,14 +5,19 @@ from pathlib import Path
 import h5py
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -51,6 +56,10 @@ class MainWindow(QMainWindow):
         self.current_dataset_path: str | None = None
         self.current_dataset_shape: tuple[int, ...] | None = None
         self.current_4d_source: str | None = None
+        self.selected_hdf5_path: str | None = None
+        self.selected_node_kind: str | None = None
+        self.image_scaling = ImageViewer.DEFAULT_SCALING
+        self.cuda_enabled = False
 
         self.tree = Hdf5TreeWidget()
         self.scan_viewer = ImageViewer()
@@ -66,6 +75,7 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page = BraggPeaksPage(
             datacube_provider=self._get_py4dstem_datacube,
             shape_provider=self._get_current_4d_shape,
+            virtual_image_provider=self._get_virtual_detector_image,
             service=self.bragg_strain_service,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
@@ -92,6 +102,12 @@ class MainWindow(QMainWindow):
         self.datacube_name_label = QLabel("-")
         self.scan_shape_label = QLabel("-")
         self.diffraction_shape_label = QLabel("-")
+        self.role_labels = {
+            "target_datacube": QLabel("-"),
+            "polycrystal_calibration": QLabel("-"),
+            "vacuum_probe": QLabel("-"),
+            "defocused_cbed": QLabel("-"),
+        }
         self.path_label = QLabel("-")
         self.type_label = QLabel("-")
         self.shape_label = QLabel("-")
@@ -109,27 +125,72 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_layout()
+        self._apply_cuda_setting(self.cuda_enabled)
 
         self.tree.node_selected.connect(self._handle_node_selected)
         self.scan_viewer.image_clicked.connect(self._handle_scan_image_clicked)
         self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.refresh_status)
         self.bragg_peaks_page.braggvectors_ready.connect(self.strain_map_page.notify_braggvectors_ready)
+        self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.show_braggvectors_histogram)
+        self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
         self.log_panel.log("Application started.")
+        self._apply_image_scaling(self.image_scaling)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self._close_current_file()
         event.accept()
 
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
+        self.file_menu = self.menuBar().addMenu("&File")
 
-        open_action = file_menu.addAction("&Open")
+        open_action = self.file_menu.addAction("&Open")
         open_action.triggered.connect(self.open_file)
 
-        file_menu.addSeparator()
+        self.file_menu.addSeparator()
 
-        exit_action = file_menu.addAction("E&xit")
+        exit_action = self.file_menu.addAction("E&xit")
         exit_action.triggered.connect(self.close)
+
+        self.setting_menu = self.menuBar().addMenu("&Setting")
+        preferences_action = self.setting_menu.addAction("&Preferences")
+        preferences_action.triggered.connect(self.open_settings)
+
+    def open_settings(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        scaling_combo = QComboBox()
+        scaling_combo.addItems(["log", "linear"])
+        scaling_combo.setCurrentText(self.image_scaling)
+        cuda_check = QCheckBox("Enable CUDA when supported")
+        cuda_check.setChecked(self.cuda_enabled)
+        form.addRow("Image scaling", scaling_combo)
+        form.addRow("CUDA", cuda_check)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.image_scaling = scaling_combo.currentText()
+        self.cuda_enabled = cuda_check.isChecked()
+        self._apply_image_scaling(self.image_scaling)
+        self._apply_cuda_setting(self.cuda_enabled)
+        self.log_panel.log(
+            f"Image scaling set to {self.image_scaling}; CUDA {'on' if self.cuda_enabled else 'off'}."
+        )
+
+    def _apply_image_scaling(self, scaling: str) -> None:
+        ImageViewer.DEFAULT_SCALING = scaling
+        for viewer in self.findChildren(ImageViewer):
+            viewer.set_scaling(scaling)
+
+    def _apply_cuda_setting(self, enabled: bool) -> None:
+        self.cuda_enabled = enabled
+        self.bragg_peaks_page.set_cuda_enabled(enabled)
+        self.orientation_page.set_cuda_enabled(enabled)
 
     def _build_layout(self) -> None:
         info_panel = QWidget()
@@ -139,6 +200,10 @@ class MainWindow(QMainWindow):
         form.addRow("DataCube", self.datacube_name_label)
         form.addRow("Scan shape", self.scan_shape_label)
         form.addRow("Diffraction shape", self.diffraction_shape_label)
+        form.addRow("Target DataCube", self.role_labels["target_datacube"])
+        form.addRow("Ellipse Reference", self.role_labels["polycrystal_calibration"])
+        form.addRow("Vacuum Probe", self.role_labels["vacuum_probe"])
+        form.addRow("Rotation Reference CBED", self.role_labels["defocused_cbed"])
         form.addRow("rx", self.rx_spin)
         form.addRow("ry", self.ry_spin)
         form.addRow("", QLabel(""))
@@ -156,8 +221,14 @@ class MainWindow(QMainWindow):
         image_splitter.addWidget(self.diffraction_viewer)
         image_splitter.setSizes([300, 350])
 
+        data_browser = QWidget()
+        data_browser_layout = QVBoxLayout(data_browser)
+        data_browser_layout.setContentsMargins(0, 0, 0, 0)
+        data_browser_layout.addWidget(self.tree)
+        data_browser_layout.addWidget(self._build_role_panel())
+
         top_splitter = QSplitter(Qt.Horizontal)
-        top_splitter.addWidget(self.tree)
+        top_splitter.addWidget(data_browser)
         top_splitter.addWidget(image_splitter)
         top_splitter.addWidget(info_panel)
         top_splitter.setSizes([300, 650, 330])
@@ -168,12 +239,12 @@ class MainWindow(QMainWindow):
         browser_layout.addWidget(top_splitter)
 
         tabs = QTabWidget()
-        tabs.addTab(browser_page, "1-3 Import, Load & Visualise")
-        tabs.addTab(self.virtual_detector_page, "3.2 VBF / VADF")
-        tabs.addTab(self.bragg_peaks_page, "4-5 Probe & Bragg Disks")
-        tabs.addTab(self.calibration_page, "6 Calibration")
-        tabs.addTab(self.orientation_page, "7 Orientation Analysis")
-        tabs.addTab(self.strain_map_page, "8 StrainMap")
+        tabs.addTab(browser_page, "1 Data Manager")
+        tabs.addTab(self.virtual_detector_page, "2 Virtual Imaging")
+        tabs.addTab(self.bragg_peaks_page, "3 Probe & Bragg Disks")
+        tabs.addTab(self.calibration_page, "4 Calibration")
+        tabs.addTab(self.orientation_page, "5 Crystal Analysis")
+        tabs.addTab(self.strain_map_page, "6 Strain Analysis")
         workspace = QSplitter(Qt.Vertical)
         workspace.addWidget(tabs)
         workspace.addWidget(self.log_panel)
@@ -182,6 +253,24 @@ class MainWindow(QMainWindow):
 
         self._set_index_controls_visible(False)
         self._compact_input_controls()
+        self._set_preview_empty()
+
+    def _build_role_panel(self) -> QGroupBox:
+        panel = QGroupBox("Dataset Roles")
+        layout = QVBoxLayout(panel)
+        auto_button = QPushButton("Auto Detect DataCube")
+        auto_button.clicked.connect(self.auto_detect_datacube)
+        layout.addWidget(auto_button)
+        for label, role in [
+            ("Set as Target DataCube", "target_datacube"),
+            ("Set as Ellipse Reference", "polycrystal_calibration"),
+            ("Set as Vacuum Probe", "vacuum_probe"),
+            ("Set as Rotation Reference", "defocused_cbed"),
+        ]:
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
+            layout.addWidget(button)
+        return panel
 
     def _compact_input_controls(self) -> None:
         for widget_type in (QSpinBox, QDoubleSpinBox, QComboBox):
@@ -204,8 +293,7 @@ class MainWindow(QMainWindow):
             self.current_file = self.hdf5_service.open_file(file_path)
             self.current_file_path = Path(file_path)
             self.tree.populate(self.current_file)
-            self.scan_viewer.clear()
-            self.diffraction_viewer.clear()
+            self._set_preview_empty()
             self._clear_dataset_info()
             self.virtual_detector_page.viewer.clear()
             self.bragg_strain_service.braggvectors = None
@@ -213,13 +301,12 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
             self.workflow_state.data_source_updated()
+            self.py4dstem_service.defer_open_file(file_path)
             self.log_panel.log(f"Opened file: {file_path}")
-
-            try:
-                self.py4dstem_service.open_file(file_path)
-                self.log_panel.log("py4DSTEM tree loaded successfully.")
-            except Py4DSTEMServiceError as exc:
-                self.log_panel.log(str(exc))
+            self.log_panel.log(
+                "Opened in safe HDF5 mode. py4DSTEM import is deferred so startup and browsing "
+                "do not trigger native library errors."
+            )
         except Exception as exc:
             self.current_file = None
             self.current_file_path = None
@@ -231,6 +318,8 @@ class MainWindow(QMainWindow):
             return
 
         self.log_panel.log(f"Selected {node_kind}: {hdf5_path}")
+        self.selected_hdf5_path = hdf5_path
+        self.selected_node_kind = node_kind
         self.current_dataset_path = None
         self.current_dataset_shape = None
         self.current_4d_source = None
@@ -242,15 +331,13 @@ class MainWindow(QMainWindow):
             self._show_node_info(info)
 
             if node_kind == "group":
-                if not self._try_load_py4dstem_datacube(hdf5_path):
-                    self.scan_viewer.clear()
-                    self.diffraction_viewer.clear()
+                if not self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
+                    self._set_preview_empty("Select a 4D dataset or py4DSTEM DataCube group.")
                     self._clear_datacube_info()
                 return
 
             if node_kind != "dataset":
-                self.scan_viewer.clear()
-                self.diffraction_viewer.clear()
+                self._set_preview_empty("Select a displayable dataset from the HDF5 tree.")
                 return
 
             self.current_dataset_path = hdf5_path
@@ -269,15 +356,12 @@ class MainWindow(QMainWindow):
                 self._configure_4d_controls(shape)
                 self._display_4d_slice(rx=0, ry=0)
             else:
-                self.scan_viewer.clear()
-                self.diffraction_viewer.clear()
+                self._set_preview_empty("This dataset is not displayable as a 2D image or 4D DataCube.")
                 self._clear_datacube_info()
                 self.log_panel.log(f"Dataset is not displayable as an image: shape={shape}")
         except Exception as exc:
-            self.scan_viewer.clear()
-            self.diffraction_viewer.clear()
+            self._set_preview_empty("Could not display this node.")
             self.log_panel.log(f"Failed to inspect node: {exc}")
-            QMessageBox.warning(self, "Dataset error", str(exc))
 
     def _show_node_info(self, info: dict[str, object]) -> None:
         self.path_label.setText(str(info.get("path", "-")))
@@ -306,6 +390,8 @@ class MainWindow(QMainWindow):
         self.current_dataset_shape = None
         self.current_4d_source = None
         self._set_index_controls_visible(False)
+        self.selected_hdf5_path = None
+        self.selected_node_kind = None
 
     def _clear_datacube_info(self) -> None:
         self.datacube_name_label.setText("-")
@@ -453,6 +539,11 @@ class MainWindow(QMainWindow):
         self.bragg_strain_service.strainmap = None
         self.bragg_strain_service.strain_result = None
         self.bragg_strain_service.probe_kernel = None
+        self.workflow_state.set_dataset_role("target_datacube", None)
+        self.workflow_state.set_dataset_role("polycrystal_calibration", None)
+        self.workflow_state.set_dataset_role("vacuum_probe", None)
+        self.workflow_state.set_dataset_role("defocused_cbed", None)
+        self._refresh_role_labels()
 
     def _get_virtual_detector_source(self):
         if self.current_4d_source == "py4dstem":
@@ -460,6 +551,9 @@ class MainWindow(QMainWindow):
         if self.current_4d_source == "hdf5" and self.current_file is not None and self.current_dataset_path:
             return self.current_file[self.current_dataset_path]
         return None
+
+    def _get_virtual_detector_image(self):
+        return self.virtual_detector_page.result
 
     def _get_py4dstem_datacube(self):
         if self.current_4d_source == "py4dstem":
@@ -476,3 +570,49 @@ class MainWindow(QMainWindow):
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:
             return None
         return self.current_dataset_shape
+
+    def _assign_current_role(self, role: str) -> None:
+        if self.selected_hdf5_path is None:
+            QMessageBox.information(self, "Dataset Roles", "Select a node in the HDF5 tree first.")
+            return
+        self.workflow_state.set_dataset_role(role, self.selected_hdf5_path)
+        self._refresh_role_labels()
+        self.log_panel.log(f"Assigned {role}: {self.selected_hdf5_path}")
+
+    def _refresh_role_labels(self) -> None:
+        roles = self.workflow_state.dataset_roles
+        for role, label in self.role_labels.items():
+            label.setText(getattr(roles, role) or "-")
+
+    def auto_detect_datacube(self) -> None:
+        if self.current_file is None:
+            QMessageBox.information(self, "Auto Detect", "Open an HDF5 or EMD file first.")
+            return
+        candidate = self._find_first_4d_dataset()
+        if candidate is None:
+            QMessageBox.information(self, "Auto Detect", "No numeric 4D dataset was found.")
+            return
+        self.workflow_state.set_dataset_role("target_datacube", candidate)
+        self._refresh_role_labels()
+        self.log_panel.log(f"Auto detected Target DataCube: {candidate}")
+        self._handle_node_selected(candidate, "dataset")
+
+    def _find_first_4d_dataset(self) -> str | None:
+        if self.current_file is None:
+            return None
+        candidate: str | None = None
+
+        def visitor(name: str, node) -> None:
+            nonlocal candidate
+            if candidate is not None:
+                return
+            if isinstance(node, h5py.Dataset) and len(tuple(node.shape)) == 4:
+                candidate = "/" + name.strip("/")
+
+        self.current_file.visititems(visitor)
+        return candidate
+
+    def _set_preview_empty(self, message: str | None = None) -> None:
+        base = message or "No DataCube loaded. Open an HDF5 file and select a 4D-STEM dataset."
+        self.scan_viewer.clear("Mean real-space image / virtual bright field preview")
+        self.diffraction_viewer.clear(base)
