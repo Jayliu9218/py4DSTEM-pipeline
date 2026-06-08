@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
 from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
-from app.widgets.log_panel import LogPanel
+from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -65,6 +66,7 @@ class StrainMapPage(QWidget):
         self.result: StrainMapResult | None = None
         self.worker_thread: QThread | None = None
         self.worker: StrainMapWorker | None = None
+        self.roi_pick_points: list[tuple[int, int]] = []
 
         self.rotation_spin = self._float_spin(-360, 360, -21.5)
         self.max_spacing_spin = self._float_spin(0.1, 1000, 3)
@@ -79,6 +81,10 @@ class StrainMapPage(QWidget):
         self.max_peaks_spin.setValue(150)
         self.reference_mode = QComboBox()
         self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask"])
+        self.color_mode = QComboBox()
+        self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
+        self.color_min_spin = self._float_spin(-1e6, 1e6, -1)
+        self.color_max_spin = self._float_spin(-1e6, 1e6, 1)
         self.roi_rx_start = QSpinBox()
         self.roi_rx_end = QSpinBox()
         self.roi_ry_start = QSpinBox()
@@ -91,18 +97,36 @@ class StrainMapPage(QWidget):
         self.roi_ry_end.setValue(16)
 
         self.run_button = QPushButton("Run Strain Map")
+        self.pick_roi_button = QPushButton("Pick ROI From Map")
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
 
         self.viewer_tabs = QTabWidget()
-        self.viewers = {name: ImageViewer() for name in ["exx", "eyy", "exy", "theta"]}
+        self.viewers = {
+            name: ImageViewer()
+            for name in [
+                "exx",
+                "eyy",
+                "exy",
+                "theta",
+                "principal strain 1",
+                "principal strain 2",
+                "fit residual",
+                "valid mask",
+            ]
+        }
         for name, viewer in self.viewers.items():
             self.viewer_tabs.addTab(viewer, name)
+            viewer.image_clicked.connect(self._handle_roi_click)
 
         self.run_button.clicked.connect(self.run_strain_map)
+        self.pick_roi_button.clicked.connect(self.start_roi_pick)
         self.export_button.clicked.connect(self.export_result)
+        self.color_mode.currentTextChanged.connect(lambda _text: self._display_result())
+        self.color_min_spin.valueChanged.connect(lambda _value: self._display_result())
+        self.color_max_spin.valueChanged.connect(lambda _value: self._display_result())
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
@@ -123,6 +147,22 @@ class StrainMapPage(QWidget):
         self.log_panel.process_started(
             "StrainMap",
             f"reference={self.reference_mode.currentText()}, rotation={self.rotation_spin.value():g}",
+        )
+        self.log_panel.process_snapshot(
+            ProcessSnapshot(
+                step="Strain map",
+                parameters={
+                    "reference": self.reference_mode.currentText(),
+                    "roi": (
+                        self.roi_rx_start.value(),
+                        self.roi_rx_end.value(),
+                        self.roi_ry_start.value(),
+                        self.roi_ry_end.value(),
+                    ),
+                    "rotation": self.rotation_spin.value(),
+                    "max_peak_spacing": self.max_spacing_spin.value(),
+                },
+            )
         )
 
         self.worker_thread = QThread()
@@ -172,6 +212,9 @@ class StrainMapPage(QWidget):
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
         form.addRow("8.1 reference mode", self.reference_mode)
+        form.addRow("color range", self.color_mode)
+        form.addRow("manual color min", self.color_min_spin)
+        form.addRow("manual color max", self.color_max_spin)
         form.addRow("reference ROI rx start", self.roi_rx_start)
         form.addRow("reference ROI rx end", self.roi_rx_end)
         form.addRow("reference ROI ry start", self.roi_ry_start)
@@ -180,6 +223,7 @@ class StrainMapPage(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(controls)
+        left_layout.addWidget(self.pick_roi_button)
         left_layout.addWidget(self.run_button)
         left_layout.addWidget(self.export_button)
         left_layout.addWidget(self.status_label)
@@ -220,8 +264,7 @@ class StrainMapPage(QWidget):
 
     def _handle_finished(self, result: StrainMapResult) -> None:
         self.result = result
-        for name, image in result.components.items():
-            self.viewers[name].set_image(image)
+        self._display_result()
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
         self.export_button.setEnabled(True)
         self.log_panel.log(f"Strain map completed in {result.elapsed_seconds:.2f} s.")
@@ -239,6 +282,53 @@ class StrainMapPage(QWidget):
         self.worker = None
         self.worker_thread = None
         self.run_button.setEnabled(True)
+
+    def start_roi_pick(self) -> None:
+        self.roi_pick_points = []
+        self.status_label.setText("Click two corners on any strain result image to set reference ROI.")
+
+    def _handle_roi_click(self, x: int, y: int) -> None:
+        if self.roi_pick_points or self.status_label.text().startswith("Click two corners"):
+            self.roi_pick_points.append((x, y))
+            if len(self.roi_pick_points) < 2:
+                self.status_label.setText("First ROI corner selected. Click the opposite corner.")
+                return
+            (x1, y1), (x2, y2) = self.roi_pick_points[:2]
+            rx_start, rx_end = sorted((x1, x2))
+            ry_start, ry_end = sorted((y1, y2))
+            self.roi_rx_start.setValue(rx_start)
+            self.roi_rx_end.setValue(rx_end + 1)
+            self.roi_ry_start.setValue(ry_start)
+            self.roi_ry_end.setValue(ry_end + 1)
+            self.roi_pick_points = []
+            self.status_label.setText(
+                f"Reference ROI set: rx={rx_start}:{rx_end + 1}, ry={ry_start}:{ry_end + 1}"
+            )
+
+    def _display_result(self) -> None:
+        if self.result is None:
+            return
+        for name, viewer in self.viewers.items():
+            image = self.result.components.get(name)
+            if image is None:
+                viewer.clear(f"{name} is not available for this result.")
+            else:
+                viewer.set_image(image, levels=self._levels_for(image))
+
+    def _levels_for(self, image) -> tuple[float, float] | None:
+        array = np.asarray(image, dtype=float)
+        finite = array[np.isfinite(array)]
+        if finite.size == 0:
+            return None
+        mode = self.color_mode.currentText()
+        if mode == "manual min/max":
+            return (self.color_min_spin.value(), self.color_max_spin.value())
+        if mode == "percentile 1-99":
+            return (float(np.nanpercentile(finite, 1)), float(np.nanpercentile(finite, 99)))
+        limit = float(np.nanmax(np.abs(finite)))
+        if limit == 0:
+            return None
+        return (-limit, limit)
 
     def _path_with_filter_suffix(self, path: Path, selected_filter: str) -> Path:
         if "PNG" in selected_filter and path.suffix.lower() != ".png":

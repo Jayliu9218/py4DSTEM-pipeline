@@ -38,6 +38,30 @@ class WorkflowStateTests(unittest.TestCase):
 
         self.assertTrue(state.is_stale(WorkflowStep.ORIENTATION_MATCH))
 
+    def test_dataset_role_change_marks_completed_workflow_stale(self) -> None:
+        state = WorkflowState()
+        state.mark_completed(WorkflowStep.BRAGG_FULL)
+        state.mark_completed(WorkflowStep.CALIBRATION_APPLY)
+        state.mark_completed(WorkflowStep.ORIENTATION_MATCH)
+        state.mark_completed(WorkflowStep.STRAIN_MAP)
+
+        state.set_dataset_role("target_datacube", "/data")
+
+        self.assertEqual(state.dataset_roles.target_datacube, "/data")
+        self.assertTrue(state.is_stale(WorkflowStep.BRAGG_FULL))
+        self.assertTrue(state.is_stale(WorkflowStep.CALIBRATION_APPLY))
+        self.assertTrue(state.is_stale(WorkflowStep.ORIENTATION_MATCH))
+        self.assertTrue(state.is_stale(WorkflowStep.STRAIN_MAP))
+
+    def test_dataset_role_can_be_overwritten_and_cleared(self) -> None:
+        state = WorkflowState()
+
+        state.set_dataset_role("vacuum_probe", "/probe_a")
+        state.set_dataset_role("vacuum_probe", "/probe_b")
+        state.set_dataset_role("vacuum_probe", None)
+
+        self.assertIsNone(state.dataset_roles.vacuum_probe)
+
 
 if __name__ == "__main__":
     unittest.main()

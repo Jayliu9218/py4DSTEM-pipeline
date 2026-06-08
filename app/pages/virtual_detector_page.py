@@ -27,7 +27,7 @@ from app.services.virtual_detector_service import (
 )
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
-from app.widgets.log_panel import LogPanel
+from app.widgets.log_panel import LogPanel, ProcessSnapshot
 
 
 class VirtualDetectorWorker(QObject):
@@ -53,6 +53,8 @@ class VirtualDetectorWorker(QObject):
 
 
 class VirtualDetectorPage(QWidget):
+    virtual_image_ready = Signal(object)
+
     def __init__(
         self,
         source_provider: Callable[[], object | None],
@@ -171,6 +173,18 @@ class VirtualDetectorPage(QWidget):
         self.export_button.setEnabled(False)
         self.log_panel.log(f"Virtual detector started: {params.mode}")
         self.log_panel.process_started("Virtual detector", params.mode)
+        self.log_panel.process_snapshot(
+            ProcessSnapshot(
+                step="Virtual detector",
+                parameters={
+                    "mode": params.mode,
+                    "center_x": params.center_x,
+                    "center_y": params.center_y,
+                    "inner_radius": params.inner_radius,
+                    "outer_radius": params.outer_radius,
+                },
+            )
+        )
 
         self.worker_thread = QThread()
         self.worker = VirtualDetectorWorker(self.service, source, params)
@@ -218,6 +232,7 @@ class VirtualDetectorPage(QWidget):
     def _handle_finished(self, result: VirtualDetectorResult) -> None:
         self.result = result.image
         self.viewer.set_image(result.image)
+        self.virtual_image_ready.emit(result.image)
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
         self.run_button.setEnabled(True)
         self.export_button.setEnabled(True)

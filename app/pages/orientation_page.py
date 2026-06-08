@@ -9,12 +9,15 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -27,7 +30,7 @@ from app.services.orientation_service import (
 )
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
-from app.widgets.log_panel import LogPanel
+from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -62,6 +65,7 @@ class OrientationPage(QWidget):
         self.log_panel = log_panel
         self.workflow_state = workflow_state
         self.service = OrientationService()
+        self.cuda_enabled = False
         self.worker_thread: QThread | None = None
         self.worker: OrientationWorker | None = None
         self.current_process_step = WorkflowStep.ORIENTATION_PLAN
@@ -83,11 +87,27 @@ class OrientationPage(QWidget):
         self.min_match_peaks.setValue(3)
         self.inversion_symmetry = QCheckBox("Use inversion symmetry")
         self.inversion_symmetry.setChecked(True)
-        self.load_button = QPushButton("7.1 Load Crystal CIF")
-        self.plan_button = QPushButton("7.2 Create Orientation Plan")
-        self.match_button = QPushButton("7.3 Match and Show Orientation Map")
+        self.load_button = QPushButton("5.1 Load Crystal CIF")
+        self.plan_button = QPushButton("5.2 Create Orientation Plan")
+        self.match_button = QPushButton("5.3 Match and Show Orientation Map")
         self.buttons = [self.load_button, self.plan_button, self.match_button]
-        self.viewer = ImageViewer()
+        self.match_progress = QProgressBar()
+        self.match_progress.setRange(0, 0)
+        self.match_progress.setFormat("Matching orientation map...")
+        self.match_progress.setTextVisible(True)
+        self.match_progress.setVisible(False)
+        self.viewer_tabs = QTabWidget()
+        self.viewers: dict[str, ImageViewer] = {}
+        for name in [
+            "Orientation RGB",
+            "Correlation Score",
+            "Reliability",
+            "Peak Count",
+            "Ambiguity",
+        ]:
+            viewer = ImageViewer("color" if name == "Orientation RGB" else "intensity")
+            self.viewers[name] = viewer
+            self.viewer_tabs.addTab(viewer, name)
         self.load_button.clicked.connect(self.load_cif)
         self.plan_button.clicked.connect(
             lambda: self._run(
@@ -103,32 +123,48 @@ class OrientationPage(QWidget):
         )
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
-        form = QFormLayout()
-        form.addRow("Crystal", self.crystal_label)
-        form.addRow("accelerating voltage", self.voltage)
-        form.addRow("k_max", self.k_max)
-        form.addRow("zone-axis angle step", self.zone_step)
-        form.addRow("in-plane angle step", self.plane_step)
-        form.addRow("correlation kernel size", self.corr_kernel_size)
-        form.addRow("excitation-error sigma", self.sigma_excitation_error)
-        form.addRow("matches to return", self.num_matches)
-        form.addRow("minimum match angle", self.min_match_angle)
-        form.addRow("minimum matched peaks", self.min_match_peaks)
-        form.addRow("", self.inversion_symmetry)
-        row = QVBoxLayout()
-        for button in self.buttons:
-            row.addWidget(button)
+        crystal_group = QGroupBox("1 Crystal Reference")
+        crystal_layout = QVBoxLayout(crystal_group)
+        crystal_form = QFormLayout()
+        crystal_form.addRow("Crystal", self.crystal_label)
+        crystal_layout.addLayout(crystal_form)
+        crystal_layout.addWidget(self.load_button)
+
+        plan_group = QGroupBox("2 Orientation Plan Parameters")
+        plan_layout = QFormLayout(plan_group)
+        plan_layout.addRow("accelerating voltage", self.voltage)
+        plan_layout.addRow("k_max", self.k_max)
+        plan_layout.addRow("zone-axis angle step", self.zone_step)
+        plan_layout.addRow("in-plane angle step", self.plane_step)
+        plan_layout.addRow("correlation kernel size", self.corr_kernel_size)
+        plan_layout.addRow("excitation-error sigma", self.sigma_excitation_error)
+        plan_layout.addRow("", self.plan_button)
+
+        match_group = QGroupBox("3 Orientation Matching")
+        match_layout = QFormLayout(match_group)
+        match_layout.addRow("matches to return", self.num_matches)
+        match_layout.addRow("minimum match angle", self.min_match_angle)
+        match_layout.addRow("minimum matched peaks", self.min_match_peaks)
+        match_layout.addRow("", self.inversion_symmetry)
+        match_layout.addRow("", self.match_button)
+        match_layout.addRow("", self.match_progress)
+
+        status_group = QGroupBox("4 Results")
+        status_layout = QVBoxLayout(status_group)
+        status_layout.addWidget(self.status_label)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addLayout(form)
-        left_layout.addLayout(row)
-        left_layout.addWidget(self.status_label)
+        for button in self.buttons:
+            button.setMinimumHeight(30)
+        for group in [crystal_group, plan_group, match_group, status_group]:
+            left_layout.addWidget(group)
         left_layout.addStretch(1)
-        left.setFixedWidth(430)
+        left.setFixedWidth(380)
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(self.viewer)
-        splitter.setSizes([430, 900])
+        splitter.addWidget(self.viewer_tabs)
+        splitter.setSizes([380, 950])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         layout = QHBoxLayout(self)
@@ -145,6 +181,9 @@ class OrientationPage(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Orientation", str(exc))
 
+    def set_cuda_enabled(self, enabled: bool) -> None:
+        self.cuda_enabled = enabled
+
     def _params(self) -> OrientationPlanParams:
         return OrientationPlanParams(
             accelerating_voltage=self.voltage.value(),
@@ -153,6 +192,7 @@ class OrientationPage(QWidget):
             angle_step_in_plane=self.plane_step.value(),
             corr_kernel_size=self.corr_kernel_size.value(),
             sigma_excitation_error=self.sigma_excitation_error.value(),
+            cuda=self.cuda_enabled,
         )
 
     def _match_params(self) -> OrientationMatchParams:
@@ -168,7 +208,28 @@ class OrientationPage(QWidget):
             button.setEnabled(False)
         self.status_label.setText("Running orientation step...")
         self.current_process_step = process_step
+        self.match_progress.setVisible(process_step == WorkflowStep.ORIENTATION_MATCH)
         self.log_panel.process_started("Orientation analysis")
+        if process_step == WorkflowStep.ORIENTATION_PLAN:
+            params = self._params()
+            snapshot_params = {
+                "voltage": params.accelerating_voltage,
+                "k_max": params.k_max,
+                "zone_step": params.angle_step_zone_axis,
+                "plane_step": params.angle_step_in_plane,
+                "CUDA": params.cuda,
+            }
+        else:
+            params = self._match_params()
+            snapshot_params = {
+                "matches": params.num_matches_return,
+                "min_angle": params.min_angle_between_matches_deg,
+                "min_peaks": params.min_number_peaks,
+                "inversion_symmetry": params.inversion_symmetry,
+            }
+        self.log_panel.process_snapshot(
+            ProcessSnapshot(step="Orientation analysis", parameters=snapshot_params)
+        )
         self.worker_thread = QThread()
         self.worker = OrientationWorker(operation)
         self.worker.moveToThread(self.worker_thread)
@@ -185,8 +246,17 @@ class OrientationPage(QWidget):
 
     def _finished(self, result) -> None:
         if isinstance(result, OrientationResult):
-            self.viewer.set_image(result.preview.mean(axis=2))
+            for name, viewer in self.viewers.items():
+                image = result.quality.maps.get(name)
+                if image is None:
+                    viewer.clear(f"{name} is not available for this result.")
+                else:
+                    viewer.set_image(image)
             self.status_label.setText(f"Orientation map ready in {result.elapsed_seconds:.2f} s")
+            if result.quality.warnings:
+                self.status_label.setText(
+                    self.status_label.text() + " | " + " ".join(result.quality.warnings)
+                )
         else:
             self.status_label.setText(f"Orientation plan ready in {float(result):.2f} s")
         self.log_panel.log(self.status_label.text())
@@ -202,6 +272,7 @@ class OrientationPage(QWidget):
     def _clear(self) -> None:
         self.worker = None
         self.worker_thread = None
+        self.match_progress.setVisible(False)
         for button in self.buttons:
             button.setEnabled(True)
 
