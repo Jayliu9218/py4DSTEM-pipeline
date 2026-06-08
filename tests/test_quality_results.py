@@ -56,9 +56,40 @@ class _BraggVectorsWithoutRaw:
 class _Calibration:
     def __init__(self):
         self.p_ellipse = None
+        self.origin = None
+        self.q_pixel_size = None
+        self.q_pixel_units = None
+        self.qr_rotation = None
 
     def set_p_ellipse(self, value):
         self.p_ellipse = value
+
+    def get_ellipse(self):
+        return self.p_ellipse
+
+    def set_origin(self, value):
+        self.origin = value
+
+    def get_origin(self):
+        return self.origin
+
+    def set_Q_pixel_size(self, value):
+        self.q_pixel_size = value
+
+    def get_Q_pixel_size(self):
+        return self.q_pixel_size
+
+    def set_Q_pixel_units(self, value):
+        self.q_pixel_units = value
+
+    def get_Q_pixel_units(self):
+        return self.q_pixel_units
+
+    def set_QR_rotation_degrees(self, value):
+        self.qr_rotation = value
+
+    def get_QR_rotation_degrees(self):
+        return self.qr_rotation
 
 
 class _BraggVectorsForEllipse:
@@ -116,6 +147,25 @@ class QualityResultTests(unittest.TestCase):
         self.assertEqual(reference.calibration.p_ellipse, (1, 2, 0.1, 4))
         self.assertEqual(target.calibration.p_ellipse, (1, 2, 0.1, 4))
         self.assertIn("Ellipse Reference", result.message)
+
+    def test_single_calibration_correction_can_transfer_between_braggvectors(self) -> None:
+        service = BraggStrainService()
+        target = _BraggVectorsForEllipse()
+        reference = _BraggVectorsForEllipse()
+        reference.calibration.set_origin((4, 5))
+        reference.calibration.set_Q_pixel_size(0.03)
+        reference.calibration.set_Q_pixel_units("A^-1")
+
+        origin_result = service.transfer_calibration_correction(target, reference, "origin")
+        pixel_result = service.transfer_calibration_correction(target, reference, "pixel")
+
+        self.assertEqual(target.calibration.origin, (4, 5))
+        self.assertEqual(target.calibration.q_pixel_size, 0.03)
+        self.assertEqual(target.calibration.q_pixel_units, "A^-1")
+        self.assertTrue(target.calstate["center"])
+        self.assertTrue(target.calstate["pixel"])
+        self.assertIn("origin", origin_result.message)
+        self.assertIn("Q pixel size", pixel_result.message)
 
     def test_strain_map_does_not_block_on_incomplete_calibration(self) -> None:
         service = BraggStrainService()

@@ -8,14 +8,12 @@ import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -27,6 +25,7 @@ from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
+from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -71,33 +70,23 @@ class StrainMapPage(QWidget):
         self.worker: StrainMapWorker | None = None
         self.roi_pick_points: list[tuple[int, int]] = []
 
-        self.rotation_spin = self._float_spin(-360, 360, -21.5)
-        self.max_spacing_spin = self._float_spin(0.1, 1000, 3)
-        self.min_abs_spin = self._float_spin(0, 1e12, 1200)
-        self.min_rel_spin = self._float_spin(0, 1, 0, decimals=4, step=0.001)
-        self.min_spacing_spin = self._float_spin(0, 1000, 2)
-        self.edge_spin = QSpinBox()
-        self.edge_spin.setRange(0, 10000)
-        self.edge_spin.setValue(1)
-        self.max_peaks_spin = QSpinBox()
-        self.max_peaks_spin.setRange(1, 10000)
-        self.max_peaks_spin.setValue(150)
+        self.rotation_spin = self._float_input(-360, 360, -21.5, unit="deg")
+        self.max_spacing_spin = self._float_input(0.1, 1000, 3, unit="px")
+        self.min_abs_spin = self._float_input(0, 1e12, 1200, unit="int.")
+        self.min_rel_spin = self._float_input(0, 1, 0, decimals=4, unit="ratio")
+        self.min_spacing_spin = self._float_input(0, 1000, 2, unit="px")
+        self.edge_spin = self._int_input(0, 10000, 1, unit="px")
+        self.max_peaks_spin = self._int_input(1, 10000, 150, unit="peaks")
         self.reference_mode = QComboBox()
         self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask"])
         self.color_mode = QComboBox()
         self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
-        self.color_min_spin = self._float_spin(-1e6, 1e6, -1)
-        self.color_max_spin = self._float_spin(-1e6, 1e6, 1)
-        self.roi_rx_start = QSpinBox()
-        self.roi_rx_end = QSpinBox()
-        self.roi_ry_start = QSpinBox()
-        self.roi_ry_end = QSpinBox()
-        for spin in [self.roi_rx_start, self.roi_rx_end, self.roi_ry_start, self.roi_ry_end]:
-            spin.setRange(0, 100000)
-        self.roi_rx_start.setValue(34)
-        self.roi_rx_end.setValue(42)
-        self.roi_ry_start.setValue(8)
-        self.roi_ry_end.setValue(16)
+        self.color_min_spin = self._float_input(-1e6, 1e6, -1, unit="value")
+        self.color_max_spin = self._float_input(-1e6, 1e6, 1, unit="value")
+        self.roi_rx_start = self._int_input(0, 100000, 34, unit="px")
+        self.roi_rx_end = self._int_input(0, 100000, 42, unit="px")
+        self.roi_ry_start = self._int_input(0, 100000, 8, unit="px")
+        self.roi_ry_end = self._int_input(0, 100000, 16, unit="px")
 
         self.run_button = QPushButton("Run Strain Map")
         self.pick_roi_button = QPushButton("Pick ROI From Map")
@@ -258,13 +247,27 @@ class StrainMapPage(QWidget):
         layout = QHBoxLayout(self)
         layout.addWidget(self.viewer_tabs)
 
-    def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(decimals)
-        spin.setSingleStep(step)
-        spin.setValue(value)
-        return spin
+    def _float_input(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        decimals: int = 2,
+        unit: str = "",
+        step: float = 1,
+    ) -> NumericLineEdit:
+        control = NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)
+        control.setSingleStep(step)
+        return control
+
+    def _int_input(
+        self,
+        minimum: int,
+        maximum: int,
+        value: int,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=0, unit=unit, integer=True)
 
     def _params(self) -> StrainMapParams:
         return StrainMapParams(
