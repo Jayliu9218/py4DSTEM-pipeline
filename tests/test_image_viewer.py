@@ -33,6 +33,37 @@ class ImageViewerTests(unittest.TestCase):
 
         self.assertEqual(viewer.scaling, "linear")
 
+    def test_colormap_can_be_changed(self) -> None:
+        viewer = ImageViewer()
+
+        viewer.set_colormap("magma")
+
+        self.assertEqual(viewer.colormap, "magma")
+
+    def test_interactive_roi_rect_can_be_set_and_read(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_image(np.ones((10, 12)))
+
+        viewer.set_interactive_roi_rect(2, 6, 3, 8)
+
+        self.assertEqual(viewer.interactive_roi_rect(), (2, 6, 3, 8))
+
+    def test_interactive_circle_can_be_set_and_read(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_image(np.ones((10, 12)))
+
+        viewer.set_interactive_circle(5, 6, 3)
+
+        self.assertEqual(viewer.interactive_circle(), (5.0, 6.0, 3.0))
+
+    def test_interactive_ellipse_can_be_set_and_read(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_image(np.ones((10, 12)))
+
+        viewer.set_interactive_ellipse(5, 6, 3, 2, 15)
+
+        self.assertEqual(viewer.interactive_ellipse(), (5.0, 6.0, 3.0, 2.0, 15.0))
+
     def test_intensity_scaling_changes_grayscale_display(self) -> None:
         viewer = ImageViewer()
         image = np.asarray([[0.0, 3.0]])
