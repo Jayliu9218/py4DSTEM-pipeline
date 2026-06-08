@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QPlainTextEdit, QSplitter, QVBoxLayout, QWidget
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    step: str
+    parameters: dict[str, object]
+    warnings: tuple[str, ...] = ()
 
 
 class LogPanel(QWidget):
@@ -42,6 +50,14 @@ class LogPanel(QWidget):
 
     def process_progress(self, message: str) -> None:
         self.process(f"PROGRESS {message}")
+
+    def process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+        self.process(f"STEP  {snapshot.step}")
+        if snapshot.parameters:
+            params = ", ".join(f"{key}={value}" for key, value in snapshot.parameters.items())
+            self.process(f"PARAM {params}")
+        for warning in snapshot.warnings:
+            self.process(f"WARN  {warning}")
 
     def _make_output(self) -> QPlainTextEdit:
         output = QPlainTextEdit()

@@ -5,13 +5,15 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDoubleSpinBox,
-    QCheckBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -22,7 +24,7 @@ from PySide6.QtWidgets import (
 from app.services.bragg_strain_service import BraggStrainService, CalibrationActionResult
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
-from app.widgets.log_panel import LogPanel
+from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -70,10 +72,22 @@ class CalibrationPage(QWidget):
         self.ellipse_label = QLabel("-")
         self.pixel_label = QLabel("-")
         self.rotate_label = QLabel("-")
+        self.decision_labels = {
+            "origin": QLabel("-"),
+            "ellipse": QLabel("-"),
+            "pixel": QLabel("-"),
+            "rotate": QLabel("-"),
+        }
         self.complete_label = QLabel("-")
         self.applied_label = QLabel("none")
+        self.origin_measurement_label = QLabel("-")
+        self.origin_measurement_label.setWordWrap(True)
+        self.ellipse_measurement_label = QLabel("-")
+        self.ellipse_measurement_label.setWordWrap(True)
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
+        self.analysis_target = QComboBox()
+        self.analysis_target.addItems(["Preview", "ACOM", "Strain", "DPC"])
         self.ellipse_inner = self._float_spin(0.1, 100000, 290)
         self.ellipse_outer = self._float_spin(0.1, 100000, 360)
         self.sampling_spin = QSpinBox()
@@ -81,23 +95,27 @@ class CalibrationPage(QWidget):
         self.sampling_spin.setValue(8)
         self.pixel_spin = self._float_spin(0.000001, 1000, 0.02, decimals=6)
         self.rotation_spin = self._float_spin(-360, 360, -83)
-        self.refresh_button = QPushButton("Refresh Status")
-        self.origin_button = QPushButton("6.1 Measure/Fit Origin")
-        self.ellipse_button = QPushButton("6.2 Fit Ellipticity")
-        self.pixel_button = QPushButton("6.3 Set Pixel Size")
-        self.rotation_button = QPushButton("6.4 Set QR Rotation")
-        self.center_check = QCheckBox("Origin")
-        self.ellipse_check = QCheckBox("Ellipse")
-        self.pixel_check = QCheckBox("Pixel size")
-        self.rotate_check = QCheckBox("QR rotation")
-        self.apply_button = QPushButton("Apply Selected Corrections")
+        self.refresh_button = QPushButton("Check Existing Calibration")
+        self.origin_button = QPushButton("Measure Origin")
+        self.ellipse_button = QPushButton("Fit Ellipse")
+        self.pixel_button = QPushButton("Set Q Pixel Size")
+        self.rotation_button = QPushButton("Set QR Rotation")
+        self.apply_origin_button = QPushButton("Apply Origin Correction")
+        self.apply_ellipse_button = QPushButton("Apply Ellipse Correction")
+        self.apply_pixel_button = QPushButton("Apply Pixel Size Correction")
+        self.apply_rotation_button = QPushButton("Apply QR Rotation Correction")
+        self.validate_button = QPushButton("Validate Calibration")
         self.buttons = [
             self.refresh_button,
             self.origin_button,
             self.ellipse_button,
             self.pixel_button,
             self.rotation_button,
-            self.apply_button,
+            self.apply_origin_button,
+            self.apply_ellipse_button,
+            self.apply_pixel_button,
+            self.apply_rotation_button,
+            self.validate_button,
         ]
         self.viewers = QTabWidget()
 
@@ -108,6 +126,9 @@ class CalibrationPage(QWidget):
                 "Measure and fit origin",
                 WorkflowStep.CALIBRATION_ORIGIN,
             )
+        )
+        self.apply_origin_button.clicked.connect(
+            lambda: self._apply_single_correction("center", "Apply origin correction")
         )
         self.ellipse_button.clicked.connect(
             lambda: self._run(
@@ -121,6 +142,9 @@ class CalibrationPage(QWidget):
                 WorkflowStep.CALIBRATION_ELLIPSE,
             )
         )
+        self.apply_ellipse_button.clicked.connect(
+            lambda: self._apply_single_correction("ellipse", "Apply ellipse correction")
+        )
         self.pixel_button.clicked.connect(
             lambda: self._run(
                 lambda: self.service.set_pixel_size(
@@ -129,6 +153,9 @@ class CalibrationPage(QWidget):
                 "Set Q pixel size",
                 WorkflowStep.CALIBRATION_PIXEL,
             )
+        )
+        self.apply_pixel_button.clicked.connect(
+            lambda: self._apply_single_correction("pixel", "Apply pixel-size correction")
         )
         self.rotation_button.clicked.connect(
             lambda: self._run(
@@ -139,25 +166,34 @@ class CalibrationPage(QWidget):
                 WorkflowStep.CALIBRATION_ROTATION,
             )
         )
-        self.apply_button.clicked.connect(
+        self.apply_rotation_button.clicked.connect(
+            lambda: self._apply_single_correction("rotate", "Apply QR rotation correction")
+        )
+        self.validate_button.clicked.connect(
             lambda: self._run(
-                lambda: self.service.set_calibration_state(
-                    self.braggvectors_provider(),
-                    self.center_check.isChecked(),
-                    self.ellipse_check.isChecked(),
-                    self.pixel_check.isChecked(),
-                    self.rotate_check.isChecked(),
-                ),
-                "Apply calibration corrections",
+                lambda: self.service.validate_calibration(self.braggvectors_provider()),
+                "Validate calibration",
                 WorkflowStep.CALIBRATION_APPLY,
             )
         )
+        self.analysis_target.currentTextChanged.connect(lambda _text: self._refresh_decision_panel())
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
+        self.show_braggvectors_histogram()
 
     def _build_layout(self) -> None:
+        status_group = QGroupBox("Check Existing Calibration")
+        status_layout = QVBoxLayout(status_group)
         status_form = QFormLayout()
+        status_form.addRow("Analysis target", self.analysis_target)
+        for name, label in [
+            ("Origin requirement", self.decision_labels["origin"]),
+            ("Ellipse requirement", self.decision_labels["ellipse"]),
+            ("Q pixel requirement", self.decision_labels["pixel"]),
+            ("QR rotation requirement", self.decision_labels["rotate"]),
+        ]:
+            status_form.addRow(name, label)
         for label, widget in [
             ("Source", self.source_label),
             ("origin", self.origin_label),
@@ -168,36 +204,63 @@ class CalibrationPage(QWidget):
             ("applied corrections", self.applied_label),
         ]:
             status_form.addRow(label, widget)
-        controls = QFormLayout()
-        controls.addRow("ellipse inner radius", self.ellipse_inner)
-        controls.addRow("ellipse outer radius", self.ellipse_outer)
-        controls.addRow("BVM sampling", self.sampling_spin)
-        controls.addRow("Q pixel size (A^-1)", self.pixel_spin)
-        controls.addRow("QR rotation (degrees)", self.rotation_spin)
-        correction_row = QHBoxLayout()
-        for checkbox in [
-            self.center_check,
-            self.ellipse_check,
-            self.pixel_check,
-            self.rotate_check,
-        ]:
-            correction_row.addWidget(checkbox)
-        controls.addRow("Manual correction state", correction_row)
-        buttons = QVBoxLayout()
-        for button in self.buttons:
-            buttons.addWidget(button)
+        status_layout.addLayout(status_form)
+        status_layout.addWidget(self.refresh_button)
+
+        origin_group = QGroupBox("Origin Calibration")
+        origin_layout = QVBoxLayout(origin_group)
+        origin_layout.addWidget(self.origin_measurement_label)
+        origin_layout.addWidget(self.origin_button)
+        origin_layout.addWidget(self.apply_origin_button)
+
+        ellipse_group = QGroupBox("Ellipse Calibration")
+        ellipse_layout = QFormLayout(ellipse_group)
+        ellipse_layout.addRow("fit result", self.ellipse_measurement_label)
+        ellipse_layout.addRow("ellipse inner radius", self.ellipse_inner)
+        ellipse_layout.addRow("ellipse outer radius", self.ellipse_outer)
+        ellipse_layout.addRow("BVM sampling", self.sampling_spin)
+        ellipse_layout.addRow("", self.ellipse_button)
+        ellipse_layout.addRow("", self.apply_ellipse_button)
+
+        pixel_group = QGroupBox("Q Pixel Size")
+        pixel_layout = QFormLayout(pixel_group)
+        pixel_layout.addRow("Q pixel size (A^-1)", self.pixel_spin)
+        pixel_layout.addRow("", self.pixel_button)
+        pixel_layout.addRow("", self.apply_pixel_button)
+
+        rotation_group = QGroupBox("QR Rotation")
+        rotation_layout = QFormLayout(rotation_group)
+        rotation_layout.addRow("QR rotation (degrees)", self.rotation_spin)
+        rotation_layout.addRow("", self.rotation_button)
+        rotation_layout.addRow("", self.apply_rotation_button)
+
+        validate_group = QGroupBox("Validate Calibration")
+        validate_layout = QVBoxLayout(validate_group)
+        validate_layout.addWidget(self.validate_button)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addLayout(status_form)
-        left_layout.addLayout(controls)
-        left_layout.addLayout(buttons)
+        for button in self.buttons:
+            button.setMinimumHeight(30)
+        for group in [
+            status_group,
+            origin_group,
+            ellipse_group,
+            pixel_group,
+            rotation_group,
+            validate_group,
+        ]:
+            left_layout.addWidget(group)
         left_layout.addWidget(self.status_label)
         left_layout.addStretch(1)
-        left.setFixedWidth(430)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(left)
+        scroll.setFixedWidth(360)
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left)
+        splitter.addWidget(scroll)
         splitter.addWidget(self.viewers)
-        splitter.setSizes([430, 900])
+        splitter.setSizes([360, 970])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         layout = QHBoxLayout(self)
@@ -215,19 +278,47 @@ class CalibrationPage(QWidget):
         self.complete_label.setText("yes" if status.complete else "no")
         if braggvectors is not None:
             state = braggvectors.calstate
-            for checkbox, name in [
-                (self.center_check, "center"),
-                (self.ellipse_check, "ellipse"),
-                (self.pixel_check, "pixel"),
-                (self.rotate_check, "rotate"),
-            ]:
-                checkbox.blockSignals(True)
-                checkbox.setChecked(state.get(name, False))
-                checkbox.blockSignals(False)
             enabled = [name for name, value in state.items() if value]
             self.applied_label.setText(", ".join(enabled) if enabled else "none")
         else:
             self.applied_label.setText("none")
+            enabled = []
+        self._style_status_labels(status, set(enabled))
+        self._refresh_decision_panel()
+        self.show_braggvectors_histogram()
+
+    def show_braggvectors_histogram(self, make_current: bool = False) -> None:
+        braggvectors = self.braggvectors_provider()
+        if braggvectors is None:
+            return
+        try:
+            image = braggvectors.histogram(mode="raw").data
+        except Exception as exc:
+            self.log_panel.log(f"Could not display BraggVectors histogram: {exc}")
+            return
+        self._set_viewer_tab("BraggVectors histogram", image, make_current=make_current)
+
+    def _apply_single_correction(self, calstate_name: str, process_name: str) -> None:
+        braggvectors = self.braggvectors_provider()
+        state = dict(getattr(braggvectors, "calstate", {})) if braggvectors is not None else {}
+        next_state = {
+            "center": bool(state.get("center", False)),
+            "ellipse": bool(state.get("ellipse", False)),
+            "pixel": bool(state.get("pixel", False)),
+            "rotate": bool(state.get("rotate", False)),
+        }
+        next_state[calstate_name] = True
+        self._run(
+            lambda: self.service.set_calibration_state(
+                self.braggvectors_provider(),
+                next_state["center"],
+                next_state["ellipse"],
+                next_state["pixel"],
+                next_state["rotate"],
+            ),
+            process_name,
+            WorkflowStep.CALIBRATION_APPLY,
+        )
 
     def _run(
         self,
@@ -244,6 +335,19 @@ class CalibrationPage(QWidget):
         self.current_process_name = process_name
         self.current_process_step = process_step
         self.log_panel.process_started(process_name)
+        self.log_panel.process_snapshot(
+            ProcessSnapshot(
+                step=process_name,
+                parameters={
+                    "analysis_target": self.analysis_target.currentText(),
+                    "ellipse_inner": self.ellipse_inner.value(),
+                    "ellipse_outer": self.ellipse_outer.value(),
+                    "sampling": self.sampling_spin.value(),
+                    "q_pixel_size": self.pixel_spin.value(),
+                    "qr_rotation": self.rotation_spin.value(),
+                },
+            )
+        )
         self.worker_thread = QThread()
         self.worker = CalibrationWorker(operation)
         self.worker.moveToThread(self.worker_thread)
@@ -264,9 +368,13 @@ class CalibrationPage(QWidget):
         self.log_panel.process_finished(self.current_process_name, result.message)
         self.viewers.clear()
         for name, image in result.images.items():
-            viewer = ImageViewer()
-            viewer.set_image(image)
-            self.viewers.addTab(viewer, name)
+            self._set_viewer_tab(
+                name,
+                image,
+                make_current=True,
+                overlay=result.overlays.get(name),
+            )
+        self._show_measurements(result)
         self.refresh_status()
         self.workflow_state.mark_completed(self.current_process_step)
 
@@ -290,6 +398,9 @@ class CalibrationPage(QWidget):
         return spin
 
     def _watch_parameters(self) -> None:
+        self.workflow_state.watch(
+            self.analysis_target, WorkflowStep.CALIBRATION_APPLY, "currentTextChanged"
+        )
         for spin in [self.ellipse_inner, self.ellipse_outer, self.sampling_spin]:
             self.workflow_state.watch(spin, WorkflowStep.CALIBRATION_ELLIPSE, "valueChanged")
         self.workflow_state.watch(
@@ -298,14 +409,6 @@ class CalibrationPage(QWidget):
         self.workflow_state.watch(
             self.rotation_spin, WorkflowStep.CALIBRATION_ROTATION, "valueChanged"
         )
-        for checkbox in [
-            self.center_check,
-            self.ellipse_check,
-            self.pixel_check,
-            self.rotate_check,
-        ]:
-            self.workflow_state.watch(checkbox, WorkflowStep.CALIBRATION_APPLY, "toggled")
-
     def _refresh_stale_status(self) -> None:
         steps = [
             WorkflowStep.CALIBRATION_ORIGIN,
@@ -316,3 +419,111 @@ class CalibrationPage(QWidget):
         ]
         if self.workflow_state.any_stale(steps):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
+
+    def _style_status_labels(self, status, applied: set[str]) -> None:
+        for key, label, value, calstate_name in [
+            ("origin", self.origin_label, status.origin, "center"),
+            ("ellipse", self.ellipse_label, status.ellipse, "ellipse"),
+            ("pixel", self.pixel_label, status.pixel, "pixel"),
+            ("rotate", self.rotate_label, status.rotate, "rotate"),
+        ]:
+            if calstate_name in applied:
+                color = "#1f7a3f"
+            elif value == "missing":
+                color = "#b3261e" if key in self._required_corrections() else "#767676"
+            else:
+                color = "#9a6700"
+            label.setStyleSheet(f"color: {color}; font-weight: 600;")
+
+    def _refresh_decision_panel(self) -> None:
+        required = self._required_corrections()
+        recommended = self._recommended_corrections()
+        for key, label in self.decision_labels.items():
+            if key in required:
+                text = "Required"
+                color = "#b3261e"
+            elif key in recommended:
+                text = "Recommended"
+                color = "#9a6700"
+            else:
+                text = "Optional"
+                color = "#767676"
+            label.setText(text)
+            label.setStyleSheet(f"color: {color}; font-weight: 600;")
+
+    def _required_corrections(self) -> set[str]:
+        target = self.analysis_target.currentText()
+        if target == "Strain":
+            return {"origin", "ellipse", "pixel", "rotate"}
+        if target == "ACOM":
+            return {"origin", "pixel"}
+        if target == "DPC":
+            return {"origin", "rotate"}
+        return {"origin"}
+
+    def _recommended_corrections(self) -> set[str]:
+        target = self.analysis_target.currentText()
+        if target == "ACOM":
+            return {"ellipse", "rotate"}
+        if target == "DPC":
+            return {"pixel"}
+        if target == "Preview":
+            return {"pixel"}
+        return set()
+
+    def _set_viewer_tab(
+        self,
+        name: str,
+        image,
+        make_current: bool = False,
+        overlay: dict[str, float | str] | None = None,
+    ) -> None:
+        for index in range(self.viewers.count()):
+            if self.viewers.tabText(index) == name:
+                viewer = self.viewers.widget(index)
+                if isinstance(viewer, ImageViewer):
+                    viewer.set_image(image)
+                    self._apply_overlay(viewer, overlay)
+                    if make_current:
+                        self.viewers.setCurrentIndex(index)
+                return
+        viewer = ImageViewer()
+        viewer.set_image(image)
+        self._apply_overlay(viewer, overlay)
+        self.viewers.addTab(viewer, name)
+        if make_current:
+            self.viewers.setCurrentWidget(viewer)
+
+    def _apply_overlay(self, viewer: ImageViewer, overlay: dict[str, float | str] | None) -> None:
+        if overlay is None:
+            return
+        if overlay.get("kind") == "circle":
+            viewer.set_circle_overlay(
+                float(overlay.get("x", 0.0)),
+                float(overlay.get("y", 0.0)),
+                float(overlay.get("r", 0.0)),
+                color="r",
+            )
+        elif overlay.get("kind") == "ellipse":
+            viewer.set_ellipse_overlay(
+                float(overlay.get("x", 0.0)),
+                float(overlay.get("y", 0.0)),
+                float(overlay.get("a", 0.0)),
+                float(overlay.get("b", 0.0)),
+                float(overlay.get("theta", 0.0)),
+                color="r",
+            )
+
+    def _show_measurements(self, result: CalibrationActionResult) -> None:
+        if not result.measurements:
+            return
+        if self.current_process_step == WorkflowStep.CALIBRATION_ORIGIN:
+            self.origin_measurement_label.setText(
+                "x={x:.4g}, y={y:.4g}".format(**result.measurements)
+            )
+        elif self.current_process_step == WorkflowStep.CALIBRATION_ELLIPSE:
+            self.ellipse_measurement_label.setText(
+                "a={a:.4g}, b={b:.4g}, ellipticity={ellipticity:.4g}".format(
+                    **result.measurements
+                )
+            )
