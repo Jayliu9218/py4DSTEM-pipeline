@@ -104,7 +104,7 @@ class OrientationService:
                 min_angle_between_matches_deg=params.min_angle_between_matches_deg,
                 min_number_peaks=params.min_number_peaks,
                 inversion_symmetry=params.inversion_symmetry,
-                progress_bar=False,
+                progress_bar=True,
             )
             images, fig, _ = crystal.plot_orientation_maps(
                 orientation_map=orientation_map,

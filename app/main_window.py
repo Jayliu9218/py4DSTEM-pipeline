@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -21,7 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTabWidget,
@@ -46,12 +45,13 @@ from app.services.workflow_state import WorkflowState
 from app.widgets.hdf5_tree_widget import Hdf5TreeWidget
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
+from app.widgets.numeric_line_edit import NumericLineEdit
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("py4DSTEM Pipeline - HDF5 Viewer")
+        self.setWindowTitle("py4DSTEM Pipeline")
         self.resize(1600, 900)
 
         self.hdf5_service = Hdf5Service()
@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
             datacube_provider=self._get_py4dstem_datacube,
             braggvectors_provider=self._get_braggvectors,
             ellipse_braggvectors_provider=self._get_ellipse_reference_braggvectors,
+            transfer_targets_provider=self._get_calibration_transfer_targets,
             rotation_reference_provider=self._get_rotation_reference_image,
             service=self.bragg_strain_service,
             log_panel=self.log_panel,
@@ -138,10 +139,8 @@ class MainWindow(QMainWindow):
         self.attrs_table.setHorizontalHeaderLabels(["Attribute", "Value"])
         self.attrs_table.horizontalHeader().setStretchLastSection(True)
 
-        self.rx_spin = QSpinBox()
-        self.ry_spin = QSpinBox()
-        self.rx_spin.setMinimum(0)
-        self.ry_spin.setMinimum(0)
+        self.rx_spin = NumericLineEdit(0, 100000, 0, decimals=0, unit="px", integer=True)
+        self.ry_spin = NumericLineEdit(0, 100000, 0, decimals=0, unit="px", integer=True)
         self.rx_spin.valueChanged.connect(self._refresh_current_4d_image)
         self.ry_spin.valueChanged.connect(self._refresh_current_4d_image)
 
@@ -193,14 +192,17 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         self.mode_menu = self.menuBar().addMenu("&Mode")
-        self.mode_menu.addAction("Basic Mode")
-        self.mode_menu.addAction("Advanced Mode")
+        self.mode_menu.addAction("Basic")
+        self.mode_menu.addAction("Amorphous")
+        self.mode_menu.addAction("Advanced")
 
         self.setting_action = self.menuBar().addAction("&Setting")
         self.setting_action.triggered.connect(self.open_settings)
 
         self.help_menu = self.menuBar().addMenu("&Help")
-        self.help_menu.addAction("About py4DSTEM Pipeline")
+        self.help_menu.addAction("About")
+        self.help_menu.addAction("License")
+        self.help_menu.addAction("Tutorials")
 
     def open_settings(self) -> None:
         dialog = QDialog(self)
@@ -259,8 +261,8 @@ class MainWindow(QMainWindow):
 
         data_browser = QWidget()
         data_browser_layout = QVBoxLayout(data_browser)
-        data_browser_layout.setContentsMargins(0, 0, 0, 0)
-        self.tree.setFixedHeight(360)
+        data_browser_layout.setContentsMargins(4, 4, 4, 0)
+        self.tree.setFixedHeight(300)
         data_browser_layout.addWidget(self.tree)
         self.sidebar_controls = QStackedWidget()
         data_browser_layout.addWidget(self.sidebar_controls, 1)
@@ -268,7 +270,7 @@ class MainWindow(QMainWindow):
 
         check_data_page = QWidget()
         check_data_layout = QHBoxLayout(check_data_page)
-        check_data_layout.setContentsMargins(8, 8, 8, 8)
+        check_data_layout.setContentsMargins(4, 0, 4, 0)
         top_splitter = QSplitter(Qt.Horizontal)
         top_splitter.addWidget(image_splitter)
         top_splitter.addWidget(self.virtual_detector_page)
@@ -287,7 +289,7 @@ class MainWindow(QMainWindow):
         workspace = QSplitter(Qt.Vertical)
         workspace.addWidget(tabs)
         workspace.addWidget(self.log_panel)
-        workspace.setSizes([650, 190])
+        workspace.setSizes([850,10])
         root_splitter = QSplitter(Qt.Horizontal)
         root_splitter.addWidget(data_browser)
         root_splitter.addWidget(workspace)
@@ -303,14 +305,11 @@ class MainWindow(QMainWindow):
     def _build_role_panel(self) -> QGroupBox:
         panel = QGroupBox("Dataset Roles / Sources")
         layout = QVBoxLayout(panel)
-        auto_button = QPushButton("Auto Detect DataCube")
-        auto_button.clicked.connect(self.auto_detect_datacube)
-        layout.addWidget(auto_button)
         for label, role in [
-            ("Set as Target DataCube", "target_datacube"),
-            ("Set as Ellipse Reference", "polycrystal_calibration"),
+            ("Set as Target", "target_datacube"),
             ("Set as Vacuum Probe", "vacuum_probe"),
-            ("Set as Rotation Reference", "defocused_cbed"),
+            ("Set as Ellipse Ref", "polycrystal_calibration"),
+            ("Set as Rotation Ref", "defocused_cbed"),
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
@@ -336,7 +335,7 @@ class MainWindow(QMainWindow):
         return scroll
 
     def _compact_input_controls(self) -> None:
-        for widget_type in (QSpinBox, QDoubleSpinBox, QComboBox):
+        for widget_type in (NumericLineEdit, QComboBox):
             for widget in self.findChildren(widget_type):
                 widget.setMinimumWidth(110)
                 widget.setMaximumWidth(180)
@@ -769,6 +768,20 @@ class MainWindow(QMainWindow):
         )
         return result.braggvectors
 
+    def _get_calibration_transfer_targets(self) -> list[tuple[str, object]]:
+        targets: list[tuple[str, object]] = []
+        for path, braggvectors in self.braggvectors_by_datacube.items():
+            if path == self.current_dataset_path:
+                continue
+            targets.append((path, braggvectors))
+        for path, braggvectors in self.reference_braggvectors_cache.items():
+            if path == self.current_dataset_path:
+                continue
+            if any(path == existing_path for existing_path, _ in targets):
+                continue
+            targets.append((path, braggvectors))
+        return targets
+
     def _get_rotation_reference_image(self):
         images: dict[str, np.ndarray] = {}
         target_image = self._get_target_bright_field_image()
@@ -873,34 +886,6 @@ class MainWindow(QMainWindow):
             },
             attrs=self.current_attrs,
         )
-
-    def auto_detect_datacube(self) -> None:
-        if self.current_file is None:
-            QMessageBox.information(self, "Auto Detect", "Open an HDF5 or EMD file first.")
-            return
-        candidate = self._find_first_4d_dataset()
-        if candidate is None:
-            QMessageBox.information(self, "Auto Detect", "No numeric 4D dataset was found.")
-            return
-        self.workflow_state.set_dataset_role("target_datacube", candidate)
-        self._refresh_role_labels()
-        self.log_panel.log(f"Auto detected Target DataCube: {candidate}")
-        self._handle_node_selected(candidate, "dataset")
-
-    def _find_first_4d_dataset(self) -> str | None:
-        if self.current_file is None:
-            return None
-        candidate: str | None = None
-
-        def visitor(name: str, node) -> None:
-            nonlocal candidate
-            if candidate is not None:
-                return
-            if isinstance(node, h5py.Dataset) and len(tuple(node.shape)) == 4:
-                candidate = "/" + name.strip("/")
-
-        self.current_file.visititems(visitor)
-        return candidate
 
     def _set_preview_empty(self, message: str | None = None) -> None:
         base = message or "No DataCube loaded. Open an HDF5 file and select a 4D-STEM dataset."

@@ -6,7 +6,6 @@ from typing import Callable
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -14,7 +13,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -26,6 +24,7 @@ from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
+from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -54,6 +53,7 @@ class CalibrationPage(QWidget):
         datacube_provider: Callable[[], object | None],
         braggvectors_provider: Callable[[], object | None],
         ellipse_braggvectors_provider: Callable[[], object | None] | None,
+        transfer_targets_provider: Callable[[], list[tuple[str, object]]] | None,
         rotation_reference_provider: Callable[[], object | None] | None,
         service: BraggStrainService,
         log_panel: LogPanel,
@@ -64,6 +64,7 @@ class CalibrationPage(QWidget):
         self.datacube_provider = datacube_provider
         self.braggvectors_provider = braggvectors_provider
         self.ellipse_braggvectors_provider = ellipse_braggvectors_provider
+        self.transfer_targets_provider = transfer_targets_provider
         self.rotation_reference_provider = rotation_reference_provider
         self.service = service
         self.log_panel = log_panel
@@ -95,25 +96,30 @@ class CalibrationPage(QWidget):
         self.status_label.setWordWrap(True)
         self.analysis_target = QComboBox()
         self.analysis_target.addItems(["Preview", "ACOM", "Strain", "DPC"])
-        self.ellipse_center_x = self._float_spin(0, 100000, 0)
-        self.ellipse_center_y = self._float_spin(0, 100000, 0)
-        self.ellipse_inner = self._float_spin(0.1, 100000, 290)
-        self.ellipse_outer = self._float_spin(0.1, 100000, 360)
-        self.sampling_spin = QSpinBox()
-        self.sampling_spin.setRange(1, 64)
-        self.sampling_spin.setValue(8)
-        self.pixel_spin = self._float_spin(0.000001, 1000, 0.02, decimals=6)
-        self.rotation_spin = self._float_spin(-360, 360, -83)
-        self.refresh_button = QPushButton("Check Existing Calibration")
+        self.ellipse_center_x = self._float_input(0, 100000, 0, unit="px")
+        self.ellipse_center_y = self._float_input(0, 100000, 0, unit="px")
+        self.ellipse_inner = self._float_input(0.1, 100000, 50, unit="px")
+        self.ellipse_outer = self._float_input(0.1, 100000, 100, unit="px")
+        self.sampling_spin = self._int_input(1, 64, 8, unit="x")
+        self.pixel_spin = self._float_input(0.000001, 1000, 0.02, decimals=6, unit="A^-1")
+        self.rotation_spin = self._float_input(-360, 360, -83, unit="deg")
+        self.refresh_button = QPushButton("Check Calibration")
         self.origin_button = QPushButton("Measure Origin")
         self.draw_ellipse_circle_button = QPushButton("Draw Ring Fit ROI")
         self.ellipse_button = QPushButton("Fit Ellipse")
         self.pixel_button = QPushButton("Set Q Pixel Size")
         self.rotation_button = QPushButton("Set QR Rotation")
-        self.apply_origin_button = QPushButton("Apply Origin Correction")
-        self.apply_ellipse_button = QPushButton("Apply Ellipse Correction")
-        self.apply_pixel_button = QPushButton("Apply Pixel Size Correction")
-        self.apply_rotation_button = QPushButton("Apply QR Rotation Correction")
+        self.apply_origin_button = QPushButton("Apply")
+        self.apply_ellipse_button = QPushButton("Apply")
+        self.apply_pixel_button = QPushButton("Apply")
+        self.apply_rotation_button = QPushButton("Apply")
+        self.transfer_correction = QComboBox()
+        self.transfer_correction.addItem("Origin", "origin")
+        self.transfer_correction.addItem("Ellipse", "ellipse")
+        self.transfer_correction.addItem("Q Pixel Size", "pixel")
+        self.transfer_correction.addItem("QR Rotation", "rotate")
+        self.transfer_target = QComboBox()
+        self.transfer_button = QPushButton("Transfer Calibration")
         self.validate_button = QPushButton("Validate Calibration")
         self.buttons = [
             self.refresh_button,
@@ -126,6 +132,7 @@ class CalibrationPage(QWidget):
             self.apply_ellipse_button,
             self.apply_pixel_button,
             self.apply_rotation_button,
+            self.transfer_button,
             self.validate_button,
         ]
         self.viewers = QTabWidget()
@@ -193,6 +200,7 @@ class CalibrationPage(QWidget):
         self.apply_rotation_button.clicked.connect(
             lambda: self._apply_single_correction("rotate", "Apply QR rotation correction")
         )
+        self.transfer_button.clicked.connect(self._transfer_selected_correction)
         self.validate_button.clicked.connect(
             lambda: self._run(
                 lambda: self.service.validate_calibration(self.braggvectors_provider()),
@@ -204,18 +212,19 @@ class CalibrationPage(QWidget):
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
+        self.refresh_transfer_targets()
         self.show_braggvectors_histogram()
 
     def _build_layout(self) -> None:
-        status_group = QGroupBox("Check Existing Calibration")
+        status_group = QGroupBox("Existing Calibration")
         status_layout = QVBoxLayout(status_group)
         status_form = QFormLayout()
         status_form.addRow("Analysis target", self.analysis_target)
         for name, label in [
-            ("Origin requirement", self.decision_labels["origin"]),
-            ("Ellipse requirement", self.decision_labels["ellipse"]),
-            ("Q pixel requirement", self.decision_labels["pixel"]),
-            ("QR rotation requirement", self.decision_labels["rotate"]),
+            ("Origin", self.decision_labels["origin"]),
+            ("Ellipse", self.decision_labels["ellipse"]),
+            ("Q pixel size", self.decision_labels["pixel"]),
+            ("QR rotation", self.decision_labels["rotate"]),
         ]:
             status_form.addRow(name, label)
         for label, widget in [
@@ -224,8 +233,8 @@ class CalibrationPage(QWidget):
             ("ellipse", self.ellipse_label),
             ("pixel", self.pixel_label),
             ("rotate", self.rotate_label),
-            ("measurements complete", self.complete_label),
-            ("applied corrections", self.applied_label),
+            ("measurements", self.complete_label),
+            ("applied", self.applied_label),
         ]:
             status_form.addRow(label, widget)
         status_layout.addLayout(status_form)
@@ -242,8 +251,8 @@ class CalibrationPage(QWidget):
         ellipse_layout.addRow("fit result", self.ellipse_measurement_label)
         ellipse_layout.addRow("fit center x", self.ellipse_center_x)
         ellipse_layout.addRow("fit center y", self.ellipse_center_y)
-        ellipse_layout.addRow("ring inner radius", self.ellipse_inner)
-        ellipse_layout.addRow("ring outer radius", self.ellipse_outer)
+        ellipse_layout.addRow("inner radius", self.ellipse_inner)
+        ellipse_layout.addRow("outer radius", self.ellipse_outer)
         ellipse_layout.addRow("BVM sampling", self.sampling_spin)
         ellipse_layout.addRow("", self.draw_ellipse_circle_button)
         ellipse_layout.addRow("", self.ellipse_button)
@@ -257,11 +266,17 @@ class CalibrationPage(QWidget):
 
         rotation_group = QGroupBox("QR Rotation")
         rotation_layout = QFormLayout(rotation_group)
-        rotation_layout.addRow("QR rotation (degrees)", self.rotation_spin)
+        rotation_layout.addRow("QR rotation (degree)", self.rotation_spin)
         rotation_layout.addRow("", self.rotation_button)
         rotation_layout.addRow("", self.apply_rotation_button)
 
-        validate_group = QGroupBox("Validate Calibration")
+        transfer_group = QGroupBox("Transfer")
+        transfer_layout = QFormLayout(transfer_group)
+        transfer_layout.addRow("correction", self.transfer_correction)
+        transfer_layout.addRow("target DataCube", self.transfer_target)
+        transfer_layout.addRow("", self.transfer_button)
+
+        validate_group = QGroupBox("Validate")
         validate_layout = QVBoxLayout(validate_group)
         validate_layout.addWidget(self.validate_button)
 
@@ -275,6 +290,7 @@ class CalibrationPage(QWidget):
             ellipse_group,
             pixel_group,
             rotation_group,
+            transfer_group,
             validate_group,
         ]:
             left_layout.addWidget(group)
@@ -306,6 +322,7 @@ class CalibrationPage(QWidget):
             enabled = []
         self._style_status_labels(status, set(enabled))
         self._refresh_decision_panel()
+        self.refresh_transfer_targets()
         self.show_braggvectors_histogram()
 
     def show_braggvectors_histogram(self, make_current: bool = False) -> None:
@@ -342,6 +359,55 @@ class CalibrationPage(QWidget):
             WorkflowStep.CALIBRATION_APPLY,
         )
 
+    def _transfer_selected_correction(self) -> None:
+        if self.transfer_targets_provider is None:
+            QMessageBox.information(
+                self,
+                "Calibration Transfer",
+                "Run BraggVectors on at least two DataCubes first.",
+            )
+            return
+        self.refresh_transfer_targets()
+        target = self.transfer_target.currentData()
+        if target is None:
+            QMessageBox.information(
+                self,
+                "Calibration Transfer",
+                "Run BraggVectors on another DataCube first, then choose it as the transfer target.",
+            )
+            return
+        label = self.transfer_correction.currentText()
+        correction = str(self.transfer_correction.currentData())
+        target_label = self.transfer_target.currentText()
+        self._run(
+            lambda: self.service.transfer_calibration_correction(
+                target,
+                self.braggvectors_provider(),
+                correction,
+            ),
+            f"Transfer {label} correction to {target_label}",
+            WorkflowStep.CALIBRATION_APPLY,
+        )
+
+    def refresh_transfer_targets(self) -> None:
+        current_target = self.transfer_target.currentData()
+        current_label = self.transfer_target.currentText()
+        self.transfer_target.blockSignals(True)
+        self.transfer_target.clear()
+        if self.transfer_targets_provider is not None:
+            for label, braggvectors in self.transfer_targets_provider():
+                self.transfer_target.addItem(label, braggvectors)
+        if current_target is not None:
+            for index in range(self.transfer_target.count()):
+                if self.transfer_target.itemData(index) is current_target:
+                    self.transfer_target.setCurrentIndex(index)
+                    break
+        elif current_label:
+            index = self.transfer_target.findText(current_label)
+            if index >= 0:
+                self.transfer_target.setCurrentIndex(index)
+        self.transfer_target.blockSignals(False)
+
     def _run(
         self,
         operation,
@@ -367,6 +433,8 @@ class CalibrationPage(QWidget):
                     "sampling": self.sampling_spin.value(),
                     "q_pixel_size": self.pixel_spin.value(),
                     "qr_rotation": self.rotation_spin.value(),
+                    "transfer_correction": self.transfer_correction.currentText(),
+                    "transfer_target": self.transfer_target.currentText(),
                 },
             )
         )
@@ -425,12 +493,24 @@ class CalibrationPage(QWidget):
         for button in self.buttons:
             button.setEnabled(True)
 
-    def _float_spin(self, minimum, maximum, value, decimals=2) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(decimals)
-        spin.setValue(value)
-        return spin
+    def _float_input(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        decimals: int = 2,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)
+
+    def _int_input(
+        self,
+        minimum: int,
+        maximum: int,
+        value: int,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=0, unit=unit, integer=True)
 
     def _watch_parameters(self) -> None:
         self.workflow_state.watch(
@@ -678,6 +758,8 @@ class CalibrationPage(QWidget):
             "sampling": self.sampling_spin.value(),
             "q_pixel_size": self.pixel_spin.value(),
             "qr_rotation": self.rotation_spin.value(),
+            "transfer_correction": self.transfer_correction.currentData(),
+            "transfer_target": self.transfer_target.currentText(),
         }
 
     def apply_params_snapshot(self, params: dict[str, object]) -> None:
@@ -695,3 +777,12 @@ class CalibrationPage(QWidget):
                 spin.setValue(float(params[key]))
         if "sampling" in params:
             self.sampling_spin.setValue(int(params["sampling"]))
+        if "transfer_correction" in params:
+            index = self.transfer_correction.findData(str(params["transfer_correction"]))
+            if index >= 0:
+                self.transfer_correction.setCurrentIndex(index)
+        if "transfer_target" in params:
+            self.refresh_transfer_targets()
+            index = self.transfer_target.findText(str(params["transfer_target"]))
+            if index >= 0:
+                self.transfer_target.setCurrentIndex(index)

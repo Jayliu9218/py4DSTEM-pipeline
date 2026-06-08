@@ -5,7 +5,6 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
-    QDoubleSpinBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -13,7 +12,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -35,6 +33,7 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.image_grid_viewer import ImageGridViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
+from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -162,29 +161,23 @@ class BraggPeaksPage(QWidget):
         self.worker: QObject | None = None
         self.roi_pick_points: list[tuple[int, int]] = []
 
-        self.rx_spin = QSpinBox()
-        self.ry_spin = QSpinBox()
-        self.min_abs_spin = self._float_spin(0, 1e12, 2)
-        self.min_rel_spin = self._float_spin(0, 1, 0, decimals=4, step=0.001)
-        self.spacing_spin = QSpinBox()
-        self.spacing_spin.setRange(1, 10000)
-        self.spacing_spin.setValue(18)
-        self.edge_spin = QSpinBox()
-        self.edge_spin.setRange(0, 10000)
-        self.edge_spin.setValue(2)
-        self.max_peaks_spin = QSpinBox()
-        self.max_peaks_spin.setRange(1, 10000)
-        self.max_peaks_spin.setValue(100)
-        self.sigma_spin = self._float_spin(0.5, 1000, 2)
+        self.rx_spin = self._int_input(0, 100000, 0, unit="px")
+        self.ry_spin = self._int_input(0, 100000, 0, unit="px")
+        self.min_abs_spin = self._float_input(0, 1e12, 2, unit="int.")
+        self.min_rel_spin = self._float_input(0, 1, 0, decimals=4, unit="ratio")
+        self.spacing_spin = self._int_input(1, 10000, 18, unit="px")
+        self.edge_spin = self._int_input(0, 10000, 2, unit="px")
+        self.max_peaks_spin = self._int_input(1, 10000, 100, unit="peaks")
+        self.sigma_spin = self._float_input(0.5, 1000, 2, unit="px")
         self.subpixel_combo = QComboBox()
         self.subpixel_combo.addItems(["poly", "multicorr", "pixel"])
-        self.roi_rx_start = QSpinBox()
-        self.roi_rx_end = QSpinBox()
-        self.roi_ry_start = QSpinBox()
-        self.roi_ry_end = QSpinBox()
+        self.roi_rx_start = self._int_input(0, 100000, 0, unit="px")
+        self.roi_rx_end = self._int_input(0, 100000, 1, unit="px")
+        self.roi_ry_start = self._int_input(0, 100000, 0, unit="px")
+        self.roi_ry_end = self._int_input(0, 100000, 1, unit="px")
 
-        self.prepare_kernel_button = QPushButton("Prepare Vacuum-Probe Kernel")
-        self.pick_roi_button = QPushButton("Draw ROI on Virtual Image")
+        self.prepare_kernel_button = QPushButton("Prepare Probe Kernel")
+        self.pick_roi_button = QPushButton("Draw ROI")
         self.run_current_button = QPushButton("Run Current Pattern")
         self.run_selected_button = QPushButton("Check 6 Selected Positions")
         self.run_full_button = QPushButton("Run Full BraggVectors")
@@ -320,10 +313,10 @@ class BraggPeaksPage(QWidget):
     def _build_layout(self) -> None:
         probe_group = QGroupBox("1 Probe / Kernel Preparation")
         probe_layout = QFormLayout(probe_group)
-        probe_layout.addRow("vacuum ROI rx start", self.roi_rx_start)
-        probe_layout.addRow("vacuum ROI rx end", self.roi_rx_end)
-        probe_layout.addRow("vacuum ROI ry start", self.roi_ry_start)
-        probe_layout.addRow("vacuum ROI ry end", self.roi_ry_end)
+        probe_layout.addRow("ROI rx start", self.roi_rx_start)
+        probe_layout.addRow("ROI rx end", self.roi_rx_end)
+        probe_layout.addRow("ROI ry start", self.roi_ry_start)
+        probe_layout.addRow("ROI ry end", self.roi_ry_end)
         probe_layout.addRow("", self.pick_roi_button)
         probe_layout.addRow("", self.prepare_kernel_button)
 
@@ -372,13 +365,27 @@ class BraggPeaksPage(QWidget):
         layout = QHBoxLayout(self)
         layout.addWidget(self.visual_tabs)
 
-    def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(decimals)
-        spin.setSingleStep(step)
-        spin.setValue(value)
-        return spin
+    def _float_input(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        decimals: int = 2,
+        unit: str = "",
+        step: float = 1,
+    ) -> NumericLineEdit:
+        control = NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)
+        control.setSingleStep(step)
+        return control
+
+    def _int_input(
+        self,
+        minimum: int,
+        maximum: int,
+        value: int,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=0, unit=unit, integer=True)
 
     def _params(self) -> BraggDetectionParams:
         return BraggDetectionParams(
