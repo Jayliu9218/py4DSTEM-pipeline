@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
@@ -57,12 +58,14 @@ class StrainMapPage(QWidget):
         service: BraggStrainService,
         log_panel: LogPanel,
         workflow_state: WorkflowState,
+        result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.braggvectors_provider = braggvectors_provider
         self.service = service
         self.log_panel = log_panel
         self.workflow_state = workflow_state
+        self.result_registry = result_registry
         self.result: StrainMapResult | None = None
         self.worker_thread: QThread | None = None
         self.worker: StrainMapWorker | None = None
@@ -139,6 +142,10 @@ class StrainMapPage(QWidget):
         if braggvectors is None:
             QMessageBox.information(self, "Strain Map", "Run full BraggVectors first.")
             return
+        warning = self._calibration_warning(braggvectors)
+        if warning:
+            self.log_panel.log(f"WARN  {warning}")
+            self.status_label.setText(warning)
 
         self.status_label.setText("Running...")
         self.run_button.setEnabled(False)
@@ -179,6 +186,25 @@ class StrainMapPage(QWidget):
         self.worker_thread.finished.connect(self._clear_worker)
         self.worker_thread.start()
 
+    def _calibration_warning(self, braggvectors) -> str:
+        calstate = getattr(braggvectors, "calstate", {})
+        missing = [
+            label
+            for name, label in [
+                ("center", "origin"),
+                ("ellipse", "ellipse"),
+                ("pixel", "pixel"),
+                ("rotate", "rotation"),
+            ]
+            if not bool(getattr(calstate, "get", lambda _name, _default=False: False)(name, False))
+        ]
+        if not missing:
+            return ""
+        return (
+            "Calibration is incomplete; strain will continue, but accuracy may be lower. "
+            f"Missing/applied-off corrections: {', '.join(missing)}."
+        )
+
     def export_result(self) -> None:
         if self.result is None:
             QMessageBox.information(self, "Export", "No strain map has been computed yet.")
@@ -211,7 +237,7 @@ class StrainMapPage(QWidget):
         form.addRow("minSpacing", self.min_spacing_spin)
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
-        form.addRow("8.1 reference mode", self.reference_mode)
+        form.addRow("reference mode", self.reference_mode)
         form.addRow("color range", self.color_mode)
         form.addRow("manual color min", self.color_min_spin)
         form.addRow("manual color max", self.color_max_spin)
@@ -228,15 +254,9 @@ class StrainMapPage(QWidget):
         left_layout.addWidget(self.export_button)
         left_layout.addWidget(self.status_label)
         left_layout.addStretch(1)
-        left.setFixedWidth(430)
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left)
-        splitter.addWidget(self.viewer_tabs)
-        splitter.setSizes([430, 900])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        self.controls_panel = left
         layout = QHBoxLayout(self)
-        layout.addWidget(splitter)
+        layout.addWidget(self.viewer_tabs)
 
     def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -270,6 +290,23 @@ class StrainMapPage(QWidget):
         self.log_panel.log(f"Strain map completed in {result.elapsed_seconds:.2f} s.")
         self.log_panel.process_finished("StrainMap", f"elapsed={result.elapsed_seconds:.2f} s")
         self.workflow_state.mark_completed(WorkflowStep.STRAIN_MAP)
+        if self.result_registry is not None:
+            metadata = self.params_snapshot()
+            self.result_registry.register(
+                "strain map components",
+                "strain",
+                result.components,
+                ("npz",),
+                metadata,
+            )
+            for name, image in result.components.items():
+                self.result_registry.register(
+                    name,
+                    "strain",
+                    image,
+                    ("npy", "png", "tiff"),
+                    metadata,
+                )
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -363,3 +400,52 @@ class StrainMapPage(QWidget):
     def _refresh_stale_status(self) -> None:
         if self.workflow_state.is_stale(WorkflowStep.STRAIN_MAP):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
+
+    def params_snapshot(self) -> dict[str, object]:
+        params = self._params()
+        return {
+            "coordinate_rotation": params.coordinate_rotation,
+            "max_peak_spacing": params.max_peak_spacing,
+            "min_absolute_intensity": params.min_absolute_intensity,
+            "min_relative_intensity": params.min_relative_intensity,
+            "min_spacing": params.min_spacing,
+            "edge_boundary": params.edge_boundary,
+            "max_num_peaks": params.max_num_peaks,
+            "reference_mode": params.reference_mode,
+            "roi_rx_start": params.roi_rx_start,
+            "roi_rx_end": params.roi_rx_end,
+            "roi_ry_start": params.roi_ry_start,
+            "roi_ry_end": params.roi_ry_end,
+            "color_mode": self.color_mode.currentText(),
+            "color_min": self.color_min_spin.value(),
+            "color_max": self.color_max_spin.value(),
+        }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        float_controls = {
+            "coordinate_rotation": self.rotation_spin,
+            "max_peak_spacing": self.max_spacing_spin,
+            "min_absolute_intensity": self.min_abs_spin,
+            "min_relative_intensity": self.min_rel_spin,
+            "min_spacing": self.min_spacing_spin,
+            "color_min": self.color_min_spin,
+            "color_max": self.color_max_spin,
+        }
+        int_controls = {
+            "edge_boundary": self.edge_spin,
+            "max_num_peaks": self.max_peaks_spin,
+            "roi_rx_start": self.roi_rx_start,
+            "roi_rx_end": self.roi_rx_end,
+            "roi_ry_start": self.roi_ry_start,
+            "roi_ry_end": self.roi_ry_end,
+        }
+        for key, spin in float_controls.items():
+            if key in params:
+                spin.setValue(float(params[key]))
+        for key, spin in int_controls.items():
+            if key in params:
+                spin.setValue(int(params[key]))
+        if "reference_mode" in params:
+            self.reference_mode.setCurrentText(str(params["reference_mode"]))
+        if "color_mode" in params:
+            self.color_mode.setCurrentText(str(params["color_mode"]))

@@ -4,9 +4,13 @@ import types
 
 import numpy as np
 
-sys.modules.setdefault("py4DSTEM", types.SimpleNamespace())
+sys.modules["py4DSTEM"] = types.SimpleNamespace(
+    process=types.SimpleNamespace(
+        calibration=types.SimpleNamespace(fit_ellipse_1D=lambda *_args, **_kwargs: (1, 2, 0.1, 4))
+    )
+)
 
-from app.services.bragg_strain_service import BraggStrainService
+from app.services.bragg_strain_service import BraggStrainService, StrainMapParams
 
 
 class _PeakCell:
@@ -31,6 +35,7 @@ class _RawPeaks:
 class _Histogram:
     def __init__(self):
         self.data = np.ones((4, 4))
+        self.origin = (2, 2)
 
 
 class _BraggVectors:
@@ -46,6 +51,27 @@ class _BraggVectorsWithoutRaw:
 
     def histogram(self, mode="raw"):
         return _Histogram()
+
+
+class _Calibration:
+    def __init__(self):
+        self.p_ellipse = None
+
+    def set_p_ellipse(self, value):
+        self.p_ellipse = value
+
+
+class _BraggVectorsForEllipse:
+    calstate = {"center": True, "ellipse": False, "pixel": False, "rotate": False}
+
+    def __init__(self):
+        self.calibration = _Calibration()
+
+    def histogram(self, mode="raw", sampling=1):
+        return _Histogram()
+
+    def setcal(self, **kwargs):
+        self.calstate = kwargs
 
 
 class QualityResultTests(unittest.TestCase):
@@ -79,6 +105,25 @@ class QualityResultTests(unittest.TestCase):
 
         self.assertEqual(quality.principal_strain_1[0, 0], 2.0)
         self.assertEqual(quality.principal_strain_2[0, 0], 0.0)
+
+    def test_ellipse_fit_can_use_reference_braggvectors_and_transfer_to_target(self) -> None:
+        service = BraggStrainService()
+        target = _BraggVectorsForEllipse()
+        reference = _BraggVectorsForEllipse()
+
+        result = service.calibrate_ellipse(target, 1, 3, 1, fit_source=reference)
+
+        self.assertEqual(reference.calibration.p_ellipse, (1, 2, 0.1, 4))
+        self.assertEqual(target.calibration.p_ellipse, (1, 2, 0.1, 4))
+        self.assertIn("Ellipse Reference", result.message)
+
+    def test_strain_map_does_not_block_on_incomplete_calibration(self) -> None:
+        service = BraggStrainService()
+
+        with self.assertRaises(Exception) as context:
+            service.compute_strain_map(_BraggVectorsForEllipse(), StrainMapParams())
+
+        self.assertNotIn("Apply origin, ellipse, pixel, and rotation corrections", str(context.exception))
 
 
 if __name__ == "__main__":

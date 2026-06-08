@@ -30,6 +30,7 @@ from app.services.bragg_strain_service import (
     ProbeKernelResult,
     SelectedPeaksResult,
 )
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.image_grid_viewer import ImageGridViewer
@@ -146,6 +147,7 @@ class BraggPeaksPage(QWidget):
         service: BraggStrainService,
         log_panel: LogPanel,
         workflow_state: WorkflowState,
+        result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.datacube_provider = datacube_provider
@@ -154,6 +156,7 @@ class BraggPeaksPage(QWidget):
         self.service = service
         self.log_panel = log_panel
         self.workflow_state = workflow_state
+        self.result_registry = result_registry
         self.cuda_enabled = False
         self.worker_thread: QThread | None = None
         self.worker: QObject | None = None
@@ -181,7 +184,7 @@ class BraggPeaksPage(QWidget):
         self.roi_ry_end = QSpinBox()
 
         self.prepare_kernel_button = QPushButton("Prepare Vacuum-Probe Kernel")
-        self.pick_roi_button = QPushButton("Select ROI on Virtual Image")
+        self.pick_roi_button = QPushButton("Draw ROI on Virtual Image")
         self.run_current_button = QPushButton("Run Current Pattern")
         self.run_selected_button = QPushButton("Check 6 Selected Positions")
         self.run_full_button = QPushButton("Run Full BraggVectors")
@@ -204,6 +207,7 @@ class BraggPeaksPage(QWidget):
         self.prepare_kernel_button.clicked.connect(self.prepare_probe_kernel)
         self.pick_roi_button.clicked.connect(self.start_roi_pick)
         self.roi_viewer.image_clicked.connect(self._handle_roi_click)
+        self.roi_viewer.roi_changed.connect(self._handle_drawn_roi_changed)
         self.run_current_button.clicked.connect(self.run_current_pattern)
         self.run_selected_button.clicked.connect(self.run_selected_positions)
         self.run_full_button.clicked.connect(self.run_full_braggvectors)
@@ -363,16 +367,10 @@ class BraggPeaksPage(QWidget):
 
         left = QWidget()
         left.setLayout(left_layout)
+        self.controls_panel = left
 
-        left.setFixedWidth(430)
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left)
-        splitter.addWidget(self.visual_tabs)
-        splitter.setSizes([430, 900])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
         layout = QHBoxLayout(self)
-        layout.addWidget(splitter)
+        layout.addWidget(self.visual_tabs)
 
     def _float_spin(self, minimum: float, maximum: float, value: float, decimals: int = 2, step: float = 1) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -393,6 +391,9 @@ class BraggPeaksPage(QWidget):
             subpixel=self.subpixel_combo.currentText(),
             cuda=self.cuda_enabled,
         )
+
+    def bragg_detection_params(self) -> BraggDetectionParams:
+        return self._params()
 
     def _start_worker(self, worker: QObject, finished_slot, status: str) -> None:
         self.status_label.setText(status)
@@ -458,6 +459,28 @@ class BraggPeaksPage(QWidget):
         self.visual_tabs.setCurrentWidget(self.full_map_viewer)
         self.braggvectors_ready.emit()
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_FULL)
+        if self.result_registry is not None:
+            metadata = {"peak_count": result.peak_count, **self.params_snapshot()}
+            self.result_registry.register(
+                "bragg vector map",
+                "Bragg disks",
+                result.bragg_vector_map,
+                ("npy", "png", "tiff"),
+                metadata,
+            )
+            for name, image in [
+                ("peak count map", result.quality.peak_count_map),
+                ("mean peak intensity map", result.quality.mean_intensity_map),
+                ("max peak intensity map", result.quality.max_intensity_map),
+                ("detection failure mask", result.quality.failure_mask.astype(float)),
+            ]:
+                self.result_registry.register(
+                    name,
+                    "Bragg disks",
+                    image,
+                    ("npy", "png", "tiff"),
+                    metadata,
+                )
 
     def _handle_probe_kernel_result(self, result: ProbeKernelResult) -> None:
         self.status_label.setText(f"Probe kernel ready in {result.elapsed_seconds:.2f} s")
@@ -574,7 +597,13 @@ class BraggPeaksPage(QWidget):
             return
         self.roi_pick_points = []
         self.visual_tabs.setCurrentWidget(self.roi_viewer)
-        self.status_label.setText("Click two corners on the virtual image to set the probe ROI.")
+        self.roi_viewer.set_interactive_roi_rect(
+            self.roi_rx_start.value(),
+            self.roi_rx_end.value(),
+            self.roi_ry_start.value(),
+            self.roi_ry_end.value(),
+        )
+        self.status_label.setText("Drag or resize the ROI box on the virtual image.")
 
     def _handle_roi_click(self, x: int, y: int) -> None:
         if not self.status_label.text().startswith("Click two corners") and not self.roi_pick_points:
@@ -605,3 +634,69 @@ class BraggPeaksPage(QWidget):
             self.roi_ry_start.value(),
             self.roi_ry_end.value(),
         )
+
+    def _handle_drawn_roi_changed(
+        self,
+        rx_start: int,
+        rx_end: int,
+        ry_start: int,
+        ry_end: int,
+    ) -> None:
+        for spin, value in [
+            (self.roi_rx_start, rx_start),
+            (self.roi_rx_end, rx_end),
+            (self.roi_ry_start, ry_start),
+            (self.roi_ry_end, ry_end),
+        ]:
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self.workflow_state.parameters_updated(WorkflowStep.PROBE_KERNEL)
+        self.status_label.setText(
+            f"Probe ROI set from drawn box: rx={rx_start}:{rx_end}, ry={ry_start}:{ry_end}"
+        )
+
+    def params_snapshot(self) -> dict[str, object]:
+        params = self._params()
+        return {
+            "rx": self.rx_spin.value(),
+            "ry": self.ry_spin.value(),
+            "min_absolute_intensity": params.min_absolute_intensity,
+            "min_relative_intensity": params.min_relative_intensity,
+            "min_peak_spacing": params.min_peak_spacing,
+            "edge_boundary": params.edge_boundary,
+            "max_num_peaks": params.max_num_peaks,
+            "template_sigma": params.template_sigma,
+            "subpixel": params.subpixel,
+            "roi_rx_start": self.roi_rx_start.value(),
+            "roi_rx_end": self.roi_rx_end.value(),
+            "roi_ry_start": self.roi_ry_start.value(),
+            "roi_ry_end": self.roi_ry_end.value(),
+            "cuda": params.cuda,
+        }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        int_controls = {
+            "rx": self.rx_spin,
+            "ry": self.ry_spin,
+            "min_peak_spacing": self.spacing_spin,
+            "edge_boundary": self.edge_spin,
+            "max_num_peaks": self.max_peaks_spin,
+            "roi_rx_start": self.roi_rx_start,
+            "roi_rx_end": self.roi_rx_end,
+            "roi_ry_start": self.roi_ry_start,
+            "roi_ry_end": self.roi_ry_end,
+        }
+        float_controls = {
+            "min_absolute_intensity": self.min_abs_spin,
+            "min_relative_intensity": self.min_rel_spin,
+            "template_sigma": self.sigma_spin,
+        }
+        for key, spin in int_controls.items():
+            if key in params:
+                spin.setValue(int(params[key]))
+        for key, spin in float_controls.items():
+            if key in params:
+                spin.setValue(float(params[key]))
+        if "subpixel" in params:
+            self.subpixel_combo.setCurrentText(str(params["subpixel"]))
