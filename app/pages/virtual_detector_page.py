@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QDoubleSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +27,7 @@ from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
+from app.widgets.numeric_line_edit import NumericLineEdit
 
 
 class VirtualDetectorWorker(QObject):
@@ -85,12 +85,12 @@ class VirtualDetectorPage(QWidget):
             ]
         )
 
-        self.center_x_spin = self._make_float_spin(0, 100000, 1)
-        self.center_y_spin = self._make_float_spin(0, 100000, 1)
-        self.inner_radius_spin = self._make_float_spin(0, 100000, 0)
-        self.outer_radius_spin = self._make_float_spin(0.1, 100000, 10)
+        self.center_x_spin = self._make_float_input(0, 100000, 1, unit="px")
+        self.center_y_spin = self._make_float_input(0, 100000, 1, unit="px")
+        self.inner_radius_spin = self._make_float_input(0, 100000, 0, unit="px")
+        self.outer_radius_spin = self._make_float_input(0.1, 100000, 10, unit="px")
 
-        self.run_button = QPushButton("Run")
+        self.run_button = QPushButton("Plot")
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
@@ -135,13 +135,14 @@ class VirtualDetectorPage(QWidget):
     def add_controls_widget(self, widget: QWidget) -> None:
         self.left_layout.insertWidget(max(self.left_layout.count() - 1, 0), widget)
 
-    def _make_float_spin(self, minimum: float, maximum: float, value: float) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(2)
-        spin.setSingleStep(1.0)
-        spin.setValue(value)
-        return spin
+    def _make_float_input(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=2, unit=unit)
 
     def refresh_defaults_from_datacube(self) -> None:
         shape = self.shape_provider()

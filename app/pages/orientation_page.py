@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+import re
 from typing import Callable
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -32,6 +31,7 @@ from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
+from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
 
 
@@ -75,30 +75,28 @@ class OrientationPage(QWidget):
         self.crystal_label = QLabel("No CIF loaded")
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
-        self.voltage = self._spin(1000, 1000000, 300000)
-        self.k_max = self._spin(0.1, 10, 1.5)
-        self.zone_step = self._spin(0.1, 30, 2)
-        self.plane_step = self._spin(0.1, 30, 2)
-        self.corr_kernel_size = self._spin(0.001, 10, 0.08, decimals=4)
-        self.sigma_excitation_error = self._spin(0.001, 10, 0.02, decimals=4)
-        self.num_matches = QSpinBox()
-        self.num_matches.setRange(1, 20)
-        self.num_matches.setValue(1)
-        self.min_match_angle = self._spin(0, 180, 5)
-        self.min_match_peaks = QSpinBox()
-        self.min_match_peaks.setRange(1, 1000)
-        self.min_match_peaks.setValue(3)
+        self.voltage = self._float_input(1000, 1000000, 300000, decimals=0, unit="V")
+        self.k_max = self._float_input(0.1, 10, 1.5, unit="A^-1")
+        self.zone_step = self._float_input(0.1, 30, 2, unit="deg")
+        self.plane_step = self._float_input(0.1, 30, 2, unit="deg")
+        self.corr_kernel_size = self._float_input(0.001, 10, 0.08, decimals=4, unit="A^-1")
+        self.sigma_excitation_error = self._float_input(0.001, 10, 0.02, decimals=4, unit="A^-1")
+        self.num_matches = self._int_input(1, 20, 1, unit="matches")
+        self.min_match_angle = self._float_input(0, 180, 5, unit="deg")
+        self.min_match_peaks = self._int_input(1, 1000, 3, unit="peaks")
         self.inversion_symmetry = QCheckBox("Use inversion symmetry")
         self.inversion_symmetry.setChecked(True)
         self.load_button = QPushButton("Load Crystal CIF")
-        self.plan_button = QPushButton("Create Orientation Plan")
-        self.match_button = QPushButton("Match and Show Orientation Map")
+        self.plan_button = QPushButton("Create Plan")
+        self.match_button = QPushButton("Match Orientation")
         self.buttons = [self.load_button, self.plan_button, self.match_button]
         self.match_progress = QProgressBar()
-        self.match_progress.setRange(0, 0)
-        self.match_progress.setFormat("Matching orientation map...")
+        self.match_progress.setRange(0, 100)
+        self.match_progress.setValue(0)
+        self.match_progress.setFormat("Matching orientation map: 0%")
         self.match_progress.setTextVisible(True)
         self.match_progress.setVisible(False)
+        self.last_progress_bucket = -10
         self.viewer_tabs = QTabWidget()
         self.viewers: dict[str, ImageViewer] = {}
         for name in [
@@ -146,8 +144,8 @@ class OrientationPage(QWidget):
         match_group = QGroupBox("3 Orientation Matching")
         match_layout = QFormLayout(match_group)
         match_layout.addRow("matches to return", self.num_matches)
-        match_layout.addRow("minimum match angle", self.min_match_angle)
-        match_layout.addRow("minimum matched peaks", self.min_match_peaks)
+        match_layout.addRow("minimum angle", self.min_match_angle)
+        match_layout.addRow("minimum peaks", self.min_match_peaks)
         match_layout.addRow("", self.inversion_symmetry)
         match_layout.addRow("", self.match_button)
         match_layout.addRow("", self.match_progress)
@@ -211,6 +209,10 @@ class OrientationPage(QWidget):
         self.status_label.setText("Running orientation step...")
         self.current_process_step = process_step
         self.match_progress.setVisible(process_step == WorkflowStep.ORIENTATION_MATCH)
+        if process_step == WorkflowStep.ORIENTATION_MATCH:
+            self.last_progress_bucket = -10
+            self.match_progress.setValue(0)
+            self.match_progress.setFormat("Matching orientation map: 0%")
         self.log_panel.process_started("Orientation analysis")
         if process_step == WorkflowStep.ORIENTATION_PLAN:
             params = self._params()
@@ -238,13 +240,30 @@ class OrientationPage(QWidget):
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._finished)
         self.worker.failed.connect(self._failed)
-        self.worker.progress.connect(self.log_panel.process_progress)
+        self.worker.progress.connect(self._handle_progress)
         self.worker.finished.connect(self.worker_thread.quit)
         self.worker.failed.connect(self.worker_thread.quit)
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.finished.connect(self._clear)
         self.worker_thread.start()
+
+    def _handle_progress(self, message: str) -> None:
+        self.log_panel.process_progress(message)
+        if self.current_process_step != WorkflowStep.ORIENTATION_MATCH:
+            return
+        match = re.search(r"(\d+(?:\.\d+)?)%", message)
+        if match is None:
+            return
+        percent = min(max(int(float(match.group(1))), 0), 100)
+        bucket = min((percent // 10) * 10, 100)
+        if bucket < self.last_progress_bucket and bucket != 100:
+            return
+        if bucket == self.last_progress_bucket:
+            return
+        self.last_progress_bucket = bucket
+        self.match_progress.setValue(bucket)
+        self.match_progress.setFormat(f"Matching orientation map: {bucket}%")
 
     def _calibration_warning(self) -> str:
         braggvectors = self.braggvectors_provider()
@@ -302,16 +321,31 @@ class OrientationPage(QWidget):
     def _clear(self) -> None:
         self.worker = None
         self.worker_thread = None
+        if self.current_process_step == WorkflowStep.ORIENTATION_MATCH and self.status_label.text() != "Failed":
+            self.match_progress.setValue(100)
+            self.match_progress.setFormat("Matching orientation map: 100%")
         self.match_progress.setVisible(False)
         for button in self.buttons:
             button.setEnabled(True)
 
-    def _spin(self, minimum, maximum, value, decimals=2) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(decimals)
-        spin.setValue(value)
-        return spin
+    def _float_input(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        decimals: int = 2,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)
+
+    def _int_input(
+        self,
+        minimum: int,
+        maximum: int,
+        value: int,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=0, unit=unit, integer=True)
 
     def _watch_parameters(self) -> None:
         for spin in [

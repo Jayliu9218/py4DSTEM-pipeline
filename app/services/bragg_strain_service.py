@@ -466,6 +466,44 @@ class BraggStrainService:
             perf_counter() - start,
         )
 
+    def transfer_calibration_correction(
+        self,
+        target_braggvectors: Any | None,
+        source_braggvectors: Any | None,
+        correction: str,
+    ) -> CalibrationActionResult:
+        target = self._require_braggvectors(target_braggvectors)
+        source = self._require_braggvectors(source_braggvectors)
+        if target is source:
+            raise BraggStrainServiceError("Choose a different BraggVectors object as the transfer source.")
+
+        correction_key = correction.lower()
+        if correction_key not in {"origin", "ellipse", "pixel", "rotate"}:
+            raise BraggStrainServiceError(f"Unsupported calibration correction: {correction}.")
+
+        start = perf_counter()
+        try:
+            self._copy_calibration_value(source, target, correction_key)
+            previous_state = dict(getattr(target, "calstate", {}))
+            next_state = {
+                "center": bool(previous_state.get("center", False)),
+                "ellipse": bool(previous_state.get("ellipse", False)),
+                "pixel": bool(previous_state.get("pixel", False)),
+                "rotate": bool(previous_state.get("rotate", False)),
+            }
+            next_state[self._calstate_name(correction_key)] = True
+            target.setcal(**next_state)
+        except Exception as exc:
+            raise BraggStrainServiceError(
+                f"Could not transfer {self._correction_label(correction_key)} calibration: {exc}"
+            ) from exc
+
+        return CalibrationActionResult(
+            f"Transferred and applied {self._correction_label(correction_key)} correction.",
+            {},
+            perf_counter() - start,
+        )
+
     def validate_calibration(self, braggvectors: Any | None) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
         start = perf_counter()
@@ -719,6 +757,116 @@ class BraggStrainService:
         if hasattr(value, "shape"):
             return f"set, shape={tuple(np.asarray(value).shape)}"
         return str(value)
+
+    def _copy_calibration_value(self, source: Any, target: Any, correction: str) -> None:
+        source_calibration = getattr(source, "calibration", None)
+        target_calibration = getattr(target, "calibration", None)
+        if source_calibration is None or target_calibration is None:
+            raise BraggStrainServiceError("Both source and target BraggVectors need calibration objects.")
+
+        if correction == "origin":
+            self._set_from_getter(
+                source_calibration,
+                target_calibration,
+                getter_names=("get_origin",),
+                setter_names=("set_origin",),
+                label="origin",
+            )
+        elif correction == "ellipse":
+            value = self._calibration_get(source_calibration, ("get_ellipse",), "ellipse")
+            self._set_ellipse_calibration(target_calibration, value)
+        elif correction == "pixel":
+            size = self._calibration_get(source_calibration, ("get_Q_pixel_size",), "Q pixel size")
+            units = self._calibration_get(
+                source_calibration,
+                ("get_Q_pixel_units",),
+                "Q pixel units",
+                required=False,
+            )
+            setter = getattr(target_calibration, "set_Q_pixel_size", None)
+            if setter is None:
+                raise BraggStrainServiceError("Target calibration does not support Q pixel size.")
+            setter(size)
+            units_setter = getattr(target_calibration, "set_Q_pixel_units", None)
+            if units is not None and units_setter is not None:
+                units_setter(units)
+        elif correction == "rotate":
+            value = self._calibration_get(
+                source_calibration,
+                ("get_QR_rotation_degrees", "get_QR_rotation", "get_QR_rotflip"),
+                "QR rotation",
+            )
+            setter = self._first_attr(
+                target_calibration,
+                ("set_QR_rotation_degrees", "set_QR_rotation", "set_QR_rotflip"),
+            )
+            if setter is None:
+                raise BraggStrainServiceError("Target calibration does not support QR rotation.")
+            setter(value)
+
+    def _set_from_getter(
+        self,
+        source_calibration: Any,
+        target_calibration: Any,
+        getter_names: tuple[str, ...],
+        setter_names: tuple[str, ...],
+        label: str,
+    ) -> None:
+        value = self._calibration_get(source_calibration, getter_names, label)
+        setter = self._first_attr(target_calibration, setter_names)
+        if setter is None:
+            raise BraggStrainServiceError(f"Target calibration does not support {label}.")
+        setter(value)
+
+    def _set_ellipse_calibration(self, target_calibration: Any, value: Any) -> None:
+        values = self._numeric_sequence(value)
+        if len(values) == 3 and hasattr(target_calibration, "set_ellipse"):
+            target_calibration.set_ellipse(value)
+            return
+        if hasattr(target_calibration, "set_p_ellipse"):
+            target_calibration.set_p_ellipse(value)
+            return
+        if hasattr(target_calibration, "set_ellipse"):
+            target_calibration.set_ellipse(value)
+            return
+        raise BraggStrainServiceError("Target calibration does not support ellipse.")
+
+    def _calibration_get(
+        self,
+        calibration: Any,
+        getter_names: tuple[str, ...],
+        label: str,
+        required: bool = True,
+    ) -> Any:
+        getter = self._first_attr(calibration, getter_names)
+        if getter is None:
+            if required:
+                raise BraggStrainServiceError(f"Source calibration does not expose {label}.")
+            return None
+        value = getter()
+        if value is None and required:
+            raise BraggStrainServiceError(f"Source calibration has no {label} value.")
+        return value
+
+    def _first_attr(self, obj: Any, names: tuple[str, ...]):
+        for name in names:
+            value = getattr(obj, name, None)
+            if value is not None:
+                return value
+        return None
+
+    def _calstate_name(self, correction: str) -> str:
+        return {"origin": "center", "ellipse": "ellipse", "pixel": "pixel", "rotate": "rotate"}[
+            correction
+        ]
+
+    def _correction_label(self, correction: str) -> str:
+        return {
+            "origin": "origin",
+            "ellipse": "ellipse",
+            "pixel": "Q pixel size",
+            "rotate": "QR rotation",
+        }[correction]
 
     def _count_braggvectors(self, braggvectors: Any) -> int | None:
         raw = getattr(braggvectors, "raw", None)
