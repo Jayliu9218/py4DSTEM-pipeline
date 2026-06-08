@@ -28,6 +28,7 @@ from app.services.orientation_service import (
     OrientationResult,
     OrientationService,
 )
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
@@ -59,11 +60,13 @@ class OrientationPage(QWidget):
         braggvectors_provider: Callable[[], object | None],
         log_panel: LogPanel,
         workflow_state: WorkflowState,
+        result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.braggvectors_provider = braggvectors_provider
         self.log_panel = log_panel
         self.workflow_state = workflow_state
+        self.result_registry = result_registry
         self.service = OrientationService()
         self.cuda_enabled = False
         self.worker_thread: QThread | None = None
@@ -87,9 +90,9 @@ class OrientationPage(QWidget):
         self.min_match_peaks.setValue(3)
         self.inversion_symmetry = QCheckBox("Use inversion symmetry")
         self.inversion_symmetry.setChecked(True)
-        self.load_button = QPushButton("5.1 Load Crystal CIF")
-        self.plan_button = QPushButton("5.2 Create Orientation Plan")
-        self.match_button = QPushButton("5.3 Match and Show Orientation Map")
+        self.load_button = QPushButton("Load Crystal CIF")
+        self.plan_button = QPushButton("Create Orientation Plan")
+        self.match_button = QPushButton("Match and Show Orientation Map")
         self.buttons = [self.load_button, self.plan_button, self.match_button]
         self.match_progress = QProgressBar()
         self.match_progress.setRange(0, 0)
@@ -160,15 +163,9 @@ class OrientationPage(QWidget):
         for group in [crystal_group, plan_group, match_group, status_group]:
             left_layout.addWidget(group)
         left_layout.addStretch(1)
-        left.setFixedWidth(380)
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left)
-        splitter.addWidget(self.viewer_tabs)
-        splitter.setSizes([380, 950])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        self.controls_panel = left
         layout = QHBoxLayout(self)
-        layout.addWidget(splitter)
+        layout.addWidget(self.viewer_tabs)
 
     def load_cif(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Load crystal structure", "", "CIF files (*.cif)")
@@ -204,6 +201,11 @@ class OrientationPage(QWidget):
         )
 
     def _run(self, operation, process_step: str) -> None:
+        if process_step == WorkflowStep.ORIENTATION_MATCH:
+            warning = self._calibration_warning()
+            if warning:
+                self.log_panel.log(f"WARN  {warning}")
+                self.status_label.setText(warning)
         for button in self.buttons:
             button.setEnabled(False)
         self.status_label.setText("Running orientation step...")
@@ -244,6 +246,26 @@ class OrientationPage(QWidget):
         self.worker_thread.finished.connect(self._clear)
         self.worker_thread.start()
 
+    def _calibration_warning(self) -> str:
+        braggvectors = self.braggvectors_provider()
+        calstate = getattr(braggvectors, "calstate", {}) if braggvectors is not None else {}
+        missing = [
+            label
+            for name, label in [
+                ("center", "origin"),
+                ("ellipse", "ellipse"),
+                ("pixel", "pixel"),
+                ("rotate", "rotation"),
+            ]
+            if not bool(getattr(calstate, "get", lambda _name, _default=False: False)(name, False))
+        ]
+        if not missing:
+            return ""
+        return (
+            "Calibration is incomplete; orientation will continue, but accuracy may be lower. "
+            f"Missing/applied-off corrections: {', '.join(missing)}."
+        )
+
     def _finished(self, result) -> None:
         if isinstance(result, OrientationResult):
             for name, viewer in self.viewers.items():
@@ -252,6 +274,14 @@ class OrientationPage(QWidget):
                     viewer.clear(f"{name} is not available for this result.")
                 else:
                     viewer.set_image(image)
+                    if self.result_registry is not None:
+                        self.result_registry.register(
+                            name,
+                            "orientation",
+                            image,
+                            ("npy", "png", "tiff"),
+                            self.params_snapshot(),
+                        )
             self.status_label.setText(f"Orientation map ready in {result.elapsed_seconds:.2f} s")
             if result.quality.warnings:
                 self.status_label.setText(
@@ -304,3 +334,42 @@ class OrientationPage(QWidget):
             [WorkflowStep.ORIENTATION_PLAN, WorkflowStep.ORIENTATION_MATCH]
         ):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
+
+    def params_snapshot(self) -> dict[str, object]:
+        plan = self._params()
+        match = self._match_params()
+        return {
+            "crystal": self.crystal_label.text(),
+            "accelerating_voltage": plan.accelerating_voltage,
+            "k_max": plan.k_max,
+            "angle_step_zone_axis": plan.angle_step_zone_axis,
+            "angle_step_in_plane": plan.angle_step_in_plane,
+            "corr_kernel_size": plan.corr_kernel_size,
+            "sigma_excitation_error": plan.sigma_excitation_error,
+            "num_matches_return": match.num_matches_return,
+            "min_angle_between_matches_deg": match.min_angle_between_matches_deg,
+            "min_number_peaks": match.min_number_peaks,
+            "inversion_symmetry": match.inversion_symmetry,
+            "cuda": plan.cuda,
+        }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        for key, spin in [
+            ("accelerating_voltage", self.voltage),
+            ("k_max", self.k_max),
+            ("angle_step_zone_axis", self.zone_step),
+            ("angle_step_in_plane", self.plane_step),
+            ("corr_kernel_size", self.corr_kernel_size),
+            ("sigma_excitation_error", self.sigma_excitation_error),
+            ("min_angle_between_matches_deg", self.min_match_angle),
+        ]:
+            if key in params:
+                spin.setValue(float(params[key]))
+        for key, spin in [
+            ("num_matches_return", self.num_matches),
+            ("min_number_peaks", self.min_match_peaks),
+        ]:
+            if key in params:
+                spin.setValue(int(params[key]))
+        if "inversion_symmetry" in params:
+            self.inversion_symmetry.setChecked(bool(params["inversion_symmetry"]))

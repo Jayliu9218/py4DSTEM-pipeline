@@ -95,11 +95,7 @@ class OrientationService:
         if braggvectors is None:
             raise OrientationServiceError("Run full BraggVectors before orientation matching.")
         calstate = getattr(braggvectors, "calstate", {})
-        if not all(calstate.get(name, False) for name in ["center", "ellipse", "pixel", "rotate"]):
-            raise OrientationServiceError(
-                "Apply origin, ellipse, pixel, and rotation corrections manually in step 6 "
-                "before orientation matching."
-            )
+        calibration_warning = self._calibration_warning(calstate)
         start = perf_counter()
         try:
             orientation_map = crystal.match_orientations(
@@ -126,6 +122,11 @@ class OrientationService:
             raise OrientationServiceError(f"Orientation matching failed: {exc}") from exc
         self.orientation_map = orientation_map
         quality = self.orientation_quality(orientation_map, braggvectors, preview)
+        if calibration_warning:
+            quality = OrientationQualityResult(
+                maps=quality.maps,
+                warnings=(calibration_warning, *quality.warnings),
+            )
         return OrientationResult(orientation_map, preview, quality, perf_counter() - start)
 
     def orientation_quality(
@@ -162,6 +163,24 @@ class OrientationService:
         if self.crystal is None:
             raise OrientationServiceError("Load a CIF crystal structure first.")
         return self.crystal
+
+    def _calibration_warning(self, calstate: Any) -> str:
+        missing = [
+            label
+            for name, label in [
+                ("center", "origin"),
+                ("ellipse", "ellipse"),
+                ("pixel", "pixel"),
+                ("rotate", "rotation"),
+            ]
+            if not bool(getattr(calstate, "get", lambda _name, _default=False: False)(name, False))
+        ]
+        if not missing:
+            return ""
+        return (
+            "Calibration is incomplete; continuing orientation matching with lower expected "
+            f"accuracy. Missing/applied-off corrections: {', '.join(missing)}."
+        )
 
     def _first_2d_array(self, obj: Any, names: tuple[str, ...]) -> np.ndarray | None:
         for name in names:

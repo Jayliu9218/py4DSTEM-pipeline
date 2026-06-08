@@ -12,6 +12,7 @@ class Hdf5TreeWidget(QTreeWidget):
         super().__init__()
         self.setHeaderLabels(["HDF5 tree"])
         self.itemClicked.connect(self._emit_selected_node)
+        self.info_root_item: QTreeWidgetItem | None = None
 
     def populate(self, hdf5_file: h5py.File) -> None:
         self.clear()
@@ -22,6 +23,9 @@ class Hdf5TreeWidget(QTreeWidget):
 
         self._add_children(root_item, hdf5_file, "/")
         root_item.setExpanded(True)
+        self.info_root_item = QTreeWidgetItem(["Data info"])
+        self.addTopLevelItem(self.info_root_item)
+        self.set_data_info()
 
     def _add_children(self, parent_item: QTreeWidgetItem, group: h5py.Group, group_path: str) -> None:
         for name in sorted(group.keys()):
@@ -48,3 +52,28 @@ class Hdf5TreeWidget(QTreeWidget):
         node_kind = item.data(0, 257)
         if hdf5_path and node_kind:
             self.node_selected.emit(str(hdf5_path), str(node_kind))
+
+    def set_data_info(
+        self,
+        datacube: dict[str, object] | None = None,
+        selection: dict[str, object] | None = None,
+        roles: dict[str, object] | None = None,
+        attrs: dict[str, object] | None = None,
+    ) -> None:
+        if self.info_root_item is None:
+            return
+        self.info_root_item.takeChildren()
+        for title, values in [
+            ("Loaded DataCube", datacube or {}),
+            ("Selection", selection or {}),
+            ("Dataset roles", roles or {}),
+            ("Attributes", attrs or {}),
+        ]:
+            group = QTreeWidgetItem([title])
+            self.info_root_item.addChild(group)
+            if values:
+                for key, value in values.items():
+                    group.addChild(QTreeWidgetItem([f"{key}: {value}"]))
+            else:
+                group.addChild(QTreeWidgetItem(["-"]))
+        self.info_root_item.setExpanded(True)

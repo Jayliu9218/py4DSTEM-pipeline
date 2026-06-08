@@ -110,6 +110,20 @@ class Py4DSTEMService:
         self.probe_geometry = None
         return info
 
+    def read_datapath(self, datapath: str) -> Any:
+        if self.file_path is None:
+            raise Py4DSTEMServiceError("No file is open.")
+        py4DSTEM = self._py4dstem()
+        try:
+            return py4DSTEM.read(
+                filepath=self.file_path,
+                datapath=datapath,
+                tree=False,
+                verbose=False,
+            )
+        except Exception as exc:
+            raise Py4DSTEMServiceError(f"py4DSTEM could not load reference node {datapath}.") from exc
+
     def load_raw_4d_array(self, data: Any, datapath: str) -> DataCubeInfo:
         shape_value = getattr(data, "shape", None)
         if shape_value is None:

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.bragg_strain_service import BraggStrainService, CalibrationActionResult
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
@@ -52,16 +53,22 @@ class CalibrationPage(QWidget):
         self,
         datacube_provider: Callable[[], object | None],
         braggvectors_provider: Callable[[], object | None],
+        ellipse_braggvectors_provider: Callable[[], object | None] | None,
+        rotation_reference_provider: Callable[[], object | None] | None,
         service: BraggStrainService,
         log_panel: LogPanel,
         workflow_state: WorkflowState,
+        result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.datacube_provider = datacube_provider
         self.braggvectors_provider = braggvectors_provider
+        self.ellipse_braggvectors_provider = ellipse_braggvectors_provider
+        self.rotation_reference_provider = rotation_reference_provider
         self.service = service
         self.log_panel = log_panel
         self.workflow_state = workflow_state
+        self.result_registry = result_registry
         self.worker_thread: QThread | None = None
         self.worker: CalibrationWorker | None = None
         self.current_process_name = "Calibration step"
@@ -88,6 +95,8 @@ class CalibrationPage(QWidget):
         self.status_label.setWordWrap(True)
         self.analysis_target = QComboBox()
         self.analysis_target.addItems(["Preview", "ACOM", "Strain", "DPC"])
+        self.ellipse_center_x = self._float_spin(0, 100000, 0)
+        self.ellipse_center_y = self._float_spin(0, 100000, 0)
         self.ellipse_inner = self._float_spin(0.1, 100000, 290)
         self.ellipse_outer = self._float_spin(0.1, 100000, 360)
         self.sampling_spin = QSpinBox()
@@ -97,6 +106,7 @@ class CalibrationPage(QWidget):
         self.rotation_spin = self._float_spin(-360, 360, -83)
         self.refresh_button = QPushButton("Check Existing Calibration")
         self.origin_button = QPushButton("Measure Origin")
+        self.draw_ellipse_circle_button = QPushButton("Draw Ring Fit ROI")
         self.ellipse_button = QPushButton("Fit Ellipse")
         self.pixel_button = QPushButton("Set Q Pixel Size")
         self.rotation_button = QPushButton("Set QR Rotation")
@@ -108,6 +118,7 @@ class CalibrationPage(QWidget):
         self.buttons = [
             self.refresh_button,
             self.origin_button,
+            self.draw_ellipse_circle_button,
             self.ellipse_button,
             self.pixel_button,
             self.rotation_button,
@@ -130,6 +141,7 @@ class CalibrationPage(QWidget):
         self.apply_origin_button.clicked.connect(
             lambda: self._apply_single_correction("center", "Apply origin correction")
         )
+        self.draw_ellipse_circle_button.clicked.connect(self.start_ellipse_circle_draw)
         self.ellipse_button.clicked.connect(
             lambda: self._run(
                 lambda: self.service.calibrate_ellipse(
@@ -137,6 +149,12 @@ class CalibrationPage(QWidget):
                     self.ellipse_inner.value(),
                     self.ellipse_outer.value(),
                     self.sampling_spin.value(),
+                    center=(self.ellipse_center_x.value(), self.ellipse_center_y.value()),
+                    fit_source=(
+                        self.ellipse_braggvectors_provider()
+                        if self.ellipse_braggvectors_provider is not None
+                        else None
+                    ),
                 ),
                 "Fit ellipticity",
                 WorkflowStep.CALIBRATION_ELLIPSE,
@@ -160,7 +178,13 @@ class CalibrationPage(QWidget):
         self.rotation_button.clicked.connect(
             lambda: self._run(
                 lambda: self.service.set_qr_rotation(
-                    self.braggvectors_provider(), self.rotation_spin.value()
+                    self.braggvectors_provider(),
+                    self.rotation_spin.value(),
+                    reference_image=(
+                        self.rotation_reference_provider()
+                        if self.rotation_reference_provider is not None
+                        else None
+                    ),
                 ),
                 "Set QR rotation",
                 WorkflowStep.CALIBRATION_ROTATION,
@@ -216,9 +240,12 @@ class CalibrationPage(QWidget):
         ellipse_group = QGroupBox("Ellipse Calibration")
         ellipse_layout = QFormLayout(ellipse_group)
         ellipse_layout.addRow("fit result", self.ellipse_measurement_label)
-        ellipse_layout.addRow("ellipse inner radius", self.ellipse_inner)
-        ellipse_layout.addRow("ellipse outer radius", self.ellipse_outer)
+        ellipse_layout.addRow("fit center x", self.ellipse_center_x)
+        ellipse_layout.addRow("fit center y", self.ellipse_center_y)
+        ellipse_layout.addRow("ring inner radius", self.ellipse_inner)
+        ellipse_layout.addRow("ring outer radius", self.ellipse_outer)
         ellipse_layout.addRow("BVM sampling", self.sampling_spin)
+        ellipse_layout.addRow("", self.draw_ellipse_circle_button)
         ellipse_layout.addRow("", self.ellipse_button)
         ellipse_layout.addRow("", self.apply_ellipse_button)
 
@@ -256,15 +283,9 @@ class CalibrationPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(left)
-        scroll.setFixedWidth(360)
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(scroll)
-        splitter.addWidget(self.viewers)
-        splitter.setSizes([360, 970])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        self.controls_panel = scroll
         layout = QHBoxLayout(self)
-        layout.addWidget(splitter)
+        layout.addWidget(self.viewers)
 
     def refresh_status(self) -> None:
         braggvectors = self.braggvectors_provider()
@@ -297,6 +318,7 @@ class CalibrationPage(QWidget):
             self.log_panel.log(f"Could not display BraggVectors histogram: {exc}")
             return
         self._set_viewer_tab("BraggVectors histogram", image, make_current=make_current)
+        self._set_default_ellipse_center(image)
 
     def _apply_single_correction(self, calstate_name: str, process_name: str) -> None:
         braggvectors = self.braggvectors_provider()
@@ -367,13 +389,26 @@ class CalibrationPage(QWidget):
         self.log_panel.log(result.message)
         self.log_panel.process_finished(self.current_process_name, result.message)
         self.viewers.clear()
+        self._set_comparison_tab(result)
         for name, image in result.images.items():
             self._set_viewer_tab(
                 name,
                 image,
-                make_current=True,
+                make_current=False,
                 overlay=result.overlays.get(name),
             )
+            if self.result_registry is not None:
+                self.result_registry.register(
+                    f"{self.current_process_name} - {name}",
+                    "Calibration",
+                    image,
+                    ("npy", "png", "tiff"),
+                    {
+                        "process": self.current_process_name,
+                        "message": result.message,
+                        **self.params_snapshot(),
+                    },
+                )
         self._show_measurements(result)
         self.refresh_status()
         self.workflow_state.mark_completed(self.current_process_step)
@@ -401,7 +436,13 @@ class CalibrationPage(QWidget):
         self.workflow_state.watch(
             self.analysis_target, WorkflowStep.CALIBRATION_APPLY, "currentTextChanged"
         )
-        for spin in [self.ellipse_inner, self.ellipse_outer, self.sampling_spin]:
+        for spin in [
+            self.ellipse_center_x,
+            self.ellipse_center_y,
+            self.ellipse_inner,
+            self.ellipse_outer,
+            self.sampling_spin,
+        ]:
             self.workflow_state.watch(spin, WorkflowStep.CALIBRATION_ELLIPSE, "valueChanged")
         self.workflow_state.watch(
             self.pixel_spin, WorkflowStep.CALIBRATION_PIXEL, "valueChanged"
@@ -483,16 +524,65 @@ class CalibrationPage(QWidget):
                 viewer = self.viewers.widget(index)
                 if isinstance(viewer, ImageViewer):
                     viewer.set_image(image)
+                    viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
                     self._apply_overlay(viewer, overlay)
                     if make_current:
                         self.viewers.setCurrentIndex(index)
                 return
         viewer = ImageViewer()
         viewer.set_image(image)
+        viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
         self._apply_overlay(viewer, overlay)
         self.viewers.addTab(viewer, name)
         if make_current:
             self.viewers.setCurrentWidget(viewer)
+
+    def _set_comparison_tab(self, result: CalibrationActionResult) -> None:
+        pairs = self._comparison_images(result.images)
+        if len(pairs) < 2:
+            return
+        panel = QWidget()
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(2, 2, 2, 2)
+        for name, image in pairs[:2]:
+            child = QWidget()
+            child_layout = QVBoxLayout(child)
+            child_layout.setContentsMargins(2, 2, 2, 2)
+            label = QLabel(name)
+            viewer = ImageViewer()
+            viewer.set_image(image)
+            self._apply_overlay(viewer, result.overlays.get(name))
+            child_layout.addWidget(label)
+            child_layout.addWidget(viewer, 1)
+            layout.addWidget(child, 1)
+        self.viewers.addTab(panel, "Comparison")
+        self.viewers.setCurrentWidget(panel)
+
+    def _comparison_images(self, images: dict[str, object]) -> list[tuple[str, object]]:
+        if len(images) < 2:
+            return []
+        names = list(images.keys())
+        bright_field = [name for name in names if "bright-field" in name.lower()]
+        if len(bright_field) >= 2:
+            return [(name, images[name]) for name in bright_field[:2]]
+        raw = [name for name in names if "raw" in name.lower()]
+        corrected = [
+            name
+            for name in names
+            if any(token in name.lower() for token in ["calibrated", "corrected", "cal"])
+            and name not in raw
+        ]
+        selected: list[str] = []
+        if raw:
+            selected.append(raw[0])
+        if corrected:
+            selected.append(corrected[0])
+        for name in names:
+            if len(selected) >= 2:
+                break
+            if name not in selected:
+                selected.append(name)
+        return [(name, images[name]) for name in selected[:2]]
 
     def _apply_overlay(self, viewer: ImageViewer, overlay: dict[str, float | str] | None) -> None:
         if overlay is None:
@@ -527,3 +617,81 @@ class CalibrationPage(QWidget):
                     **result.measurements
                 )
             )
+
+    def start_ellipse_circle_draw(self) -> None:
+        self.show_braggvectors_histogram(make_current=True)
+        viewer = self._current_image_viewer()
+        if viewer is None:
+            QMessageBox.information(self, "Ellipse Calibration", "Run full BraggVectors first.")
+            return
+        radius = max((self.ellipse_inner.value() + self.ellipse_outer.value()) * 0.5, 1.0)
+        viewer.set_interactive_circle(
+            self.ellipse_center_x.value(),
+            self.ellipse_center_y.value(),
+            radius,
+        )
+        self.status_label.setText("Drag or resize the cyan ring ROI.")
+
+    def _handle_ellipse_circle_changed(
+        self,
+        x: float,
+        y: float,
+        radius: float,
+    ) -> None:
+        inner = max(radius * 0.85, 0.1)
+        outer = max(radius * 1.15, inner + 0.1)
+        for spin, value in [
+            (self.ellipse_center_x, x),
+            (self.ellipse_center_y, y),
+            (self.ellipse_inner, inner),
+            (self.ellipse_outer, outer),
+        ]:
+            spin.blockSignals(True)
+            spin.setValue(float(value))
+            spin.blockSignals(False)
+        self.workflow_state.parameters_updated(WorkflowStep.CALIBRATION_ELLIPSE)
+        self.status_label.setText(
+            f"Ellipse fit ring ROI: center=({x:.3g}, {y:.3g}), radius={radius:.3g}"
+        )
+
+    def _current_image_viewer(self) -> ImageViewer | None:
+        widget = self.viewers.currentWidget()
+        return widget if isinstance(widget, ImageViewer) else None
+
+    def _set_default_ellipse_center(self, image) -> None:
+        if self.ellipse_center_x.value() or self.ellipse_center_y.value():
+            return
+        try:
+            shape = image.shape
+        except Exception:
+            return
+        self.ellipse_center_x.setValue(max((shape[0] - 1) / 2, 0))
+        self.ellipse_center_y.setValue(max((shape[1] - 1) / 2, 0))
+
+    def params_snapshot(self) -> dict[str, object]:
+        return {
+            "analysis_target": self.analysis_target.currentText(),
+            "ellipse_center_x": self.ellipse_center_x.value(),
+            "ellipse_center_y": self.ellipse_center_y.value(),
+            "ellipse_inner": self.ellipse_inner.value(),
+            "ellipse_outer": self.ellipse_outer.value(),
+            "sampling": self.sampling_spin.value(),
+            "q_pixel_size": self.pixel_spin.value(),
+            "qr_rotation": self.rotation_spin.value(),
+        }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        if "analysis_target" in params:
+            self.analysis_target.setCurrentText(str(params["analysis_target"]))
+        for key, spin in [
+            ("ellipse_inner", self.ellipse_inner),
+            ("ellipse_outer", self.ellipse_outer),
+            ("ellipse_center_x", self.ellipse_center_x),
+            ("ellipse_center_y", self.ellipse_center_y),
+            ("q_pixel_size", self.pixel_spin),
+            ("qr_rotation", self.rotation_spin),
+        ]:
+            if key in params:
+                spin.setValue(float(params[key]))
+        if "sampling" in params:
+            self.sampling_spin.setValue(int(params["sampling"]))

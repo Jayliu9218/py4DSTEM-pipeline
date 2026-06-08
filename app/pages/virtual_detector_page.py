@@ -5,7 +5,6 @@ from typing import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
-import tifffile
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,6 +24,7 @@ from app.services.virtual_detector_service import (
     VirtualDetectorResult,
     VirtualDetectorService,
 )
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
@@ -62,6 +62,7 @@ class VirtualDetectorPage(QWidget):
         probe_geometry_provider: Callable[[], object | None],
         log_panel: LogPanel,
         workflow_state: WorkflowState,
+        result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.source_provider = source_provider
@@ -69,6 +70,7 @@ class VirtualDetectorPage(QWidget):
         self.probe_geometry_provider = probe_geometry_provider
         self.log_panel = log_panel
         self.workflow_state = workflow_state
+        self.result_registry = result_registry
         self.service = VirtualDetectorService()
         self.result: np.ndarray | None = None
         self.worker_thread: QThread | None = None
@@ -117,18 +119,21 @@ class VirtualDetectorPage(QWidget):
         button_row.addWidget(self.run_button)
         button_row.addWidget(self.export_button)
 
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(controls)
-        left_layout.addLayout(button_row)
-        left_layout.addWidget(self.status_label)
-        left_layout.addStretch(1)
+        self.left_layout = QVBoxLayout()
+        self.left_layout.addWidget(controls)
+        self.left_layout.addLayout(button_row)
+        self.left_layout.addWidget(self.status_label)
+        self.left_layout.addStretch(1)
 
         left = QWidget()
-        left.setLayout(left_layout)
+        left.setLayout(self.left_layout)
+        self.controls_panel = left
 
         layout = QHBoxLayout(self)
-        layout.addWidget(left, 0)
-        layout.addWidget(self.viewer, 1)
+        layout.addWidget(self.viewer)
+
+    def add_controls_widget(self, widget: QWidget) -> None:
+        self.left_layout.insertWidget(max(self.left_layout.count() - 1, 0), widget)
 
     def _make_float_spin(self, minimum: float, maximum: float, value: float) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -243,6 +248,14 @@ class VirtualDetectorPage(QWidget):
             "Virtual detector", f"{result.mode}, elapsed={result.elapsed_seconds:.2f} s"
         )
         self.workflow_state.mark_completed(WorkflowStep.VIRTUAL_DETECTOR)
+        if self.result_registry is not None:
+            self.result_registry.register(
+                "virtual detector image",
+                "Check data",
+                result.image,
+                ("npy", "png", "tiff"),
+                {"mode": result.mode, **self.params_snapshot()},
+            )
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -288,8 +301,34 @@ class VirtualDetectorPage(QWidget):
         if path.suffix.lower() == ".npy":
             np.save(path, self.result)
         elif path.suffix.lower() in {".tif", ".tiff"}:
+            try:
+                import tifffile
+            except ModuleNotFoundError as exc:
+                raise ValueError(
+                    "TIFF export requires tifffile. Install project requirements first."
+                ) from exc
             tifffile.imwrite(path, np.asarray(self.result))
         elif path.suffix.lower() == ".png":
             plt.imsave(path, np.asarray(self.result), cmap="gray")
         else:
             raise ValueError("Supported export formats are PNG, TIFF, and NPY.")
+
+    def params_snapshot(self) -> dict[str, object]:
+        return {
+            "mode": self.mode_combo.currentText(),
+            "center_x": self.center_x_spin.value(),
+            "center_y": self.center_y_spin.value(),
+            "inner_radius": self.inner_radius_spin.value(),
+            "outer_radius": self.outer_radius_spin.value(),
+        }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        self.mode_combo.setCurrentText(str(params.get("mode", self.mode_combo.currentText())))
+        for key, spin in [
+            ("center_x", self.center_x_spin),
+            ("center_y", self.center_y_spin),
+            ("inner_radius", self.inner_radius_spin),
+            ("outer_radius", self.outer_radius_spin),
+        ]:
+            if key in params:
+                spin.setValue(float(params[key]))

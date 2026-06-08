@@ -8,7 +8,6 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import tifffile
 
 
 class BraggStrainServiceError(Exception):
@@ -338,9 +337,14 @@ class BraggStrainService:
         inner_radius: float,
         outer_radius: float,
         sampling: int,
+        fit_source: Any | None = None,
+        center: tuple[float, float] | None = None,
     ) -> CalibrationActionResult:
-        source = self._require_braggvectors(braggvectors)
-        previous_state = dict(source.calstate)
+        target = self._require_braggvectors(braggvectors)
+        source = fit_source if fit_source is not None else target
+        source = self._require_braggvectors(source)
+        previous_source_state = dict(getattr(source, "calstate", {}))
+        previous_target_state = dict(getattr(target, "calstate", {}))
         if inner_radius <= 0 or outer_radius <= inner_radius:
             raise BraggStrainServiceError("Ellipse fit radii must satisfy 0 < inner < outer.")
         start = perf_counter()
@@ -348,20 +352,30 @@ class BraggStrainService:
             py4DSTEM = self._py4dstem()
             raw_bvm = source.histogram(mode="raw", sampling=sampling)
             bvm = source.histogram(mode="cal", sampling=sampling)
+            fit_center = center if center is not None else bvm.origin
             p_ellipse = py4DSTEM.process.calibration.fit_ellipse_1D(
                 bvm,
-                center=bvm.origin,
+                center=fit_center,
                 fitradii=(inner_radius, outer_radius),
             )
             source.calibration.set_p_ellipse(p_ellipse)
-            source.setcal(**previous_state)
+            if target is not source:
+                target.calibration.set_p_ellipse(p_ellipse)
+            source.setcal(**previous_source_state)
+            if target is not source:
+                target.setcal(**previous_target_state)
             measurements = self._ellipse_measurements(p_ellipse, raw_bvm, bvm)
+            if center is not None:
+                measurements = {**measurements, "x": float(center[0]), "y": float(center[1])}
         except Exception as exc:
-            source.setcal(**previous_state)
+            source.setcal(**previous_source_state)
+            if target is not source:
+                target.setcal(**previous_target_state)
             raise BraggStrainServiceError(f"Ellipticity calibration failed: {exc}") from exc
+        label = "Ellipse Reference" if target is not source else "target"
         return CalibrationActionResult(
             (
-                "Ellipticity fitted: "
+                f"Ellipticity fitted from {label}: "
                 f"a={measurements['a']:.4g}, b={measurements['b']:.4g}, "
                 f"ellipticity={measurements['ellipticity']:.4g}."
             ),
@@ -371,7 +385,14 @@ class BraggStrainService:
             },
             perf_counter() - start,
             measurements=measurements,
-            overlays={"raw Bragg vector map": {"kind": "ellipse", **measurements}},
+            overlays={
+                "raw Bragg vector map": {
+                    "kind": "circle",
+                    "x": measurements["x"],
+                    "y": measurements["y"],
+                    "r": 0.5 * (measurements["a"] + measurements["b"]),
+                }
+            },
         )
 
     def set_pixel_size(self, braggvectors: Any | None, pixel_size: float) -> CalibrationActionResult:
@@ -389,7 +410,12 @@ class BraggStrainService:
             perf_counter() - start,
         )
 
-    def set_qr_rotation(self, braggvectors: Any | None, degrees: float) -> CalibrationActionResult:
+    def set_qr_rotation(
+        self,
+        braggvectors: Any | None,
+        degrees: float,
+        reference_image: np.ndarray | dict[str, np.ndarray] | None = None,
+    ) -> CalibrationActionResult:
         source = self._require_braggvectors(braggvectors)
         previous_state = dict(source.calstate)
         start = perf_counter()
@@ -405,12 +431,17 @@ class BraggStrainService:
             rotated_bvm = np.asarray(source.histogram(mode="cal").data)
         finally:
             source.setcal(**previous_state)
+        images = {
+            "raw Bragg vector map": raw_bvm,
+            "rotation-corrected Bragg vector map": rotated_bvm,
+        }
+        if isinstance(reference_image, dict):
+            images.update({str(name): np.asarray(image) for name, image in reference_image.items()})
+        elif reference_image is not None:
+            images["rotation reference CBED bright-field image"] = np.asarray(reference_image)
         return CalibrationActionResult(
             f"QR rotation set to {degrees:g} degrees.",
-            {
-                "raw Bragg vector map": raw_bvm,
-                "rotation-corrected Bragg vector map": rotated_bvm,
-            },
+            images,
             perf_counter() - start,
         )
 
@@ -480,13 +511,6 @@ class BraggStrainService:
     ) -> StrainMapResult:
         if braggvectors is None:
             raise BraggStrainServiceError("No BraggVectors object is available. Run full BraggVectors first.")
-
-        calstate = getattr(braggvectors, "calstate", {})
-        if not all(calstate.get(name, False) for name in ["center", "ellipse", "pixel", "rotate"]):
-            raise BraggStrainServiceError(
-                "Apply origin, ellipse, pixel, and rotation corrections manually in step 6 "
-                "before strain mapping."
-            )
 
         start = perf_counter()
         try:
@@ -584,6 +608,12 @@ class BraggStrainService:
             stack = np.stack([result.components[k] for k in ["exx", "eyy", "exy", "theta"]])
             np.save(path, stack)
         elif path.suffix.lower() in {".tif", ".tiff"}:
+            try:
+                import tifffile
+            except ModuleNotFoundError as exc:
+                raise BraggStrainServiceError(
+                    "TIFF export requires tifffile. Install project requirements first."
+                ) from exc
             stack = np.stack([result.components[k] for k in ["exx", "eyy", "exy", "theta"]])
             tifffile.imwrite(path, stack)
         elif path.suffix.lower() == ".png":
