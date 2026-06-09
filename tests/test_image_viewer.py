@@ -40,6 +40,25 @@ class ImageViewerTests(unittest.TestCase):
 
         self.assertEqual(viewer.colormap, "magma")
 
+    def test_bragg_sampling_provider_can_redraw_image(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_bragg_sampling_provider(lambda sampling: np.full((2, 2), sampling))
+
+        viewer.bragg_sampling = 3
+        viewer.set_image(viewer.bragg_sampling_provider(viewer.bragg_sampling))
+
+        np.testing.assert_array_equal(viewer.raw_image, np.full((2, 2), 3))
+
+    def test_context_menu_has_display_options_and_optional_sampling(self) -> None:
+        viewer = ImageViewer()
+        base_actions = [action.text() for action in viewer._create_context_menu().actions()]
+        viewer.set_bragg_sampling_provider(lambda sampling: np.full((2, 2), sampling))
+        bragg_actions = [action.text() for action in viewer._create_context_menu().actions()]
+
+        self.assertIn("Scaling", base_actions)
+        self.assertIn("Colormap", base_actions)
+        self.assertTrue(any(action.startswith("BraggVectors Sampling") for action in bragg_actions))
+
     def test_interactive_roi_rect_can_be_set_and_read(self) -> None:
         viewer = ImageViewer()
         viewer.set_image(np.ones((10, 12)))

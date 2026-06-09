@@ -76,4 +76,5 @@ class Hdf5TreeWidget(QTreeWidget):
                     group.addChild(QTreeWidgetItem([f"{key}: {value}"]))
             else:
                 group.addChild(QTreeWidgetItem(["-"]))
+            group.setExpanded(True)
         self.info_root_item.setExpanded(True)

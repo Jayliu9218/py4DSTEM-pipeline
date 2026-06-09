@@ -126,6 +126,9 @@ class WorkflowState(QObject):
     def is_stale(self, step: str) -> bool:
         return step in self._stale
 
+    def is_completed(self, step: str) -> bool:
+        return step in self._completed
+
     def any_stale(self, steps: Iterable[str]) -> bool:
         return bool(self._stale.intersection(steps))
 
