@@ -2,6 +2,7 @@ import unittest
 import sys
 import types
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 sys.modules["py4DSTEM"] = types.SimpleNamespace(
@@ -105,6 +106,42 @@ class _BraggVectorsForEllipse:
         self.calstate = kwargs
 
 
+class _FakeSlice:
+    data = np.ones((1, 1), dtype=bool)
+
+
+class _FakeG1G2Map:
+    def get_slice(self, _name):
+        return _FakeSlice()
+
+
+class _FakeStrainMap:
+    def __init__(self, braggvectors):
+        self.braggvectors = braggvectors
+        self.g1g2_map = _FakeG1G2Map()
+        self.data = [
+            np.asarray([[1.0]]),
+            np.asarray([[2.0]]),
+            np.asarray([[0.5]]),
+            np.asarray([[0.0]]),
+        ]
+        self.returnfig_seen = False
+
+    def choose_basis_vectors(self, **kwargs):
+        self.returnfig_seen = kwargs.get("returnfig")
+        fig, ax = plt.subplots()
+        return (None, None, None, None), (fig, ax)
+
+    def set_max_peak_spacing(self, **_kwargs):
+        return None
+
+    def fit_basis_vectors(self, **_kwargs):
+        return None
+
+    def get_strain(self, **_kwargs):
+        return None
+
+
 class QualityResultTests(unittest.TestCase):
     def test_bragg_quality_maps_from_raw_peak_cells(self) -> None:
         service = BraggStrainService()
@@ -174,6 +211,18 @@ class QualityResultTests(unittest.TestCase):
             service.compute_strain_map(_BraggVectorsForEllipse(), StrainMapParams())
 
         self.assertNotIn("Apply origin, ellipse, pixel, and rotation corrections", str(context.exception))
+
+    def test_strain_map_closes_py4dstem_basis_figure(self) -> None:
+        previous = sys.modules["py4DSTEM"]
+        sys.modules["py4DSTEM"] = types.SimpleNamespace(StrainMap=_FakeStrainMap)
+        try:
+            service = BraggStrainService()
+            result = service.compute_strain_map(_BraggVectorsForEllipse(), StrainMapParams())
+        finally:
+            sys.modules["py4DSTEM"] = previous
+
+        self.assertEqual(result.components["exx"][0, 0], 1.0)
+        self.assertEqual(plt.get_fignums(), [])
 
 
 if __name__ == "__main__":

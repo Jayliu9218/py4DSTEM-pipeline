@@ -6,6 +6,9 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -554,14 +557,16 @@ class BraggStrainService:
         try:
             py4DSTEM = self._py4dstem()
             strainmap = py4DSTEM.StrainMap(braggvectors=braggvectors)
-            strainmap.choose_basis_vectors(
+            _basis_calc, basis_figax = strainmap.choose_basis_vectors(
                 minAbsoluteIntensity=params.min_absolute_intensity,
                 minRelativeIntensity=params.min_relative_intensity,
                 minSpacing=params.min_spacing,
                 edgeBoundary=params.edge_boundary,
                 maxNumPeaks=params.max_num_peaks,
                 returncalc=True,
+                returnfig=True,
             )
+            self._close_matplotlib_result(basis_figax)
             strainmap.set_max_peak_spacing(max_peak_spacing=params.max_peak_spacing)
             strainmap.fit_basis_vectors(returncalc=True)
             gvects = self._strain_reference(strainmap, params, braggvectors)
@@ -573,6 +578,8 @@ class BraggStrainService:
             )
         except Exception as exc:
             raise BraggStrainServiceError(f"py4DSTEM strain map calculation failed: {exc}") from exc
+        finally:
+            plt.close("all")
 
         components = {
             "exx": np.asarray(strainmap.data[0]),
@@ -669,6 +676,16 @@ class BraggStrainService:
             fig.colorbar(im, ax=ax, fraction=0.046)
         fig.savefig(path, dpi=160)
         plt.close(fig)
+
+    def _close_matplotlib_result(self, result: Any) -> None:
+        if result is None:
+            plt.close("all")
+            return
+        fig = result[0] if isinstance(result, tuple) and result else result
+        try:
+            plt.close(fig)
+        except Exception:
+            plt.close("all")
 
     def _ensure_datacube(self, datacube: Any) -> None:
         if datacube is None or not hasattr(datacube, "data"):
