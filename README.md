@@ -46,6 +46,8 @@ Use the existing `4dstem` Conda environment for development:
 
 ```powershell
 conda activate 4dstem
+pip install -r requirements.txt
+python .\scripts\check_runtime_dependencies.py
 python .\main.py
 ```
 
@@ -156,6 +158,10 @@ See [packaging/README_packaging.md](packaging/README_packaging.md).
 
 - Keep py4DSTEM algorithms inside `app/services/`.
 - Keep UI pages thin: they should collect parameters, start workers, display results, and log status.
+- Qt Designer `.ui` files belong in `ui/`; use
+  `.\scripts\open_qt_designer.ps1` after activating `4dstem`. See
+  `docs/qt_designer_workflow.md` before migrating a page from Python-built
+  layouts to Designer-managed layouts.
 - Put expensive calculations in workers so the UI remains responsive.
 - Test and debug inside `4dstem`.
 - Keep packaging-only tools and release builds inside
