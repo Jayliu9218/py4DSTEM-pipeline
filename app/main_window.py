@@ -41,11 +41,19 @@ from app.services.project_state_service import ProjectState, ProjectStateService
 from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
 from app.services.report_service import ReportService
 from app.services.result_registry import ResultRegistry, ResultRegistryError
-from app.services.workflow_state import WorkflowState
+from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.hdf5_tree_widget import Hdf5TreeWidget
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.pipeline_shell import (
+    DataStatePanel,
+    ModuleControlPanel,
+    MultiViewWorkspace,
+    ProjectToolbar,
+    RouteModule,
+    TechnicalRouteBar,
+)
 
 
 class MainWindow(QMainWindow):
@@ -75,6 +83,8 @@ class MainWindow(QMainWindow):
         self.recent_export_dir: Path | None = None
         self.braggvectors_by_datacube: dict[str, object] = {}
         self.reference_braggvectors_cache: dict[str, object] = {}
+        self.current_route_key = "data_setup"
+        self.route_modules: list[RouteModule] = []
 
         self.tree = Hdf5TreeWidget()
         self.scan_viewer = ImageViewer()
@@ -156,9 +166,11 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page.braggvectors_ready.connect(self.strain_map_page.notify_braggvectors_ready)
         self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.show_braggvectors_histogram)
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
+        self.workflow_state.changed.connect(self._refresh_pipeline_state)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
         self._apply_image_colormap(self.image_cmap)
+        self._update_structure_route()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self._close_current_file()
@@ -192,9 +204,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         self.mode_menu = self.menuBar().addMenu("&Mode")
-        self.mode_menu.addAction("Basic")
-        self.mode_menu.addAction("Amorphous")
-        self.mode_menu.addAction("Advanced")
+        self.crystalline_mode_action = self.mode_menu.addAction("Crystalline")
+        self.amorphous_mode_action = self.mode_menu.addAction("Amorphous")
+        self.mixed_mode_action = self.mode_menu.addAction("Mixed / Nanocrystalline")
 
         self.setting_action = self.menuBar().addAction("&Setting")
         self.setting_action.triggered.connect(self.open_settings)
@@ -254,53 +266,237 @@ class MainWindow(QMainWindow):
         self.orientation_page.set_cuda_enabled(enabled)
 
     def _build_layout(self) -> None:
-        image_splitter = QSplitter(Qt.Vertical)
-        image_splitter.addWidget(self.scan_viewer)
-        image_splitter.addWidget(self.diffraction_viewer)
-        image_splitter.setSizes([300, 350])
-
         data_browser = QWidget()
         data_browser_layout = QVBoxLayout(data_browser)
-        data_browser_layout.setContentsMargins(4, 4, 4, 0)
-        self.tree.setFixedHeight(300)
-        data_browser_layout.addWidget(self.tree)
-        self.sidebar_controls = QStackedWidget()
-        data_browser_layout.addWidget(self.sidebar_controls, 1)
-        data_browser.setFixedWidth(360)
+        data_browser_layout.setContentsMargins(8, 8, 8, 8)
+        data_title = QLabel("Data Tree")
+        data_title.setObjectName("sectionTitle")
+        data_browser_layout.addWidget(data_title)
+        data_browser_layout.addWidget(self.tree, 1)
+        self.data_state_panel = DataStatePanel()
+        data_browser_layout.addWidget(self.data_state_panel)
 
-        check_data_page = QWidget()
-        check_data_layout = QHBoxLayout(check_data_page)
-        check_data_layout.setContentsMargins(4, 0, 4, 0)
-        top_splitter = QSplitter(Qt.Horizontal)
-        top_splitter.addWidget(image_splitter)
-        top_splitter.addWidget(self.virtual_detector_page)
-        top_splitter.setSizes([650, 650])
-        check_data_layout.addWidget(top_splitter)
+        self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
+        self.viewer_stack = QStackedWidget()
+        self.viewer_pages = {
+            "overview": self.main_view,
+            "virtual": self.virtual_detector_page,
+            "bragg": self.bragg_peaks_page,
+            "calibration": self.calibration_page,
+            "orientation": self.orientation_page,
+            "strain": self.strain_map_page,
+        }
+        for page in self.viewer_pages.values():
+            self.viewer_stack.addWidget(page)
 
-        tabs = QTabWidget()
-        tabs.addTab(check_data_page, "1 Check data")
-        tabs.addTab(self.bragg_peaks_page, "2 Bragg disks")
-        tabs.addTab(self.calibration_page, "3 calibration")
-        tabs.addTab(self.orientation_page, "4 orientation")
-        tabs.addTab(self.strain_map_page, "5 strain")
-        self.virtual_detector_page.add_controls_widget(self._build_role_panel())
-        self._populate_sidebar_controls()
-        tabs.currentChanged.connect(self.sidebar_controls.setCurrentIndex)
+        self.module_panel = ModuleControlPanel()
+        self.module_panel.setMinimumWidth(340)
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(data_browser)
+        main_splitter.addWidget(self.viewer_stack)
+        main_splitter.addWidget(self.module_panel)
+        main_splitter.setStretchFactor(0, 1)
+        main_splitter.setStretchFactor(1, 7)
+        main_splitter.setStretchFactor(2, 3)
+        main_splitter.setSizes([175, 990, 435])
+
         workspace = QSplitter(Qt.Vertical)
-        workspace.addWidget(tabs)
+        workspace.addWidget(main_splitter)
         workspace.addWidget(self.log_panel)
-        workspace.setSizes([850,10])
-        root_splitter = QSplitter(Qt.Horizontal)
-        root_splitter.addWidget(data_browser)
-        root_splitter.addWidget(workspace)
-        root_splitter.setSizes([360, 1240])
-        root_splitter.setStretchFactor(0, 0)
-        root_splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(root_splitter)
+        workspace.setStretchFactor(0, 8)
+        workspace.setStretchFactor(1, 2)
+        workspace.setSizes([720, 180])
+
+        self.project_toolbar = ProjectToolbar()
+        self.route_bar = TechnicalRouteBar()
+        self.data_setup_controls = self._build_role_panel()
+        self.project_toolbar.load_clicked.connect(self.open_file)
+        self.project_toolbar.project_clicked.connect(self.load_project)
+        self.project_toolbar.save_clicked.connect(self.save_project)
+        self.project_toolbar.export_clicked.connect(self.export_registered_result)
+        self.project_toolbar.structure_changed.connect(self._update_structure_route)
+        self.project_toolbar.goal_changed.connect(self._update_structure_route)
+        self.route_bar.module_selected.connect(self._select_route_module)
+        self.crystalline_mode_action.triggered.connect(
+            lambda: self.project_toolbar.structure.setCurrentText("Crystalline")
+        )
+        self.amorphous_mode_action.triggered.connect(
+            lambda: self.project_toolbar.structure.setCurrentText("Amorphous")
+        )
+        self.mixed_mode_action.triggered.connect(
+            lambda: self.project_toolbar.structure.setCurrentText("Mixed / Nanocrystalline")
+        )
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.project_toolbar)
+        central_layout.addWidget(self.route_bar)
+        central_layout.addWidget(workspace, 1)
+        self.setCentralWidget(central)
 
         self._set_index_controls_visible(False)
         self._compact_input_controls()
+        self._bold_section_titles()
         self._set_preview_empty()
+
+    def _bold_section_titles(self) -> None:
+        for group in self.findChildren(QGroupBox):
+            font = group.font()
+            font.setBold(True)
+            group.setFont(font)
+            for child in group.findChildren(QWidget):
+                if isinstance(child, QGroupBox):
+                    continue
+                child_font = child.font()
+                child_font.setBold(False)
+                child.setFont(child_font)
+
+    def _update_structure_route(self, *_args) -> None:
+        structure = self.project_toolbar.structure.currentText()
+        goals = {
+            "Crystalline": ["Strain", "Orientation", "Phase"],
+            "Amorphous": ["RDF", "Amorphous Strain", "FEM"],
+            "Mixed / Nanocrystalline": ["Branch Analysis", "Component Mapping", "Region Review"],
+        }[structure]
+        if not self.project_toolbar.goal.count() or self.project_toolbar.goal.currentText() not in goals:
+            self.project_toolbar.set_goals(goals)
+        goal = self.project_toolbar.goal.currentText() or goals[0]
+        common_data = RouteModule(
+            "data_setup",
+            "Data Setup",
+            "overview",
+            "Open an HDF5 / EMD file and assign the Target DataCube plus optional references.",
+            "Validated DataCube, dataset roles, and display-ready previews.",
+        )
+        if structure == "Crystalline":
+            analysis_page = "strain" if goal == "Strain" else "orientation" if goal == "Orientation" else "overview"
+            analysis_step = (
+                WorkflowStep.STRAIN_MAP
+                if goal == "Strain"
+                else WorkflowStep.ORIENTATION_MATCH
+                if goal == "Orientation"
+                else None
+            )
+            modules = [
+                common_data,
+                RouteModule(
+                    "virtual_imaging", "Virtual Imaging", "virtual",
+                    "Target DataCube and virtual detector geometry.",
+                    "Bright-field, annular dark-field, or custom virtual image.",
+                    WorkflowStep.VIRTUAL_DETECTOR, "data_setup",
+                ),
+                RouteModule(
+                    "bragg_detection", "Bragg Detection", "bragg",
+                    "Target DataCube; probe kernel is optional but recommended.",
+                    "BraggVectors, BVM, peak tables, and detection diagnostics.",
+                    WorkflowStep.BRAGG_FULL, "data_setup",
+                ),
+                RouteModule(
+                    "calibration", "Calibration", "calibration",
+                    "BraggVectors; ellipse and rotation references when required.",
+                    "Applied origin, ellipse, pixel-size, and rotation calibration.",
+                    WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
+                ),
+                RouteModule(
+                    "crystal_analysis", goal, analysis_page,
+                    "Calibrated BraggVectors and analysis-specific reference inputs.",
+                    f"{goal} result maps and quality diagnostics.",
+                    analysis_step, "calibration", goal != "Phase",
+                ),
+                RouteModule(
+                    "export", "Export", "overview",
+                    "At least one registered result.",
+                    "Result arrays, images, project state, or scientific report.",
+                    prerequisite="crystal_analysis",
+                ),
+            ]
+        elif structure == "Amorphous":
+            modules = [
+                common_data,
+                RouteModule("ring_centering", "Ring Centering", "overview", "Target DataCube or averaged diffraction pattern.", "Centered ring pattern and center-fit diagnostics.", prerequisite="data_setup", implemented=False),
+                RouteModule("radial_profile", "Radial Profile", "overview", "Centered diffraction rings.", "Radial intensity profile and peak diagnostics.", prerequisite="ring_centering", implemented=False),
+                RouteModule("amorphous_analysis", goal, "overview", "Validated radial profile and analysis-specific parameters.", f"{goal} maps and diagnostics.", prerequisite="radial_profile", implemented=False),
+                RouteModule("export", "Export", "overview", "At least one registered result.", "Result arrays, images, project state, or scientific report.", prerequisite="amorphous_analysis"),
+            ]
+        else:
+            modules = [
+                common_data,
+                RouteModule("feature_extraction", "Feature Extraction", "overview", "Target DataCube and selected feature families.", "Feature stack and feature-quality metrics.", prerequisite="data_setup", implemented=False),
+                RouteModule("region_classification", "Region Classification", "overview", "Extracted features and classification settings.", "Region labels and confidence maps.", prerequisite="feature_extraction", implemented=False),
+                RouteModule("branch_analysis", f"Branch Analysis: {goal}", "overview", "Classified regions and branch-specific inputs.", "Per-region crystalline/amorphous analysis outputs.", prerequisite="region_classification", implemented=False),
+                RouteModule("component_map", "Component Map", "overview", "Completed branch analysis.", "Component map, uncertainty, and export-ready layers.", prerequisite="branch_analysis", implemented=False),
+            ]
+        self.route_modules = modules
+        self.route_bar.set_modules(modules)
+        if self.current_route_key not in {module.key for module in modules}:
+            self.current_route_key = "data_setup"
+        self._refresh_pipeline_state()
+
+    def _route_states(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        data_ready = self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4
+        for module in self.route_modules:
+            if module.key == "data_setup":
+                states[module.key] = "Completed" if data_ready else "Ready"
+                continue
+            if module.state_step and self.workflow_state.is_stale(module.state_step):
+                states[module.key] = "Warning"
+            elif module.state_step and self.workflow_state.is_completed(module.state_step):
+                states[module.key] = "Completed"
+            elif module.prerequisite and states.get(module.prerequisite) not in {"Completed", "Warning"}:
+                states[module.key] = "Locked"
+            elif module.key == "export" and not self.result_registry.list_entries():
+                states[module.key] = "Locked"
+            else:
+                states[module.key] = "Ready"
+        return states
+
+    def _select_route_module(self, key: str) -> None:
+        states = self._route_states()
+        if states.get(key) == "Locked":
+            module = next(item for item in self.route_modules if item.key == key)
+            self.log_panel.log(
+                f"WARN  {module.title} is locked because its input requirements are not met."
+            )
+            self._refresh_pipeline_state()
+            return
+        self.current_route_key = key
+        self._refresh_pipeline_state()
+
+    def _refresh_pipeline_state(self) -> None:
+        if not hasattr(self, "route_bar"):
+            return
+        states = self._route_states()
+        self.route_bar.update_states(states, self.current_route_key)
+        module = next(item for item in self.route_modules if item.key == self.current_route_key)
+        self.viewer_stack.setCurrentWidget(self.viewer_pages[module.page_key])
+        controls = self._controls_for_route(module.key)
+        display_status = "Current" if states[module.key] != "Locked" else "Locked"
+        self.module_panel.set_module(module, display_status, controls)
+        self._bold_section_titles()
+        self.data_state_panel.update_state(
+            str(self.current_file_path) if self.current_file_path else None,
+            self.workflow_state.dataset_roles.target_datacube,
+            self.selected_hdf5_path,
+            self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4,
+        )
+
+    def _controls_for_route(self, key: str) -> QWidget | None:
+        return {
+            "data_setup": self.data_setup_controls,
+            "virtual_imaging": self.virtual_detector_page.controls_panel,
+            "bragg_detection": self.bragg_peaks_page.controls_panel,
+            "calibration": self.calibration_page.controls_panel,
+            "crystal_analysis": (
+                self.strain_map_page.controls_panel
+                if self.project_toolbar.goal.currentText() == "Strain"
+                else self.orientation_page.controls_panel
+                if self.project_toolbar.goal.currentText() == "Orientation"
+                else None
+            ),
+        }.get(key)
 
     def _build_role_panel(self) -> QGroupBox:
         panel = QGroupBox("Dataset Roles / Sources")
@@ -337,8 +533,8 @@ class MainWindow(QMainWindow):
     def _compact_input_controls(self) -> None:
         for widget_type in (NumericLineEdit, QComboBox):
             for widget in self.findChildren(widget_type):
-                widget.setMinimumWidth(110)
-                widget.setMaximumWidth(180)
+                widget.setMinimumWidth(125)
+                widget.setMaximumWidth(320)
 
     def open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
