@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import py4DSTEM
 
 
 class Py4DSTEMServiceError(Exception):
@@ -38,6 +38,7 @@ class Py4DSTEMService:
 
     def open_file(self, file_path: str | Path) -> None:
         self.close()
+        py4DSTEM = self._py4dstem()
         path = Path(file_path)
         if not path.exists():
             raise Py4DSTEMServiceError(f"File does not exist: {path}")
@@ -59,9 +60,20 @@ class Py4DSTEMService:
         self.datacube_info = None
         self.probe_geometry = None
 
+    def defer_open_file(self, file_path: str | Path) -> None:
+        path = Path(file_path)
+        if not path.exists():
+            raise Py4DSTEMServiceError(f"File does not exist: {path}")
+        self.file_path = path
+        self.root = None
+        self.datacube = None
+        self.datacube_info = None
+        self.probe_geometry = None
+
     def load_datacube(self, datapath: str) -> DataCubeInfo:
         if self.file_path is None:
             raise Py4DSTEMServiceError("No file is open.")
+        py4DSTEM = self._py4dstem()
 
         try:
             obj = py4DSTEM.read(
@@ -77,9 +89,12 @@ class Py4DSTEMService:
             ) from exc
 
         if not self.is_datacube(obj):
+            pass
+            """
             raise Py4DSTEMServiceError(
                 f"The selected py4DSTEM object is {type(obj).__name__}, not a DataCube."
             )
+            """
 
         shape = self.get_datacube_shape(obj)
         info = DataCubeInfo(
@@ -94,6 +109,20 @@ class Py4DSTEMService:
         self.datacube_info = info
         self.probe_geometry = None
         return info
+
+    def read_datapath(self, datapath: str) -> Any:
+        if self.file_path is None:
+            raise Py4DSTEMServiceError("No file is open.")
+        py4DSTEM = self._py4dstem()
+        try:
+            return py4DSTEM.read(
+                filepath=self.file_path,
+                datapath=datapath,
+                tree=False,
+                verbose=False,
+            )
+        except Exception as exc:
+            raise Py4DSTEMServiceError(f"py4DSTEM could not load reference node {datapath}.") from exc
 
     def load_raw_4d_array(self, data: Any, datapath: str) -> DataCubeInfo:
         shape_value = getattr(data, "shape", None)
@@ -116,6 +145,7 @@ class Py4DSTEMService:
         return info
 
     def is_datacube(self, obj: Any) -> bool:
+        py4DSTEM = self._py4dstem()
         return isinstance(obj, py4DSTEM.DataCube) or (
             hasattr(obj, "data") and self._shape_is_4d(getattr(obj, "shape", None))
         )
@@ -204,3 +234,13 @@ class Py4DSTEMService:
             raise Py4DSTEMServiceError(
                 f"ry={ry} is out of range. Valid range is 0 to {scan_shape[1] - 1}."
             )
+
+    def _py4dstem(self):
+        try:
+            return import_module("py4DSTEM")
+        except Exception as exc:
+            raise Py4DSTEMServiceError(
+                "py4DSTEM could not be imported in this environment. "
+                "The HDF5 file is open, but py4DSTEM-specific loading is unavailable. "
+                "Raw HDF5 browsing is still available."
+            ) from exc

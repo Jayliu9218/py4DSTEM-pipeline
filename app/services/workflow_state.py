@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, Signal
 
@@ -11,6 +12,7 @@ STALE_RESULTS_MESSAGE = (
 
 
 class WorkflowStep:
+    DATA_ROLES = "data_roles"
     VIRTUAL_DETECTOR = "virtual_detector"
     PROBE_KERNEL = "probe_kernel"
     BRAGG_SINGLE = "bragg_single"
@@ -26,10 +28,45 @@ class WorkflowStep:
     STRAIN_MAP = "strain_map"
 
 
+@dataclass(frozen=True)
+class DatasetRoles:
+    target_datacube: str | None = None
+    polycrystal_calibration: str | None = None
+    vacuum_probe: str | None = None
+    defocused_cbed: str | None = None
+
+    def with_role(self, role: str, path: str | None) -> "DatasetRoles":
+        if not hasattr(self, role):
+            raise ValueError(f"Unsupported dataset role: {role}")
+        return DatasetRoles(
+            target_datacube=path if role == "target_datacube" else self.target_datacube,
+            polycrystal_calibration=(
+                path if role == "polycrystal_calibration" else self.polycrystal_calibration
+            ),
+            vacuum_probe=path if role == "vacuum_probe" else self.vacuum_probe,
+            defocused_cbed=path if role == "defocused_cbed" else self.defocused_cbed,
+        )
+
+
 class WorkflowState(QObject):
     changed = Signal()
 
     _DEPENDENCIES = {
+        WorkflowStep.DATA_ROLES: {
+            WorkflowStep.VIRTUAL_DETECTOR,
+            WorkflowStep.PROBE_KERNEL,
+            WorkflowStep.BRAGG_SINGLE,
+            WorkflowStep.BRAGG_SELECTED,
+            WorkflowStep.BRAGG_FULL,
+            WorkflowStep.CALIBRATION_ORIGIN,
+            WorkflowStep.CALIBRATION_ELLIPSE,
+            WorkflowStep.CALIBRATION_PIXEL,
+            WorkflowStep.CALIBRATION_ROTATION,
+            WorkflowStep.CALIBRATION_APPLY,
+            WorkflowStep.ORIENTATION_PLAN,
+            WorkflowStep.ORIENTATION_MATCH,
+            WorkflowStep.STRAIN_MAP,
+        },
         WorkflowStep.PROBE_KERNEL: {
             WorkflowStep.BRAGG_SINGLE,
             WorkflowStep.BRAGG_SELECTED,
@@ -56,6 +93,7 @@ class WorkflowState(QObject):
         super().__init__()
         self._completed: set[str] = set()
         self._stale: set[str] = set()
+        self.dataset_roles = DatasetRoles()
 
     def mark_completed(self, step: str) -> None:
         downstream = self._with_downstream({step}) - {step}
@@ -76,8 +114,20 @@ class WorkflowState(QObject):
             self._stale.update(self._completed)
             self.changed.emit()
 
+    def set_dataset_role(self, role: str, path: str | None) -> None:
+        next_roles = self.dataset_roles.with_role(role, path)
+        if next_roles == self.dataset_roles:
+            return
+        self.dataset_roles = next_roles
+        self.parameters_updated(WorkflowStep.DATA_ROLES)
+        if not self._completed:
+            self.changed.emit()
+
     def is_stale(self, step: str) -> bool:
         return step in self._stale
+
+    def is_completed(self, step: str) -> bool:
+        return step in self._completed
 
     def any_stale(self, steps: Iterable[str]) -> bool:
         return bool(self._stale.intersection(steps))

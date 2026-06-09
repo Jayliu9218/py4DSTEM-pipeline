@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPlainTextEdit, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QProgressBar,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    step: str
+    parameters: dict[str, object]
+    warnings: tuple[str, ...] = ()
 
 
 class LogPanel(QWidget):
@@ -11,37 +28,69 @@ class LogPanel(QWidget):
         super().__init__()
         self.event_log = self._make_output()
         self.process_log = self._make_output()
-
-        event_panel = self._labeled_panel("Activity Log", self.event_log)
-        process_panel = self._labeled_panel("Calculation Process", self.process_log)
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(event_panel)
-        splitter.addWidget(process_panel)
-        splitter.setSizes([600, 600])
+        self.warning_log = self._make_output()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Idle")
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._progress_panel(), "Progress")
+        self.tabs.addTab(self.event_log, "Activity Log")
+        self.tabs.addTab(self.process_log, "Calculation Process")
+        self.tabs.addTab(self.warning_log, "Warnings")
+        self.toggle = QToolButton()
+        self.toggle.setText("Hide")
+        self.toggle.clicked.connect(self._toggle_content)
+        header = QHBoxLayout()
+        title = QLabel("Console")
+        title.setStyleSheet("font-weight: 700;")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.toggle)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(splitter)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.addLayout(header)
+        layout.addWidget(self.tabs)
 
     def log(self, message: str) -> None:
         self.event_log.appendPlainText(self._timestamped(message))
+        if "warn" in message.lower() or "fail" in message.lower() or "error" in message.lower():
+            self.warning_log.appendPlainText(self._timestamped(message))
 
     def process(self, message: str) -> None:
         self.process_log.appendPlainText(self._timestamped(message))
 
     def process_started(self, name: str, details: str = "") -> None:
+        self.progress.setRange(0, 0)
+        self.progress.setFormat(f"Running: {name}")
         suffix = f" | {details}" if details else ""
         self.process(f"START {name}{suffix}")
 
     def process_finished(self, name: str, details: str = "") -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.progress.setFormat(f"Completed: {name}")
         suffix = f" | {details}" if details else ""
         self.process(f"DONE  {name}{suffix}")
 
     def process_failed(self, name: str, message: str) -> None:
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat(f"Failed: {name}")
         self.process(f"FAIL  {name} | {message}")
+        self.warning_log.appendPlainText(self._timestamped(f"FAIL  {name} | {message}"))
 
     def process_progress(self, message: str) -> None:
         self.process(f"PROGRESS {message}")
+
+    def process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+        self.process(f"STEP  {snapshot.step}")
+        if snapshot.parameters:
+            params = ", ".join(f"{key}={value}" for key, value in snapshot.parameters.items())
+            self.process(f"PARAM {params}")
+        for warning in snapshot.warnings:
+            self.process(f"WARN  {warning}")
 
     def _make_output(self) -> QPlainTextEdit:
         output = QPlainTextEdit()
@@ -49,13 +98,18 @@ class LogPanel(QWidget):
         output.setMaximumBlockCount(2000)
         return output
 
-    def _labeled_panel(self, title: str, output: QPlainTextEdit) -> QWidget:
+    def _progress_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel(title))
-        layout.addWidget(output)
+        layout.addWidget(QLabel("Current calculation status"))
+        layout.addWidget(self.progress)
+        layout.addStretch(1)
         return panel
+
+    def _toggle_content(self) -> None:
+        visible = not self.tabs.isVisible()
+        self.tabs.setVisible(visible)
+        self.toggle.setText("Hide" if visible else "Show")
 
     def _timestamped(self, message: str) -> str:
         return f"[{datetime.now().strftime('%H:%M:%S')}] {message}"

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 import numpy as np
-import py4DSTEM
 
 
 class OrientationServiceError(Exception):
@@ -21,6 +21,7 @@ class OrientationPlanParams:
     angle_step_in_plane: float = 2
     corr_kernel_size: float = 0.08
     sigma_excitation_error: float = 0.02
+    cuda: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,16 @@ class OrientationMatchParams:
 
 
 @dataclass(frozen=True)
+class OrientationQualityResult:
+    maps: dict[str, np.ndarray]
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OrientationResult:
     orientation_map: Any
     preview: np.ndarray
+    quality: OrientationQualityResult
     elapsed_seconds: float
 
 
@@ -48,6 +56,7 @@ class OrientationService:
         if not path.exists():
             raise OrientationServiceError(f"CIF file does not exist: {path}")
         try:
+            py4DSTEM = self._py4dstem()
             self.crystal = py4DSTEM.process.diffraction.Crystal.from_CIF(path)
         except Exception as exc:
             raise OrientationServiceError(f"Could not load crystal structure: {exc}") from exc
@@ -70,7 +79,7 @@ class OrientationService:
                 power_radial=1.0,
                 power_intensity=0.0,
                 power_intensity_experiment=0.0,
-                CUDA=False,
+                CUDA=params.cuda,
                 progress_bar=False,
             )
         except Exception as exc:
@@ -86,11 +95,7 @@ class OrientationService:
         if braggvectors is None:
             raise OrientationServiceError("Run full BraggVectors before orientation matching.")
         calstate = getattr(braggvectors, "calstate", {})
-        if not all(calstate.get(name, False) for name in ["center", "ellipse", "pixel", "rotate"]):
-            raise OrientationServiceError(
-                "Apply origin, ellipse, pixel, and rotation corrections manually in step 6 "
-                "before orientation matching."
-            )
+        calibration_warning = self._calibration_warning(calstate)
         start = perf_counter()
         try:
             orientation_map = crystal.match_orientations(
@@ -99,7 +104,7 @@ class OrientationService:
                 min_angle_between_matches_deg=params.min_angle_between_matches_deg,
                 min_number_peaks=params.min_number_peaks,
                 inversion_symmetry=params.inversion_symmetry,
-                progress_bar=False,
+                progress_bar=True,
             )
             images, fig, _ = crystal.plot_orientation_maps(
                 orientation_map=orientation_map,
@@ -116,9 +121,106 @@ class OrientationService:
         except Exception as exc:
             raise OrientationServiceError(f"Orientation matching failed: {exc}") from exc
         self.orientation_map = orientation_map
-        return OrientationResult(orientation_map, preview, perf_counter() - start)
+        quality = self.orientation_quality(orientation_map, braggvectors, preview)
+        if calibration_warning:
+            quality = OrientationQualityResult(
+                maps=quality.maps,
+                warnings=(calibration_warning, *quality.warnings),
+            )
+        return OrientationResult(orientation_map, preview, quality, perf_counter() - start)
+
+    def orientation_quality(
+        self,
+        orientation_map: Any,
+        braggvectors: Any | None,
+        preview: np.ndarray | None = None,
+    ) -> OrientationQualityResult:
+        maps: dict[str, np.ndarray] = {}
+        warnings: list[str] = []
+        if preview is not None:
+            maps["Orientation RGB"] = np.asarray(preview)
+
+        for label, candidates in [
+            ("Correlation Score", ("corr", "corr_map", "correlation", "correlation_score")),
+            ("Reliability", ("reliability", "confidence", "confidence_map")),
+            ("Ambiguity", ("ambiguity", "ambiguity_map", "corr_gap", "correlation_gap")),
+        ]:
+            image = self._first_2d_array(orientation_map, candidates)
+            if image is None:
+                warnings.append(f"{label} map is not exposed by this py4DSTEM result.")
+            else:
+                maps[label] = image
+
+        peak_count = self._peak_count_map(braggvectors)
+        if peak_count is None:
+            warnings.append("Peak Count map is not available because BraggVectors.raw is missing.")
+        else:
+            maps["Peak Count"] = peak_count
+
+        return OrientationQualityResult(maps=maps, warnings=tuple(warnings))
 
     def _require_crystal(self) -> Any:
         if self.crystal is None:
             raise OrientationServiceError("Load a CIF crystal structure first.")
         return self.crystal
+
+    def _calibration_warning(self, calstate: Any) -> str:
+        missing = [
+            label
+            for name, label in [
+                ("center", "origin"),
+                ("ellipse", "ellipse"),
+                ("pixel", "pixel"),
+                ("rotate", "rotation"),
+            ]
+            if not bool(getattr(calstate, "get", lambda _name, _default=False: False)(name, False))
+        ]
+        if not missing:
+            return ""
+        return (
+            "Calibration is incomplete; continuing orientation matching with lower expected "
+            f"accuracy. Missing/applied-off corrections: {', '.join(missing)}."
+        )
+
+    def _first_2d_array(self, obj: Any, names: tuple[str, ...]) -> np.ndarray | None:
+        for name in names:
+            value = getattr(obj, name, None)
+            if value is None and hasattr(obj, "get"):
+                try:
+                    value = obj.get(name)
+                except Exception:
+                    value = None
+            if value is None:
+                continue
+            try:
+                array = np.asarray(getattr(value, "data", value), dtype=float)
+            except Exception:
+                continue
+            if array.ndim == 2:
+                return array
+            if array.ndim == 3:
+                return array[:, :, 0]
+        return None
+
+    def _peak_count_map(self, braggvectors: Any | None) -> np.ndarray | None:
+        raw = getattr(braggvectors, "raw", None)
+        if raw is None or not hasattr(raw, "shape"):
+            return None
+        shape = tuple(int(dim) for dim in raw.shape[:2])
+        counts = np.zeros(shape, dtype=float)
+        try:
+            for rx in range(shape[0]):
+                for ry in range(shape[1]):
+                    data = getattr(raw[rx, ry], "data", raw[rx, ry])
+                    counts[rx, ry] = len(data)
+        except Exception:
+            return None
+        return counts
+
+    def _py4dstem(self):
+        try:
+            return import_module("py4DSTEM")
+        except Exception as exc:
+            raise OrientationServiceError(
+                "py4DSTEM could not be imported in this environment."
+            ) from exc
