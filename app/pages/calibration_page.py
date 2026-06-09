@@ -121,6 +121,7 @@ class CalibrationPage(QWidget):
         self.transfer_target = QComboBox()
         self.transfer_button = QPushButton("Transfer Calibration")
         self.validate_button = QPushButton("Validate Calibration")
+        self.reset_button = QPushButton("Reset Applied Calibration")
         self.buttons = [
             self.refresh_button,
             self.origin_button,
@@ -134,6 +135,7 @@ class CalibrationPage(QWidget):
             self.apply_rotation_button,
             self.transfer_button,
             self.validate_button,
+            self.reset_button,
         ]
         self.viewers = QTabWidget()
 
@@ -208,6 +210,7 @@ class CalibrationPage(QWidget):
                 WorkflowStep.CALIBRATION_APPLY,
             )
         )
+        self.reset_button.clicked.connect(self.reset_calibration)
         self.analysis_target.currentTextChanged.connect(lambda _text: self._refresh_decision_panel())
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
@@ -239,6 +242,7 @@ class CalibrationPage(QWidget):
             status_form.addRow(label, widget)
         status_layout.addLayout(status_form)
         status_layout.addWidget(self.refresh_button)
+        status_layout.addWidget(self.reset_button)
 
         origin_group = QGroupBox("Origin Calibration")
         origin_layout = QVBoxLayout(origin_group)
@@ -298,10 +302,14 @@ class CalibrationPage(QWidget):
         left_layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(left)
         self.controls_panel = scroll
         layout = QHBoxLayout(self)
         layout.addWidget(self.viewers)
+        for form in left.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
     def refresh_status(self) -> None:
         braggvectors = self.braggvectors_provider()
@@ -324,6 +332,19 @@ class CalibrationPage(QWidget):
         self._refresh_decision_panel()
         self.refresh_transfer_targets()
         self.show_braggvectors_histogram()
+
+    def reset_calibration(self) -> None:
+        self._run(
+            lambda: self.service.set_calibration_state(
+                self.braggvectors_provider(),
+                False,
+                False,
+                False,
+                False,
+            ),
+            "Reset applied calibration",
+            WorkflowStep.CALIBRATION_APPLY,
+        )
 
     def show_braggvectors_histogram(self, make_current: bool = False) -> None:
         braggvectors = self.braggvectors_provider()
@@ -611,6 +632,13 @@ class CalibrationPage(QWidget):
                 return
         viewer = ImageViewer()
         viewer.set_image(image)
+        if "bragg vector" in name.lower() or "braggvectors" in name.lower():
+            mode = "cal" if "calibrated" in name.lower() or "corrected" in name.lower() else "raw"
+            viewer.set_bragg_sampling_provider(
+                lambda sampling, mode=mode: np.asarray(
+                    self.braggvectors_provider().histogram(mode=mode, sampling=sampling).data
+                )
+            )
         viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
         self._apply_overlay(viewer, overlay)
         self.viewers.addTab(viewer, name)

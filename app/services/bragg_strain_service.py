@@ -574,7 +574,7 @@ class BraggStrainService:
                 gvects=gvects,
                 coordinate_rotation=params.coordinate_rotation,
                 layout="square",
-                returncalc=True,
+                returncalc=False,
             )
         except Exception as exc:
             raise BraggStrainServiceError(f"py4DSTEM strain map calculation failed: {exc}") from exc

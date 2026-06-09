@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QActionGroup
+from PySide6.QtWidgets import QInputDialog, QLabel, QMenu, QMessageBox, QVBoxLayout, QWidget
 
 
 class ImageViewer(QWidget):
@@ -22,6 +25,8 @@ class ImageViewer(QWidget):
         self.raw_image: np.ndarray | None = None
         self.raw_levels: tuple[float, float] | None = None
         self.rendered_image: np.ndarray | None = None
+        self.bragg_sampling = 1
+        self.bragg_sampling_provider: Callable[[int], np.ndarray] | None = None
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
@@ -42,6 +47,8 @@ class ImageViewer(QWidget):
         self.message_item.setPos(0, 0)
         self.image_view.getView().scene().sigMouseClicked.connect(self._handle_mouse_clicked)
         self.image_view.getView().scene().sigMouseMoved.connect(self._handle_mouse_moved)
+        self.image_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.image_view.customContextMenuRequested.connect(self._show_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -84,6 +91,67 @@ class ImageViewer(QWidget):
         self._apply_colormap()
         if self.raw_image is not None:
             self._render_image(self.raw_image, self.raw_levels)
+
+    def set_bragg_sampling_provider(
+        self,
+        provider: Callable[[int], np.ndarray] | None,
+        sampling: int = 1,
+    ) -> None:
+        self.bragg_sampling_provider = provider
+        self.bragg_sampling = max(int(sampling), 1)
+
+    def _show_context_menu(self, position) -> None:
+        self._create_context_menu().exec(self.image_view.mapToGlobal(position))
+
+    def _create_context_menu(self) -> QMenu:
+        menu = QMenu(self)
+        scaling_menu = menu.addMenu("Scaling")
+        scaling_group = QActionGroup(self)
+        scaling_group.setExclusive(True)
+        for scaling in ("linear", "log"):
+            action = scaling_menu.addAction(scaling)
+            action.setCheckable(True)
+            action.setChecked(self.scaling == scaling)
+            action.triggered.connect(
+                lambda _checked=False, value=scaling: self.set_scaling(value)
+            )
+            scaling_group.addAction(action)
+
+        cmap_menu = menu.addMenu("Colormap")
+        cmap_group = QActionGroup(self)
+        cmap_group.setExclusive(True)
+        for cmap in ("gray", "viridis", "magma", "plasma", "inferno", "cividis"):
+            action = cmap_menu.addAction(cmap)
+            action.setCheckable(True)
+            action.setChecked(self.colormap == cmap)
+            action.triggered.connect(lambda _checked=False, value=cmap: self.set_colormap(value))
+            cmap_group.addAction(action)
+
+        if self.bragg_sampling_provider is not None:
+            menu.addSeparator()
+            sampling_action = menu.addAction(f"BraggVectors Sampling... ({self.bragg_sampling})")
+            sampling_action.triggered.connect(self._change_bragg_sampling)
+        return menu
+
+    def _change_bragg_sampling(self) -> None:
+        sampling, accepted = QInputDialog.getInt(
+            self,
+            "BraggVectors Sampling",
+            "Sampling",
+            self.bragg_sampling,
+            1,
+            64,
+            1,
+        )
+        if not accepted or self.bragg_sampling_provider is None:
+            return
+        try:
+            image = self.bragg_sampling_provider(sampling)
+        except Exception as exc:
+            QMessageBox.warning(self, "BraggVectors Sampling", str(exc))
+            return
+        self.bragg_sampling = sampling
+        self.set_image(image)
 
     def _render_image(self, array: np.ndarray, levels: tuple[float, float] | None = None) -> None:
         finite = array[np.isfinite(array)]
@@ -451,6 +519,9 @@ class ImageViewer(QWidget):
         return low, high
 
     def _handle_mouse_clicked(self, event) -> None:
+        if event.button() == Qt.RightButton:
+            self._create_context_menu().exec(event.screenPos().toPoint())
+            return
         image_item = self.image_view.getImageItem()
         if image_item is None:
             return

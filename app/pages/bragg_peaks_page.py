@@ -188,6 +188,7 @@ class BraggPeaksPage(QWidget):
         self.roi_viewer = ImageViewer()
         self.selected_grid = ImageGridViewer()
         self.full_map_viewer = ImageViewer()
+        self.full_map_viewer.set_bragg_sampling_provider(self._sampled_bragg_vector_map)
         self.visual_tabs = QTabWidget()
         self.visual_tabs.addTab(self.roi_viewer, "Probe ROI")
         self.visual_tabs.addTab(self.viewer, "Single Position")
@@ -488,6 +489,12 @@ class BraggPeaksPage(QWidget):
                     ("npy", "png", "tiff"),
                     metadata,
                 )
+
+    def _sampled_bragg_vector_map(self, sampling: int):
+        braggvectors = self.service.braggvectors
+        if braggvectors is None:
+            raise ValueError("Run full BraggVectors first.")
+        return np.asarray(braggvectors.histogram(mode="raw", sampling=sampling).data)
 
     def _handle_probe_kernel_result(self, result: ProbeKernelResult) -> None:
         self.status_label.setText(f"Probe kernel ready in {result.elapsed_seconds:.2f} s")

@@ -139,6 +139,8 @@ class _FakeStrainMap:
         return None
 
     def get_strain(self, **_kwargs):
+        if _kwargs.get("returncalc"):
+            raise AttributeError("'StrainMap' object has no attribute 'strainmap'")
         return None
 
 
