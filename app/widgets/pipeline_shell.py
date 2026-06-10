@@ -22,15 +22,6 @@ from PySide6.QtWidgets import (
 from app.widgets.image_viewer import ImageViewer
 
 
-STATUS_COLORS = {
-    "Completed": "#18794e",
-    "Current": "#1769aa",
-    "Ready": "#4d6b82",
-    "Locked": "#8b96a1",
-    "Warning": "#b26a00",
-}
-
-
 @dataclass(frozen=True)
 class RouteModule:
     key: str
@@ -79,10 +70,8 @@ class TechnicalRouteBar(QWidget):
 
     def update_states(self, states: dict[str, str], current_key: str) -> None:
         for module in self.modules:
-            state = "Current" if module.key == current_key else states.get(module.key, "Locked")
             button = self.buttons[module.key]
-            button.setText(f"{module.title}\n{state}")
-            button.setProperty("routeState", state)
+            button.setText(module.title)
             button.setChecked(module.key == current_key)
 
 
@@ -183,8 +172,6 @@ class ModuleControlPanel(QWidget):
         super().__init__()
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
-        self.status = QLabel("Current")
-        self.status.setObjectName("statusBadge")
         self.controls_host = QVBoxLayout()
         self.controls_host.setContentsMargins(0, 0, 0, 0)
         self.controls_host.addWidget(QLabel("Select a module to inspect its parameters."))
@@ -192,13 +179,11 @@ class ModuleControlPanel(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         header = QHBoxLayout()
         header.addWidget(self.title, 1)
-        header.addWidget(self.status)
         layout.addLayout(header)
         layout.addLayout(self.controls_host, 1)
 
-    def set_module(self, module: RouteModule, status: str, controls: QWidget | None) -> None:
+    def set_module(self, module: RouteModule, controls: QWidget | None) -> None:
         self.title.setText(module.title)
-        self.status.setText(status)
         while self.controls_host.count():
             item = self.controls_host.takeAt(0)
             if item.widget() is not None:
