@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
@@ -11,6 +12,8 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class BraggStrainServiceError(Exception):
@@ -153,7 +156,10 @@ class BraggStrainService:
             radius, center_x, center_y = py4DSTEM.process.calibration.get_probe_size(probe.probe)
             probe.get_kernel(mode="sigmoid", radii=(radius, 2 * radius))
             kernel = np.asarray(probe.kernel)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise BraggStrainServiceError(f"Could not prepare vacuum-probe kernel: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error preparing vacuum-probe kernel")
             raise BraggStrainServiceError(f"Could not prepare vacuum-probe kernel: {exc}") from exc
 
         self.probe_kernel = kernel
@@ -194,7 +200,11 @@ class BraggStrainService:
                 returncalc=True,
             )
             peaks = self._peaks_from_qpoints(qpoints)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            logger.debug("py4DSTEM peak detection failed, using fallback", exc_info=True)
+            peaks = self._fallback_peak_detection(dp, params)
         except Exception:
+            logger.warning("Unexpected error in py4DSTEM peak detection, using fallback", exc_info=True)
             peaks = self._fallback_peak_detection(dp, params)
 
         return PeakDetectionResult(
@@ -229,7 +239,10 @@ class BraggStrainService:
                 name="braggvectors",
                 returncalc=True,
             )
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            raise BraggStrainServiceError(f"py4DSTEM BraggVectors calculation failed: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error in BraggVectors calculation")
             raise BraggStrainServiceError(f"py4DSTEM BraggVectors calculation failed: {exc}") from exc
 
         self.braggvectors = braggvectors
@@ -313,8 +326,15 @@ class BraggStrainService:
             source.setcal(**previous_state)
             raw_bvm = np.asarray(source.histogram(mode="raw").data)
             measurements = self._origin_measurements(qx_fit, qy_fit, qx_residuals, qy_residuals, raw_bvm)
+        except BraggStrainServiceError:
+            source.setcal(**previous_state)
+            raise
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            source.setcal(**previous_state)
+            raise BraggStrainServiceError(f"Origin calibration failed: {exc}") from exc
         except Exception as exc:
             source.setcal(**previous_state)
+            logger.exception("Unexpected error in origin calibration")
             raise BraggStrainServiceError(f"Origin calibration failed: {exc}") from exc
         return CalibrationActionResult(
             (
@@ -370,10 +390,21 @@ class BraggStrainService:
             measurements = self._ellipse_measurements(p_ellipse, raw_bvm, bvm)
             if center is not None:
                 measurements = {**measurements, "x": float(center[0]), "y": float(center[1])}
+        except BraggStrainServiceError:
+            source.setcal(**previous_source_state)
+            if target is not source:
+                target.setcal(**previous_target_state)
+            raise
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            source.setcal(**previous_source_state)
+            if target is not source:
+                target.setcal(**previous_target_state)
+            raise BraggStrainServiceError(f"Ellipticity calibration failed: {exc}") from exc
         except Exception as exc:
             source.setcal(**previous_source_state)
             if target is not source:
                 target.setcal(**previous_target_state)
+            logger.exception("Unexpected error in ellipticity calibration")
             raise BraggStrainServiceError(f"Ellipticity calibration failed: {exc}") from exc
         label = "Ellipse Reference" if target is not source else "target"
         return CalibrationActionResult(
@@ -390,10 +421,14 @@ class BraggStrainService:
             measurements=measurements,
             overlays={
                 "raw Bragg vector map": {
-                    "kind": "circle",
+                    "kind": "ring",
                     "x": measurements["x"],
                     "y": measurements["y"],
-                    "r": 0.5 * (measurements["a"] + measurements["b"]),
+                    "inner_radius": float(min(measurements["a"], measurements["b"])),
+                    "outer_radius": float(max(measurements["a"], measurements["b"])),
+                    "a": measurements["a"],
+                    "b": measurements["b"],
+                    "theta": measurements.get("theta", 0.0),
                 }
             },
         )
@@ -460,7 +495,10 @@ class BraggStrainService:
         start = perf_counter()
         try:
             source.setcal(center=center, ellipse=ellipse, pixel=pixel, rotate=rotate)
+        except (AttributeError, TypeError) as exc:
+            raise BraggStrainServiceError(f"Could not apply calibration state: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error applying calibration state")
             raise BraggStrainServiceError(f"Could not apply calibration state: {exc}") from exc
         enabled = [name for name, value in source.calstate.items() if value]
         return CalibrationActionResult(
@@ -496,7 +534,14 @@ class BraggStrainService:
             }
             next_state[self._calstate_name(correction_key)] = True
             target.setcal(**next_state)
+        except BraggStrainServiceError:
+            raise
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise BraggStrainServiceError(
+                f"Could not transfer {self._correction_label(correction_key)} calibration: {exc}"
+            ) from exc
         except Exception as exc:
+            logger.exception("Unexpected error transferring calibration correction")
             raise BraggStrainServiceError(
                 f"Could not transfer {self._correction_label(correction_key)} calibration: {exc}"
             ) from exc
@@ -513,16 +558,16 @@ class BraggStrainService:
         images: dict[str, np.ndarray] = {}
         try:
             images["raw Bragg vector map"] = np.asarray(source.histogram(mode="raw").data)
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError):
+            logger.debug("Could not extract raw Bragg vector map for calibration validation", exc_info=True)
         try:
             images["calibrated Bragg vector map"] = np.asarray(source.histogram(mode="cal").data)
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError):
+            logger.debug("Could not extract calibrated Bragg vector map for calibration validation", exc_info=True)
         try:
             status = self.calibration_status(source)
             applied = [name for name, value in getattr(source, "calstate", {}).items() if value]
-        except Exception:
+        except (AttributeError, TypeError):
             status = CalibrationStatus("missing", "missing", "missing", "missing", False)
             applied = []
         return CalibrationActionResult(
@@ -576,7 +621,10 @@ class BraggStrainService:
                 layout="square",
                 returncalc=False,
             )
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            raise BraggStrainServiceError(f"py4DSTEM strain map calculation failed: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error in strain map calculation")
             raise BraggStrainServiceError(f"py4DSTEM strain map calculation failed: {exc}") from exc
         finally:
             plt.close("all")
@@ -631,7 +679,7 @@ class BraggStrainService:
                 raise BraggStrainServiceError("No valid fitted g1/g2 points are available.")
             return valid
 
-        scan_shape = tuple(int(dim) for dim in braggvectors.raw.shape)
+        scan_shape = self._scan_shape(braggvectors.raw, braggvectors)
         if not (
             0 <= params.roi_rx_start < params.roi_rx_end <= scan_shape[0]
             and 0 <= params.roi_ry_start < params.roi_ry_end <= scan_shape[1]
@@ -642,7 +690,10 @@ class BraggStrainService:
         if params.reference_mode == "roi_mask":
             return roi
         if params.reference_mode == "roi_vectors":
-            return strainmap.get_reference_g1g2(roi)
+            reference = strainmap.get_reference_g1g2(roi)
+            if hasattr(reference, "data"):
+                return reference
+            return np.asarray(reference)
         raise BraggStrainServiceError(f"Unsupported strain reference mode: {params.reference_mode}")
 
     def export_strain_result(self, result: StrainMapResult, file_path: str | Path) -> None:
@@ -685,6 +736,7 @@ class BraggStrainService:
         try:
             plt.close(fig)
         except Exception:
+            logger.debug("Could not close matplotlib figure, closing all", exc_info=True)
             plt.close("all")
 
     def _ensure_datacube(self, datacube: Any) -> None:
@@ -693,6 +745,43 @@ class BraggStrainService:
         shape = getattr(datacube, "shape", getattr(datacube.data, "shape", None))
         if shape is None or len(tuple(shape)) != 4:
             raise BraggStrainServiceError(f"Expected a 4D DataCube, got shape {shape}.")
+
+    def _scan_shape(self, raw: Any, braggvectors: Any | None = None) -> tuple[int, int]:
+        if braggvectors is not None:
+            for attr in ("Rshape", "shape", "scan_shape"):
+                val = getattr(braggvectors, attr, None)
+                if val is not None:
+                    try:
+                        return tuple(int(dim) for dim in tuple(val)[:2])
+                    except Exception:
+                        pass
+        for obj in (raw, getattr(raw, "_data", None)):
+            if obj is None:
+                continue
+            for attr in ("shape", "scan_shape"):
+                val = getattr(obj, attr, None)
+                if val is not None:
+                    try:
+                        return tuple(int(dim) for dim in tuple(val)[:2])
+                    except Exception:
+                        pass
+        if braggvectors is not None:
+            try:
+                histogram = braggvectors.histogram(mode="raw")
+                data = getattr(histogram, "data", histogram)
+                shape = getattr(data, "shape", None)
+                if shape is not None:
+                    return tuple(int(dim) for dim in tuple(shape)[:2])
+            except Exception:
+                pass
+            try:
+                rows = len(raw)
+                cols = len(raw[0]) if rows else 0
+                if rows > 0 and cols > 0:
+                    return rows, cols
+            except Exception:
+                pass
+        raise BraggStrainServiceError("Could not determine scan shape from BraggVectors raw data.")
 
     def _require_braggvectors(self, braggvectors: Any | None) -> Any:
         if braggvectors is None:
@@ -764,7 +853,7 @@ class BraggStrainService:
             return "missing"
         try:
             value = getter()
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return "missing"
         if value is None:
             return "missing"
@@ -891,11 +980,12 @@ class BraggStrainService:
             return None
         total = 0
         try:
-            for rx in range(raw.shape[0]):
-                for ry in range(raw.shape[1]):
+            scan_shape = self._scan_shape(raw, braggvectors)
+            for rx in range(scan_shape[0]):
+                for ry in range(scan_shape[1]):
                     total += len(raw[rx, ry].data)
             return total
-        except Exception:
+        except (AttributeError, IndexError, TypeError):
             return None
 
     def _quality_shape_from_source(self, source: Any, bvm: np.ndarray) -> tuple[int, int]:
@@ -905,7 +995,7 @@ class BraggStrainService:
                 continue
             try:
                 shape = tuple(int(dim) for dim in value[:2])
-            except Exception:
+            except (TypeError, ValueError, IndexError):
                 continue
             if len(shape) == 2 and shape[0] > 0 and shape[1] > 0:
                 return shape
@@ -941,7 +1031,7 @@ class BraggStrainService:
         if center is not None:
             try:
                 x, y = float(center[0]), float(center[1])
-            except Exception:
+            except (TypeError, ValueError, IndexError):
                 x, y = self._image_center(np.asarray(raw_bvm.data))
         else:
             x, y = self._image_center(np.asarray(raw_bvm.data))
@@ -984,7 +1074,7 @@ class BraggStrainService:
         for item in candidates:
             try:
                 scalar = float(np.asarray(item).squeeze())
-            except Exception:
+            except (TypeError, ValueError):
                 continue
             if np.isfinite(scalar):
                 values.append(scalar)
@@ -1000,7 +1090,7 @@ class BraggStrainService:
             return None
         try:
             return np.asarray(strainmap.g1g2_map.get_slice("mask").data, dtype=bool)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return None
 
     def _py4dstem(self):
@@ -1020,7 +1110,7 @@ class BraggStrainService:
                 continue
             try:
                 array = np.asarray(getattr(value, "data", value), dtype=float)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
             if array.ndim == 2:
                 return array

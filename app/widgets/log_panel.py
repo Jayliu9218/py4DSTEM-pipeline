@@ -36,7 +36,6 @@ class LogPanel(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._progress_panel(), "Progress")
         self.tabs.addTab(self.event_log, "Activity Log")
-        self.tabs.addTab(self.process_log, "Calculation Process")
         self.tabs.addTab(self.warning_log, "Warnings")
         self.toggle = QToolButton()
         self.toggle.setText("Hide")
@@ -62,8 +61,9 @@ class LogPanel(QWidget):
         self.process_log.appendPlainText(self._timestamped(message))
 
     def process_started(self, name: str, details: str = "") -> None:
-        self.progress.setRange(0, 0)
-        self.progress.setFormat(f"Running: {name}")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat(f"Doing... {name} 0%")
         suffix = f" | {details}" if details else ""
         self.process(f"START {name}{suffix}")
 
@@ -83,6 +83,13 @@ class LogPanel(QWidget):
 
     def process_progress(self, message: str) -> None:
         self.process(f"PROGRESS {message}")
+        import re
+        match = re.search(r"(\d+(?:\.\d+)?)\s*%", message)
+        if match:
+            value = min(max(float(match.group(1)), 0), 100)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(int(value))
+            self.progress.setFormat(f"Doing... {int(value)}%")
 
     def process_snapshot(self, snapshot: ProcessSnapshot) -> None:
         self.process(f"STEP  {snapshot.step}")
@@ -103,7 +110,8 @@ class LogPanel(QWidget):
         layout = QVBoxLayout(panel)
         layout.addWidget(QLabel("Current calculation status"))
         layout.addWidget(self.progress)
-        layout.addStretch(1)
+        layout.addWidget(QLabel("Calculation process"))
+        layout.addWidget(self.process_log)
         return panel
 
     def _toggle_content(self) -> None:
