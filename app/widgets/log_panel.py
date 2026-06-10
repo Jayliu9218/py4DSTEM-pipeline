@@ -37,15 +37,11 @@ class LogPanel(QWidget):
         self.tabs.addTab(self._progress_panel(), "Progress")
         self.tabs.addTab(self.event_log, "Activity Log")
         self.tabs.addTab(self.warning_log, "Warnings")
-        self.toggle = QToolButton()
-        self.toggle.setText("Hide")
-        self.toggle.clicked.connect(self._toggle_content)
         header = QHBoxLayout()
         title = QLabel("Console")
         title.setStyleSheet("font-weight: 700;")
         header.addWidget(title)
         header.addStretch(1)
-        header.addWidget(self.toggle)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 5, 8, 5)
@@ -113,11 +109,6 @@ class LogPanel(QWidget):
         layout.addWidget(QLabel("Calculation process"))
         layout.addWidget(self.process_log)
         return panel
-
-    def _toggle_content(self) -> None:
-        visible = not self.tabs.isVisible()
-        self.tabs.setVisible(visible)
-        self.toggle.setText("Hide" if visible else "Show")
 
     def _timestamped(self, message: str) -> str:
         return f"[{datetime.now().strftime('%H:%M:%S')}] {message}"

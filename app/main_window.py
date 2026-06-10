@@ -437,29 +437,17 @@ class MainWindow(QMainWindow):
         data_ready = self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4
         for module in self.route_modules:
             if module.key == "data_setup":
-                states[module.key] = "Completed" if data_ready else "Ready"
+                states[module.key] = "Ready" if data_ready else "Ready"
                 continue
             if module.state_step and self.workflow_state.is_stale(module.state_step):
                 states[module.key] = "Warning"
             elif module.state_step and self.workflow_state.is_completed(module.state_step):
                 states[module.key] = "Completed"
-            elif module.prerequisite and states.get(module.prerequisite) not in {"Completed", "Warning"}:
-                states[module.key] = "Locked"
-            elif module.key == "export" and not self.result_registry.list_entries():
-                states[module.key] = "Locked"
             else:
                 states[module.key] = "Ready"
         return states
 
     def _select_route_module(self, key: str) -> None:
-        states = self._route_states()
-        if states.get(key) == "Locked":
-            module = next(item for item in self.route_modules if item.key == key)
-            self.log_panel.log(
-                f"WARN  {module.title} is locked because its input requirements are not met."
-            )
-            self._refresh_pipeline_state()
-            return
         self.current_route_key = key
         self._refresh_pipeline_state()
 
@@ -471,8 +459,7 @@ class MainWindow(QMainWindow):
         module = next(item for item in self.route_modules if item.key == self.current_route_key)
         self.viewer_stack.setCurrentWidget(self.viewer_pages[module.page_key])
         controls = self._controls_for_route(module.key)
-        display_status = "Current" if states[module.key] != "Locked" else "Locked"
-        self.module_panel.set_module(module, display_status, controls)
+        self.module_panel.set_module(module, controls)
         self._bold_section_titles()
 
     def _controls_for_route(self, key: str) -> QWidget | None:
