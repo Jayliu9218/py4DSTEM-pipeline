@@ -30,6 +30,7 @@ class ImageViewer(QWidget):
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
+        self.image_view.getView().setMenuEnabled(False)
         self.coordinate_label = QLabel("x: -, y: -, value: -")
         self.scatter_item = pg.ScatterPlotItem()
         self.message_item = pg.TextItem("", color=(120, 120, 120), anchor=(0.5, 0.5))
@@ -166,7 +167,11 @@ class ImageViewer(QWidget):
         )
         if self._uses_intensity_scaling():
             display = self._scale_display(display)
-            safe_levels = self._safe_levels(display, self._scale_levels(levels))
+            if levels is None:
+                low, high = np.nanpercentile(display[np.isfinite(display)], [1, 99])
+                safe_levels = self._safe_levels(display, (float(low), float(high)))
+            else:
+                safe_levels = self._safe_levels(display, self._scale_levels(levels))
         else:
             safe_levels = None
         self.rendered_image = display
@@ -371,6 +376,15 @@ class ImageViewer(QWidget):
         color: str = "r",
     ) -> None:
         self.clear_overlays()
+        self.add_circle_overlay(x, y, radius, color)
+
+    def add_circle_overlay(
+        self,
+        x: float,
+        y: float,
+        radius: float,
+        color: str = "r",
+    ) -> None:
         if radius <= 0 or not np.all(np.isfinite([x, y, radius])):
             return
         circle = pg.CircleROI(
@@ -385,6 +399,53 @@ class ImageViewer(QWidget):
         self.image_view.getView().addItem(circle)
         self.overlay_items.append(circle)
 
+    def set_ring_overlay(
+        self,
+        x: float,
+        y: float,
+        inner_radius: float,
+        outer_radius: float,
+        color: str = "r",
+    ) -> None:
+        self.clear_overlays()
+        self.add_ring_overlay(x, y, inner_radius, outer_radius, color)
+
+    def add_ring_overlay(
+        self,
+        x: float,
+        y: float,
+        inner_radius: float,
+        outer_radius: float,
+        color: str = "r",
+    ) -> None:
+        if inner_radius <= 0 or outer_radius <= inner_radius:
+            self.add_circle_overlay(x, y, outer_radius, color)
+            return
+        if not np.all(np.isfinite([x, y, inner_radius, outer_radius])):
+            return
+        outer = pg.CircleROI(
+            [float(x) - float(outer_radius), float(y) - float(outer_radius)],
+            [2 * float(outer_radius), 2 * float(outer_radius)],
+            pen=pg.mkPen(color, width=2),
+            movable=False,
+            removable=False,
+            resizable=False,
+        )
+        inner = pg.CircleROI(
+            [float(x) - float(inner_radius), float(y) - float(inner_radius)],
+            [2 * float(inner_radius), 2 * float(inner_radius)],
+            pen=pg.mkPen(color, width=1, style=Qt.DashLine),
+            movable=False,
+            removable=False,
+            resizable=False,
+        )
+        outer.setAcceptedMouseButtons(Qt.NoButton)
+        inner.setAcceptedMouseButtons(Qt.NoButton)
+        self.image_view.getView().addItem(outer)
+        self.image_view.getView().addItem(inner)
+        self.overlay_items.append(outer)
+        self.overlay_items.append(inner)
+
     def set_ellipse_overlay(
         self,
         x: float,
@@ -395,6 +456,17 @@ class ImageViewer(QWidget):
         color: str = "r",
     ) -> None:
         self.clear_overlays()
+        self.add_ellipse_overlay(x, y, a, b, theta, color)
+
+    def add_ellipse_overlay(
+        self,
+        x: float,
+        y: float,
+        a: float,
+        b: float,
+        theta: float = 0.0,
+        color: str = "r",
+    ) -> None:
         if a <= 0 or b <= 0 or not np.all(np.isfinite([x, y, a, b, theta])):
             return
         ellipse = pg.EllipseROI(
@@ -520,7 +592,6 @@ class ImageViewer(QWidget):
 
     def _handle_mouse_clicked(self, event) -> None:
         if event.button() == Qt.RightButton:
-            self._create_context_menu().exec(event.screenPos().toPoint())
             return
         image_item = self.image_view.getImageItem()
         if image_item is None:
