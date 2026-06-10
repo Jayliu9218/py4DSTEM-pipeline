@@ -26,6 +26,7 @@ class WorkflowStep:
     ORIENTATION_PLAN = "orientation_plan"
     ORIENTATION_MATCH = "orientation_match"
     STRAIN_MAP = "strain_map"
+    PHASE_CONTRAST = "phase_contrast"
 
 
 @dataclass(frozen=True)
