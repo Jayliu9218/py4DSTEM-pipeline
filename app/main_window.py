@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
             result_registry=self.result_registry,
         )
         self.phase_contrast_page = PhaseContrastPage(
-            source_provider=self._get_current_datacube,
+            source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
