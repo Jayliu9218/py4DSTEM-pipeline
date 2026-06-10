@@ -35,6 +35,7 @@ from app.pages.bragg_peaks_page import BraggPeaksPage
 from app.pages.calibration_page import CalibrationPage
 from app.pages.orientation_page import OrientationPage
 from app.pages.strain_map_page import StrainMapPage
+from app.pages.phase_contrast_page import PhaseContrastPage
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
@@ -126,6 +127,12 @@ class MainWindow(QMainWindow):
         )
         self.orientation_page = OrientationPage(
             braggvectors_provider=self._get_braggvectors,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.phase_contrast_page = PhaseContrastPage(
+            source_provider=self._get_current_datacube,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
@@ -285,6 +292,7 @@ class MainWindow(QMainWindow):
             "calibration": self.calibration_page,
             "orientation": self.orientation_page,
             "strain": self.strain_map_page,
+            "phase_contrast": self.phase_contrast_page,
         }
         for page in self.viewer_pages.values():
             self.viewer_stack.addWidget(page)
@@ -375,12 +383,19 @@ class MainWindow(QMainWindow):
             "Validated DataCube, dataset roles, virtual image preview, and display-ready outputs.",
         )
         if structure == "Crystalline":
-            analysis_page = "strain" if goal == "Strain" else "orientation" if goal == "Orientation" else "overview"
+            analysis_page = (
+                "strain" if goal == "Strain"
+                else "orientation" if goal == "Orientation"
+                else "phase_contrast" if goal == "Phase"
+                else "overview"
+            )
             analysis_step = (
                 WorkflowStep.STRAIN_MAP
                 if goal == "Strain"
                 else WorkflowStep.ORIENTATION_MATCH
                 if goal == "Orientation"
+                else WorkflowStep.PHASE_CONTRAST
+                if goal == "Phase"
                 else None
             )
             modules = [
@@ -472,6 +487,8 @@ class MainWindow(QMainWindow):
                 if self.project_toolbar.goal.currentText() == "Strain"
                 else self.orientation_page.controls_panel
                 if self.project_toolbar.goal.currentText() == "Orientation"
+                else self.phase_contrast_page.controls_panel
+                if self.project_toolbar.goal.currentText() == "Phase"
                 else None
             ),
         }.get(key)
@@ -506,6 +523,7 @@ class MainWindow(QMainWindow):
             self.calibration_page,
             self.orientation_page,
             self.strain_map_page,
+            self.phase_contrast_page,
         ]:
             self.sidebar_controls.addWidget(self._wrap_sidebar_panel(page.controls_panel))
 
@@ -606,7 +624,8 @@ class MainWindow(QMainWindow):
                     "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
                     "calibration": self.calibration_page.params_snapshot(),
                     "orientation": self.orientation_page.params_snapshot(),
-                    "strain_map": self.strain_map_page.params_snapshot(),
+"strain_map": self.strain_map_page.params_snapshot(),
+                    "phase_contrast": self.phase_contrast_page.params_snapshot(),
                 },
                 result_entries=result_entries,
             )
@@ -1186,6 +1205,7 @@ class MainWindow(QMainWindow):
                 "calibration": self.calibration_page.params_snapshot(),
                 "orientation": self.orientation_page.params_snapshot(),
                 "strain_map": self.strain_map_page.params_snapshot(),
+                "phase_contrast": self.phase_contrast_page.params_snapshot(),
             },
         )
 
