@@ -9,11 +9,13 @@ from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QGroupBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -102,11 +104,34 @@ class PhaseContrastPage(QWidget):
         self.parallax_alignment_bins = QLabel("32,32,32,16,16,8,8")
 
         self.dpc_energy = self._float_input(10, 1000000, 200000, decimals=0, unit="eV")
+        self.dpc_use_segmented = QComboBox()
+        self.dpc_use_segmented.addItems(["Full pixelated COM", "Virtual segmented detector"])
+        self.dpc_mask_mode = QComboBox()
+        self.dpc_mask_mode.addItems(["BF disk / annular mask", "Annular only"])
+        self.dpc_inner_angle = self._float_input(0, 1000, 0, decimals=1, unit="mrad")
+        self.dpc_outer_angle = self._float_input(0, 1000, 25, decimals=1, unit="mrad")
+        self.dpc_origin_x = self._float_input(-10000, 10000, 0, decimals=2, unit="px")
+        self.dpc_origin_y = self._float_input(-10000, 10000, 0, decimals=2, unit="px")
+        self.dpc_rotation = self._float_input(-180, 180, 0, decimals=2, unit="deg")
+        self.dpc_descan = QComboBox()
+        self.dpc_descan.addItems(["On", "Off"])
+        self.dpc_background = QComboBox()
+        self.dpc_background.addItems(["None", "Subtract mean", "Subtract median"])
+        self.dpc_padding = self._int_input(0, 512, 0, unit="px")
+        self.dpc_regularization = QComboBox()
+        self.dpc_regularization.addItems(["None", "Gaussian", "Butterworth"])
+        self.dpc_gaussian_sigma = self._float_input(0, 1000, 0, decimals=2, unit="A")
+        self.dpc_q_lowpass = self._float_input(0, 1000, 0, decimals=3, unit="A^-1")
+        self.dpc_q_highpass = self._float_input(0, 1000, 0, decimals=3, unit="A^-1")
+        self.dpc_store_iterations = QComboBox()
+        self.dpc_store_iterations.addItems(["No", "Yes"])
 
         self.run_button = QPushButton("Reconstruct")
         self.run_button.clicked.connect(self._run)
 
         self.viewer = ImageViewer()
+        self.viewer.setMinimumSize(0, 0)
+        self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
@@ -133,8 +158,50 @@ class PhaseContrastPage(QWidget):
         parallax_form.addRow("Alignment Bins", self.parallax_alignment_bins)
 
         dpc_group = QWidget()
-        dpc_form = QFormLayout(dpc_group)
-        dpc_form.addRow("Energy", self.dpc_energy)
+        dpc_layout = QVBoxLayout(dpc_group)
+        dpc_layout.setContentsMargins(0, 0, 0, 0)
+
+        dpc_input = QGroupBox("1. Input")
+        dpc_input_form = QFormLayout(dpc_input)
+        dpc_input_form.addRow("Energy", self.dpc_energy)
+
+        dpc_detector = QGroupBox("2. Detector / Mask")
+        dpc_detector_form = QFormLayout(dpc_detector)
+        dpc_detector_form.addRow("Detector mode", self.dpc_use_segmented)
+        dpc_detector_form.addRow("Mask mode", self.dpc_mask_mode)
+        dpc_detector_form.addRow("Inner angle", self.dpc_inner_angle)
+        dpc_detector_form.addRow("Outer angle", self.dpc_outer_angle)
+
+        dpc_calibration = QGroupBox("3. Calibration")
+        dpc_calibration_form = QFormLayout(dpc_calibration)
+        dpc_calibration_form.addRow("Origin x", self.dpc_origin_x)
+        dpc_calibration_form.addRow("Origin y", self.dpc_origin_y)
+        dpc_calibration_form.addRow("Rotation", self.dpc_rotation)
+        dpc_calibration_form.addRow("Descan", self.dpc_descan)
+        dpc_calibration_form.addRow("Background", self.dpc_background)
+
+        dpc_com = QGroupBox("4. COM Calculation")
+        dpc_com_form = QFormLayout(dpc_com)
+        dpc_com_form.addRow("Detector mode", self.dpc_use_segmented)
+
+        dpc_diag = QGroupBox("5. Diagnostics")
+        dpc_diag_form = QFormLayout(dpc_diag)
+        dpc_diag_form.addRow("Rotation angle result", self.dpc_rotation)
+
+        dpc_recon = QGroupBox("6. Reconstruction")
+        dpc_recon_form = QFormLayout(dpc_recon)
+        dpc_recon_form.addRow("Padding", self.dpc_padding)
+        dpc_recon_form.addRow("Regularization", self.dpc_regularization)
+        dpc_recon_form.addRow("Gaussian sigma", self.dpc_gaussian_sigma)
+        dpc_recon_form.addRow("Q lowpass", self.dpc_q_lowpass)
+        dpc_recon_form.addRow("Q highpass", self.dpc_q_highpass)
+
+        dpc_export = QGroupBox("7. Export")
+        dpc_export_form = QFormLayout(dpc_export)
+        dpc_export_form.addRow("Store iterations", self.dpc_store_iterations)
+
+        for group in [dpc_input, dpc_detector, dpc_calibration, dpc_com, dpc_diag, dpc_recon, dpc_export]:
+            dpc_layout.addWidget(group)
 
         self._param_widgets = {
             PhaseContrastService.PTYCHOGRAPHY: ptych_group,
@@ -156,7 +223,8 @@ class PhaseContrastPage(QWidget):
 
         self.controls_panel = controls
 
-        main_layout = QHBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(self.viewer, 1)
 
     def _sync_method_params(self, method: str) -> None:
@@ -191,6 +259,7 @@ class PhaseContrastPage(QWidget):
         else:
             return DPCParams(
                 energy=self.dpc_energy.value(),
+                plot_center_of_mass=self.dpc_use_segmented.currentText().lower(),
             )
 
     def _run(self) -> None:
@@ -240,9 +309,16 @@ class PhaseContrastPage(QWidget):
         if result.rotation_degrees is not None:
             self.log_panel.log(f"Estimated rotation: {result.rotation_degrees:.1f} degrees")
 
-        for name, image in result.images.items():
-            self.viewer.set_image(image, name=name)
-            break
+        if result.method == PhaseContrastService.DPC:
+            image = result.images.get("Complex CoM")
+            if image is None:
+                image = result.images.get("Phase")
+            if image is not None:
+                self.viewer.set_image(image)
+        else:
+            for name, image in result.images.items():
+                self.viewer.set_image(image)
+                break
 
         self.phase_contrast_ready.emit(result)
         self.workflow_state.mark_completed(self.current_process_step)
@@ -293,4 +369,23 @@ class PhaseContrastPage(QWidget):
             "parallax_padding": int(self.parallax_padding.value()),
             "parallax_edge_blend": int(self.parallax_edge_blend.value()),
             "dpc_energy": self.dpc_energy.value(),
+            "dpc_use_segmented": self.dpc_use_segmented.currentText(),
+            "dpc_mask_mode": self.dpc_mask_mode.currentText(),
+            "dpc_inner_angle": self.dpc_inner_angle.value(),
+            "dpc_outer_angle": self.dpc_outer_angle.value(),
+            "dpc_origin_x": self.dpc_origin_x.value(),
+            "dpc_origin_y": self.dpc_origin_y.value(),
+            "dpc_rotation": self.dpc_rotation.value(),
+            "dpc_descan": self.dpc_descan.currentText(),
+            "dpc_background": self.dpc_background.currentText(),
+            "dpc_padding": int(self.dpc_padding.value()),
+            "dpc_regularization": self.dpc_regularization.currentText(),
+            "dpc_gaussian_sigma": self.dpc_gaussian_sigma.value(),
+            "dpc_q_lowpass": self.dpc_q_lowpass.value(),
+            "dpc_q_highpass": self.dpc_q_highpass.value(),
+            "dpc_store_iterations": self.dpc_store_iterations.currentText(),
+            "dpc_complex_com": getattr(self.result, "complex_com", None) is not None,
+            "dpc_com_x": getattr(self.result, "com_x", None) is not None,
+            "dpc_com_y": getattr(self.result, "com_y", None) is not None,
+            "dpc_potential": getattr(self.result, "reconstructed_potential", None) is not None,
         }

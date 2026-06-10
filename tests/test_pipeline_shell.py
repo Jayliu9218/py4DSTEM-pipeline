@@ -17,8 +17,8 @@ class PipelineShellTests(unittest.TestCase):
         cls.window.close()
 
     def setUp(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Crystalline")
-        self.window.project_toolbar.goal.setCurrentText("Strain")
+        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+        self.window.project_toolbar.goal.setCurrentText("Strain Mapping")
         self.window.current_route_key = "data_setup"
         self.window._refresh_pipeline_state()
 
@@ -27,24 +27,33 @@ class PipelineShellTests(unittest.TestCase):
 
         self.assertEqual(
             titles,
-            ["Data Setup", "Virtual Imaging", "Bragg Detection", "Calibration", "Strain", "Export"],
+            ["Data Setup", "Bragg Detection", "Bragg Vector Map", "Calibration", "Strain Mapping", "Export"],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
 
     def test_structure_and_goal_change_rebuilds_route(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Amorphous")
+        self.window.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
         self.window.project_toolbar.goal.setCurrentText("FEM")
 
         titles = [module.title for module in self.window.route_modules]
         self.assertEqual(
             titles,
-            ["Data Setup", "Ring Centering", "Radial Profile", "FEM", "Export"],
+            ["Data Setup", "Radial Profile", "FEM", "Export"],
         )
 
-    def test_locked_module_does_not_become_current(self) -> None:
-        self.window._select_route_module("bragg_detection")
+    def test_phase_retrieval_route_builds_correctly(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.goal.setCurrentText("DPC / CoM")
 
-        self.assertEqual(self.window.current_route_key, "data_setup")
+        titles = [module.title for module in self.window.route_modules]
+        self.assertEqual(
+            titles,
+            ["Data Setup", "BF / DF Preview", "DPC / CoM", "Parallax", "Ptychography", "Method Comparison", "Export"],
+        )
+
+    def test_route_module_selection_works(self) -> None:
+        self.window._select_route_module("bragg_detection")
+        self.assertEqual(self.window.current_route_key, "bragg_detection")
 
     def test_calibration_has_visible_reset_action(self) -> None:
         self.assertEqual(

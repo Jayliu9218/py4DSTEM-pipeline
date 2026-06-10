@@ -18,6 +18,7 @@ class WorkflowStep:
     BRAGG_SINGLE = "bragg_single"
     BRAGG_SELECTED = "bragg_selected"
     BRAGG_FULL = "bragg_full"
+    BRAGG_VECTOR_MAP = "bragg_vector_map"
     CALIBRATION_ORIGIN = "calibration_origin"
     CALIBRATION_ELLIPSE = "calibration_ellipse"
     CALIBRATION_PIXEL = "calibration_pixel"
@@ -26,7 +27,17 @@ class WorkflowStep:
     ORIENTATION_PLAN = "orientation_plan"
     ORIENTATION_MATCH = "orientation_match"
     STRAIN_MAP = "strain_map"
+    STRUCTURAL_PHASE = "structural_phase"
     PHASE_CONTRAST = "phase_contrast"
+    BF_DF_PREVIEW = "bf_df_preview"
+    DPC = "dpc"
+    PARALLAX = "parallax"
+    PTYCHOGRAPHY = "ptychography"
+    METHOD_COMPARISON = "method_comparison"
+    RADIAL_PROFILE = "radial_profile"
+    RDF = "rdf"
+    FEM = "fem"
+    AMORPHOUS_STRAIN = "amorphous_strain"
 
 
 @dataclass(frozen=True)
@@ -67,6 +78,7 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_PLAN,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.BF_DF_PREVIEW,
         },
         WorkflowStep.PROBE_KERNEL: {
             WorkflowStep.BRAGG_SINGLE,
@@ -74,10 +86,17 @@ class WorkflowState(QObject):
             WorkflowStep.BRAGG_FULL,
         },
         WorkflowStep.BRAGG_FULL: {
+            WorkflowStep.BRAGG_VECTOR_MAP,
             WorkflowStep.CALIBRATION_ORIGIN,
             WorkflowStep.CALIBRATION_ELLIPSE,
             WorkflowStep.CALIBRATION_PIXEL,
             WorkflowStep.CALIBRATION_ROTATION,
+        },
+        WorkflowStep.BRAGG_VECTOR_MAP: {
+            WorkflowStep.CALIBRATION_ORIGIN,
+            WorkflowStep.CALIBRATION_APPLY,
+            WorkflowStep.ORIENTATION_MATCH,
+            WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.CALIBRATION_ORIGIN: {WorkflowStep.CALIBRATION_APPLY},
         WorkflowStep.CALIBRATION_ELLIPSE: {WorkflowStep.CALIBRATION_APPLY},
@@ -88,6 +107,9 @@ class WorkflowState(QObject):
             WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.ORIENTATION_PLAN: {WorkflowStep.ORIENTATION_MATCH},
+        WorkflowStep.BF_DF_PREVIEW: {WorkflowStep.DPC},
+        WorkflowStep.DPC: {WorkflowStep.PARALLAX},
+        WorkflowStep.PARALLAX: {WorkflowStep.PTYCHOGRAPHY},
     }
 
     def __init__(self) -> None:
