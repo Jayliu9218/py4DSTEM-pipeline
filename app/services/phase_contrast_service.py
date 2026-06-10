@@ -37,12 +37,16 @@ class ParallaxParams:
     edge_blend: int = 8
     alignment_bin_values: tuple[int, ...] = (32, 32, 32, 32, 32, 32, 16, 16, 16, 16, 8, 8)
     regularize_shifts: bool = False
+    normalize_images: bool = False
+    threshold_intensity: float = 0.6
 
 
 @dataclass(frozen=True)
 class DPCParams:
     energy: float = 200e3
     plot_center_of_mass: str = "off"
+    force_com_rotation: float | None = None
+    force_com_transpose: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,12 +59,62 @@ class PhaseContrastResult:
     object_amplitude: np.ndarray | None = None
     probe: np.ndarray | None = None
     probe_fourier: np.ndarray | None = None
+    com_x: np.ndarray | None = None
+    com_y: np.ndarray | None = None
+    complex_com: np.ndarray | None = None
+    reconstructed_potential: np.ndarray | None = None
+    com_measured_x: np.ndarray | None = None
+    com_measured_y: np.ndarray | None = None
+    com_normalized_x: np.ndarray | None = None
+    com_normalized_y: np.ndarray | None = None
 
 
 class PhaseContrastService:
     PTYCHOGRAPHY = "Ptychography"
     PARALLAX = "Parallax"
     DPC = "DPC"
+
+    def compute_bf_df(
+        self,
+        datacube: Any,
+        bf_radius: float | None = None,
+        df_inner: float | None = None,
+        df_outer: float | None = None,
+        probe_geometry: Any | None = None,
+    ) -> dict[str, np.ndarray]:
+        try:
+            if bf_radius is None and probe_geometry is not None:
+                bf_radius = getattr(probe_geometry, "radius", 10.0)
+            elif bf_radius is None:
+                bf_radius = 10.0
+            center_x = getattr(probe_geometry, "center_x", 0.0) if probe_geometry else 0.0
+            center_y = getattr(probe_geometry, "center_y", 0.0) if probe_geometry else 0.0
+            bf_result = datacube.get_virtual_image(
+                mode="circle",
+                geometry=((center_x, center_y), bf_radius),
+                name="bright_field",
+                centered=False,
+                calibrated=False,
+                returncalc=True,
+            )
+            bf_image = np.asarray(getattr(bf_result, "data", bf_result))
+            results = {"Bright Field": bf_image}
+            if df_inner is not None and df_outer is not None:
+                df_result = datacube.get_virtual_image(
+                    mode="annulus",
+                    geometry=((center_x, center_y), (df_inner, df_outer)),
+                    name="dark_field",
+                    centered=False,
+                    calibrated=False,
+                    returncalc=True,
+                )
+                df_image = np.asarray(getattr(df_result, "data", df_result))
+                results["Dark Field"] = df_image
+            return results
+        except Exception as exc:
+            raise PhaseContrastServiceError(
+                f"BF/DF computation failed: {exc}"
+            ) from exc
 
     def run_ptychography(
         self,
@@ -133,6 +187,8 @@ class PhaseContrastService:
             ).preprocess(
                 edge_blend=params.edge_blend,
                 plot_average_bf=False,
+                normalize_images=params.normalize_images,
+                threshold_intensity=params.threshold_intensity,
             ).reconstruct(
                 alignment_bin_values=list(params.alignment_bin_values),
                 regularize_shifts=params.regularize_shifts,
@@ -157,13 +213,18 @@ class PhaseContrastService:
         start = perf_counter()
 
         plot_com = params.plot_center_of_mass == "all"
+        preprocess_kwargs: dict[str, Any] = {"plot_center_of_mass": plot_com}
+        if params.force_com_rotation is not None:
+            preprocess_kwargs["force_com_rotation"] = params.force_com_rotation
+        if params.force_com_transpose:
+            preprocess_kwargs["force_com_transpose"] = True
 
         try:
             dpc = py4DSTEM.process.phase.DPC(
                 energy=params.energy,
                 datacube=datacube,
             ).preprocess(
-                plot_center_of_mass=plot_com,
+                **preprocess_kwargs,
             ).reconstruct(
                 reset=True,
             ).visualize()
@@ -252,6 +313,19 @@ class PhaseContrastService:
             except Exception:
                 logger.debug("Could not extract parallax object", exc_info=True)
 
+        try:
+            shifts = np.asarray(parallax._shifts)
+            images["Shift X"] = shifts[:, :, 0] if shifts.ndim == 3 and shifts.shape[2] >= 1 else shifts
+            images["Shift Y"] = shifts[:, :, 1] if shifts.ndim == 3 and shifts.shape[2] >= 2 else shifts
+        except Exception:
+            logger.debug("Could not extract parallax shifts", exc_info=True)
+
+        try:
+            aberrations_C1 = float(parallax.aberrations_C1)
+            images["Aberration C1"] = np.full_like(object_phase if object_phase is not None else np.zeros((1, 1)), aberrations_C1)
+        except Exception:
+            pass
+
         return PhaseContrastResult(
             method=self.PARALLAX,
             images=images,
@@ -264,6 +338,14 @@ class PhaseContrastService:
         images: dict[str, np.ndarray] = {}
         rotation = None
         object_phase = None
+        com_x = None
+        com_y = None
+        com_measured_x = None
+        com_measured_y = None
+        com_normalized_x = None
+        com_normalized_y = None
+        complex_com = None
+        reconstructed_potential = None
 
         try:
             rotation = float(np.rad2deg(getattr(dpc, "_rotation_best_rad", 0.0)))
@@ -283,10 +365,38 @@ class PhaseContrastService:
         try:
             com_x = np.asarray(dpc._com_x)
             com_y = np.asarray(dpc._com_y)
+            complex_com = com_x + 1j * com_y
             images["CoM X"] = com_x
             images["CoM Y"] = com_y
+            images["Complex CoM"] = np.abs(complex_com)
         except Exception:
             logger.debug("Could not extract DPC center of mass", exc_info=True)
+
+        for attr, key in [
+            ("_com_measured_x", "Measured CoM X"),
+            ("_com_measured_y", "Measured CoM Y"),
+            ("_com_normalized_x", "Normalized CoM X"),
+            ("_com_normalized_y", "Normalized CoM Y"),
+        ]:
+            try:
+                value = np.asarray(getattr(dpc, attr))
+                images[key] = value
+                if attr == "_com_measured_x":
+                    com_measured_x = value
+                elif attr == "_com_measured_y":
+                    com_measured_y = value
+                elif attr == "_com_normalized_x":
+                    com_normalized_x = value
+                elif attr == "_com_normalized_y":
+                    com_normalized_y = value
+            except Exception:
+                logger.debug("Could not extract DPC diagnostic field %s", attr, exc_info=True)
+
+        try:
+            reconstructed_potential = np.asarray(dpc.object_cropped)
+            images["Potential"] = reconstructed_potential
+        except Exception:
+            logger.debug("Could not extract DPC reconstructed potential", exc_info=True)
 
         return PhaseContrastResult(
             method=self.DPC,
@@ -294,6 +404,14 @@ class PhaseContrastService:
             elapsed_seconds=elapsed,
             rotation_degrees=rotation,
             object_phase=object_phase,
+            com_x=com_x,
+            com_y=com_y,
+            complex_com=complex_com,
+            reconstructed_potential=reconstructed_potential,
+            com_measured_x=com_measured_x,
+            com_measured_y=com_measured_y,
+            com_normalized_x=com_normalized_x,
+            com_normalized_y=com_normalized_y,
         )
 
     def _py4dstem(self):
