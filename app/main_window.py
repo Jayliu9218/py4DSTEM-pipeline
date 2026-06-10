@@ -47,7 +47,6 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.pipeline_shell import (
-    DataStatePanel,
     ModuleControlPanel,
     MultiViewWorkspace,
     ProjectToolbar,
@@ -166,6 +165,7 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page.braggvectors_ready.connect(self.strain_map_page.notify_braggvectors_ready)
         self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.show_braggvectors_histogram)
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
+        self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
@@ -273,8 +273,8 @@ class MainWindow(QMainWindow):
         data_title.setObjectName("sectionTitle")
         data_browser_layout.addWidget(data_title)
         data_browser_layout.addWidget(self.tree, 1)
-        self.data_state_panel = DataStatePanel()
-        data_browser_layout.addWidget(self.data_state_panel)
+        data_browser.setFixedWidth(250)
+        data_browser.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
         self.viewer_stack = QStackedWidget()
@@ -290,21 +290,25 @@ class MainWindow(QMainWindow):
             self.viewer_stack.addWidget(page)
 
         self.module_panel = ModuleControlPanel()
-        self.module_panel.setMinimumWidth(340)
+        self.module_panel.setFixedWidth(400)
+        self.module_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(data_browser)
         main_splitter.addWidget(self.viewer_stack)
         main_splitter.addWidget(self.module_panel)
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 7)
-        main_splitter.setStretchFactor(2, 3)
-        main_splitter.setSizes([175, 990, 435])
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
+        main_splitter.setSizes([250, 900, 400])
 
+        log_panel_widget = self.log_panel
+        log_panel_widget.setFixedHeight(180)
+        log_panel_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         workspace = QSplitter(Qt.Vertical)
         workspace.addWidget(main_splitter)
-        workspace.addWidget(self.log_panel)
-        workspace.setStretchFactor(0, 8)
-        workspace.setStretchFactor(1, 2)
+        workspace.addWidget(log_panel_widget)
+        workspace.setStretchFactor(0, 1)
+        workspace.setStretchFactor(1, 0)
         workspace.setSizes([720, 180])
 
         self.project_toolbar = ProjectToolbar()
@@ -367,8 +371,8 @@ class MainWindow(QMainWindow):
             "data_setup",
             "Data Setup",
             "overview",
-            "Open an HDF5 / EMD file and assign the Target DataCube plus optional references.",
-            "Validated DataCube, dataset roles, and display-ready previews.",
+            "Open an HDF5 / EMD file, assign the Target DataCube, and configure virtual imaging.",
+            "Validated DataCube, dataset roles, virtual image preview, and display-ready outputs.",
         )
         if structure == "Crystalline":
             analysis_page = "strain" if goal == "Strain" else "orientation" if goal == "Orientation" else "overview"
@@ -381,12 +385,6 @@ class MainWindow(QMainWindow):
             )
             modules = [
                 common_data,
-                RouteModule(
-                    "virtual_imaging", "Virtual Imaging", "virtual",
-                    "Target DataCube and virtual detector geometry.",
-                    "Bright-field, annular dark-field, or custom virtual image.",
-                    WorkflowStep.VIRTUAL_DETECTOR, "data_setup",
-                ),
                 RouteModule(
                     "bragg_detection", "Bragg Detection", "bragg",
                     "Target DataCube; probe kernel is optional but recommended.",
@@ -476,17 +474,10 @@ class MainWindow(QMainWindow):
         display_status = "Current" if states[module.key] != "Locked" else "Locked"
         self.module_panel.set_module(module, display_status, controls)
         self._bold_section_titles()
-        self.data_state_panel.update_state(
-            str(self.current_file_path) if self.current_file_path else None,
-            self.workflow_state.dataset_roles.target_datacube,
-            self.selected_hdf5_path,
-            self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4,
-        )
 
     def _controls_for_route(self, key: str) -> QWidget | None:
         return {
             "data_setup": self.data_setup_controls,
-            "virtual_imaging": self.virtual_detector_page.controls_panel,
             "bragg_detection": self.bragg_peaks_page.controls_panel,
             "calibration": self.calibration_page.controls_panel,
             "crystal_analysis": (
@@ -498,9 +489,11 @@ class MainWindow(QMainWindow):
             ),
         }.get(key)
 
-    def _build_role_panel(self) -> QGroupBox:
-        panel = QGroupBox("Dataset Roles / Sources")
-        layout = QVBoxLayout(panel)
+    def _build_role_panel(self) -> QWidget:
+        virtual_controls = self.virtual_detector_page.controls_panel
+        
+        roles_group = QGroupBox("Dataset Roles / Sources")
+        roles_layout = QVBoxLayout(roles_group)
         for label, role in [
             ("Set as Target", "target_datacube"),
             ("Set as Vacuum Probe", "vacuum_probe"),
@@ -509,7 +502,14 @@ class MainWindow(QMainWindow):
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
-            layout.addWidget(button)
+            roles_layout.addWidget(button)
+        
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(virtual_controls)
+        layout.addWidget(roles_group)
+        layout.addStretch(1)
         return panel
 
     def _populate_sidebar_controls(self) -> None:
@@ -590,7 +590,43 @@ class MainWindow(QMainWindow):
         if output_path.suffix.lower() != ".json":
             output_path = output_path.with_suffix(".json")
         try:
-            self.project_state_service.save(output_path, self._project_state())
+            result_data = {}
+            result_entries = []
+            for entry in self.result_registry.list_entries():
+                result_data[entry.key] = entry.data
+                result_entries.append({
+                    "key": entry.key,
+                    "name": entry.name,
+                    "category": entry.category,
+                    "export_formats": list(entry.export_formats),
+                    "metadata": {str(k): str(v) for k, v in entry.metadata.items()},
+                })
+            state = ProjectState(
+                file_path=str(self.current_file_path) if self.current_file_path else None,
+                selected_hdf5_path=self.selected_hdf5_path,
+                image_scaling=self.image_scaling,
+                image_cmap=self.image_cmap,
+                cuda_enabled=self.cuda_enabled,
+                recent_export_dir=str(self.recent_export_dir) if self.recent_export_dir else None,
+                dataset_roles={
+                    "target_datacube": roles.target_datacube,
+                    "polycrystal_calibration": roles.polycrystal_calibration,
+                    "vacuum_probe": roles.vacuum_probe,
+                    "defocused_cbed": roles.defocused_cbed,
+                },
+                page_params={
+                    "virtual_detector": self.virtual_detector_page.params_snapshot(),
+                    "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
+                    "calibration": self.calibration_page.params_snapshot(),
+                    "orientation": self.orientation_page.params_snapshot(),
+                    "strain_map": self.strain_map_page.params_snapshot(),
+                },
+                result_entries=result_entries,
+            )
+            if result_data:
+                self.project_state_service.save_with_results(output_path, state, result_data)
+            else:
+                self.project_state_service.save(output_path, state)
             self.recent_export_dir = output_path.parent
             self.log_panel.log(f"Project saved: {output_path}")
         except Exception as exc:
@@ -609,6 +645,18 @@ class MainWindow(QMainWindow):
         try:
             state = self.project_state_service.load(path)
             self._apply_project_state(state)
+            if state.result_entries:
+                results = self.project_state_service.load_results(path, state.result_entries)
+                for entry_info in state.result_entries:
+                    key = entry_info.get("key", "")
+                    if key and key in results:
+                        self.result_registry.register(
+                            name=entry_info.get("name", key),
+                            category=entry_info.get("category", ""),
+                            data=results[key],
+                            export_formats=tuple(entry_info.get("export_formats", ("npy",))),
+                            metadata=entry_info.get("metadata", {}),
+                        )
             self.recent_export_dir = Path(path).parent
             self.log_panel.log(f"Project loaded: {path}")
         except Exception as exc:
@@ -698,7 +746,10 @@ class MainWindow(QMainWindow):
             self._show_node_info(info)
 
             if node_kind == "group":
-                if not self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
+                if self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
+                    return
+                displayed = self._try_display_first_dataset(node, hdf5_path)
+                if not displayed:
                     self._set_preview_empty("Select a 4D dataset or py4DSTEM DataCube group.")
                     self._clear_datacube_info()
                 return
@@ -729,6 +780,39 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._set_preview_empty("Could not display this node.")
             self.log_panel.log(f"Failed to inspect node: {exc}")
+
+    def _try_display_first_dataset(self, group: h5py.Group, group_path: str) -> bool:
+        for name in sorted(group.keys()):
+            child_path = f"{group_path}/{name}" if group_path != "/" else f"/{name}"
+            child = group[name]
+            if not isinstance(child, h5py.Dataset):
+                continue
+            shape = tuple(int(dim) for dim in child.shape)
+            if len(shape) == 2:
+                try:
+                    image = self.hdf5_service.read_2d_dataset(child)
+                except Exception:
+                    continue
+                self.scan_viewer.clear()
+                self.diffraction_viewer.set_image(image)
+                self._clear_datacube_info()
+                self.current_dataset_path = child_path
+                self.current_dataset_shape = shape
+                self.selected_hdf5_path = child_path
+                self.selected_node_kind = "dataset"
+                self.log_panel.log(f"Auto-displayed 2D dataset: {child_path} shape={shape}")
+                return True
+            if len(shape) == 4:
+                if self._try_load_py4dstem_datacube(child_path, show_warning=True):
+                    return True
+                try:
+                    self._load_raw_4d_dataset(child_path, shape)
+                    self._configure_4d_controls(shape)
+                    self._display_4d_slice(rx=0, ry=0)
+                    return True
+                except Exception:
+                    continue
+        return False
 
     def _show_node_info(self, info: dict[str, object]) -> None:
         self.path_label.setText(str(info.get("path", "-")))
@@ -796,22 +880,21 @@ class MainWindow(QMainWindow):
         try:
             if self.current_4d_source == "py4dstem":
                 image = self.py4dstem_service.get_diffraction_pattern(rx, ry)
-            self.diffraction_viewer.set_image(image)
-            info = self.py4dstem_service.describe_current_datacube()
-            datapath = info.get("datapath", "DataCube")
-            self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
-            self._refresh_tree_data_info()
-            return
-
-            if self.current_file is None or self.current_dataset_path is None:
+                self.diffraction_viewer.set_image(image)
+                info = self.py4dstem_service.describe_current_datacube()
+                datapath = info.get("datapath", "DataCube")
+                self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
+            elif self.current_4d_source == "hdf5":
+                if self.current_file is None or self.current_dataset_path is None:
+                    return
+                dataset = self.current_file[self.current_dataset_path]
+                image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
+                self.diffraction_viewer.set_image(image)
+                self.log_panel.log(
+                    f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
+                )
+            else:
                 return
-
-            dataset = self.current_file[self.current_dataset_path]
-            image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
-            self.diffraction_viewer.set_image(image)
-            self.log_panel.log(
-                f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
-            )
             self._refresh_tree_data_info()
         except Exception as exc:
             self.log_panel.log(f"Failed to display diffraction pattern: {exc}")
@@ -900,6 +983,13 @@ class MainWindow(QMainWindow):
 
         self.log_panel.log(f"Scan image clicked: rx={rx}, ry={ry}")
         self._display_4d_slice(rx, ry)
+
+    def _show_virtual_image_in_scan_viewer(self, image) -> None:
+        try:
+            import numpy as np
+            self.scan_viewer.set_image(np.asarray(image))
+        except Exception:
+            pass
 
     def _close_current_file(self) -> None:
         if self.current_file is not None:
