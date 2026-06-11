@@ -32,9 +32,22 @@ from PySide6.QtWidgets import (
 
 from app.pages.virtual_detector_page import VirtualDetectorPage
 from app.pages.bragg_peaks_page import BraggPeaksPage
+from app.pages.bragg_vector_map_page import BraggVectorMapPage
 from app.pages.calibration_page import CalibrationPage
 from app.pages.orientation_page import OrientationPage
 from app.pages.strain_map_page import StrainMapPage
+from app.pages.phase_contrast_page import PhaseContrastPage
+from app.pages.bf_df_preview_page import BFDFPreviewPage
+from app.pages.dpc_page import DPCPage
+from app.pages.parallax_page import ParallaxPage
+from app.pages.ptychography_page import PtychographyPage
+from app.pages.method_comparison_page import MethodComparisonPage
+from app.pages.structural_phase_page import StructuralPhasePage
+from app.pages.radial_profile_page import RadialProfilePage
+from app.pages.rdf_page import RDFPage
+from app.pages.fem_page import FEMPage
+from app.pages.amorphous_strain_page import AmorphousStrainPage
+from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
@@ -47,7 +60,6 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.pipeline_shell import (
-    DataStatePanel,
     ModuleControlPanel,
     MultiViewWorkspace,
     ProjectToolbar,
@@ -131,6 +143,59 @@ class MainWindow(QMainWindow):
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
         )
+        self.phase_contrast_page = PhaseContrastPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.bragg_vector_map_page = BraggVectorMapPage(
+            braggvectors_provider=self._get_braggvectors,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.bf_df_preview_page = BFDFPreviewPage(
+            source_provider=self._get_py4dstem_datacube,
+            shape_provider=self._get_current_4d_shape,
+            probe_geometry_provider=self._get_probe_geometry,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.dpc_page = DPCPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.parallax_page = ParallaxPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
+        self.ptychography_page = PtychographyPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
+            parallax_result_provider=lambda: self.phase_retrieval_results.get("Parallax"),
+        )
+        self.method_comparison_page = MethodComparisonPage(
+            dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
+            parallax_result_provider=lambda: self.phase_retrieval_results.get("Parallax"),
+            ptychography_result_provider=lambda: self.phase_retrieval_results.get("Ptychography"),
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+        )
+        self.structural_phase_page = StructuralPhasePage()
+        self.radial_profile_page = RadialProfilePage()
+        self.rdf_page = RDFPage()
+        self.fem_page = FEMPage()
+        self.amorphous_strain_page = AmorphousStrainPage()
+        self.phase_retrieval_results: dict[str, PhaseContrastResult] = {}
 
         self.datacube_name_label = QLabel("-")
         self.scan_shape_label = QLabel("-")
@@ -166,7 +231,12 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page.braggvectors_ready.connect(self.strain_map_page.notify_braggvectors_ready)
         self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.show_braggvectors_histogram)
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
+        self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
+        self.log_panel.log("Application started.")
+        self.dpc_page.dpc_result_ready.connect(self._store_dpc_result)
+        self.parallax_page.parallax_result_ready.connect(self._store_parallax_result)
+        self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
         self._apply_image_colormap(self.image_cmap)
@@ -204,9 +274,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         self.mode_menu = self.menuBar().addMenu("&Mode")
-        self.crystalline_mode_action = self.mode_menu.addAction("Crystalline")
-        self.amorphous_mode_action = self.mode_menu.addAction("Amorphous")
-        self.mixed_mode_action = self.mode_menu.addAction("Mixed / Nanocrystalline")
+        self.crystalline_mode_action = self.mode_menu.addAction("Crystalline / Bragg-based")
+        self.amorphous_mode_action = self.mode_menu.addAction("Amorphous / Diffuse-scattering")
+        self.phase_retrieval_mode_action = self.mode_menu.addAction("Phase Retrieval / Ptychography")
 
         self.setting_action = self.menuBar().addAction("&Setting")
         self.setting_action.triggered.connect(self.open_settings)
@@ -273,8 +343,8 @@ class MainWindow(QMainWindow):
         data_title.setObjectName("sectionTitle")
         data_browser_layout.addWidget(data_title)
         data_browser_layout.addWidget(self.tree, 1)
-        self.data_state_panel = DataStatePanel()
-        data_browser_layout.addWidget(self.data_state_panel)
+        data_browser.setFixedWidth(250)
+        data_browser.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
         self.viewer_stack = QStackedWidget()
@@ -282,29 +352,45 @@ class MainWindow(QMainWindow):
             "overview": self.main_view,
             "virtual": self.virtual_detector_page,
             "bragg": self.bragg_peaks_page,
+            "bragg_vector_map": self.bragg_vector_map_page,
             "calibration": self.calibration_page,
             "orientation": self.orientation_page,
             "strain": self.strain_map_page,
+            "structural_phase": self.structural_phase_page,
+            "phase_contrast": self.phase_contrast_page,
+            "bf_df": self.bf_df_preview_page,
+            "dpc": self.dpc_page,
+            "parallax": self.parallax_page,
+            "ptychography": self.ptychography_page,
+            "method_comparison": self.method_comparison_page,
+            "radial_profile": self.radial_profile_page,
+            "rdf": self.rdf_page,
+            "fem": self.fem_page,
+            "amorphous_strain": self.amorphous_strain_page,
         }
         for page in self.viewer_pages.values():
             self.viewer_stack.addWidget(page)
 
         self.module_panel = ModuleControlPanel()
-        self.module_panel.setMinimumWidth(340)
+        self.module_panel.setFixedWidth(400)
+        self.module_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(data_browser)
         main_splitter.addWidget(self.viewer_stack)
         main_splitter.addWidget(self.module_panel)
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 7)
-        main_splitter.setStretchFactor(2, 3)
-        main_splitter.setSizes([175, 990, 435])
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
+        main_splitter.setSizes([250, 900, 400])
 
+        log_panel_widget = self.log_panel
+        log_panel_widget.setFixedHeight(180)
+        log_panel_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         workspace = QSplitter(Qt.Vertical)
         workspace.addWidget(main_splitter)
-        workspace.addWidget(self.log_panel)
-        workspace.setStretchFactor(0, 8)
-        workspace.setStretchFactor(1, 2)
+        workspace.addWidget(log_panel_widget)
+        workspace.setStretchFactor(0, 1)
+        workspace.setStretchFactor(1, 0)
         workspace.setSizes([720, 180])
 
         self.project_toolbar = ProjectToolbar()
@@ -318,13 +404,13 @@ class MainWindow(QMainWindow):
         self.project_toolbar.goal_changed.connect(self._update_structure_route)
         self.route_bar.module_selected.connect(self._select_route_module)
         self.crystalline_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Crystalline")
+            lambda: self.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
         )
         self.amorphous_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Amorphous")
+            lambda: self.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
         )
-        self.mixed_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Mixed / Nanocrystalline")
+        self.phase_retrieval_mode_action.triggered.connect(
+            lambda: self.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
         )
 
         central = QWidget()
@@ -356,9 +442,9 @@ class MainWindow(QMainWindow):
     def _update_structure_route(self, *_args) -> None:
         structure = self.project_toolbar.structure.currentText()
         goals = {
-            "Crystalline": ["Strain", "Orientation", "Phase"],
-            "Amorphous": ["RDF", "Amorphous Strain", "FEM"],
-            "Mixed / Nanocrystalline": ["Branch Analysis", "Component Mapping", "Region Review"],
+            "Crystalline / Bragg-based": ["Orientation Mapping", "Strain Mapping", "Structural Phase Mapping"],
+            "Amorphous / Diffuse-scattering": ["RDF", "FEM", "Amorphous Strain"],
+            "Phase Retrieval / Ptychography": ["DPC / CoM", "Parallax", "Ptychography", "Method Comparison"],
         }[structure]
         if not self.project_toolbar.goal.count() or self.project_toolbar.goal.currentText() not in goals:
             self.project_toolbar.set_goals(goals)
@@ -367,31 +453,39 @@ class MainWindow(QMainWindow):
             "data_setup",
             "Data Setup",
             "overview",
-            "Open an HDF5 / EMD file and assign the Target DataCube plus optional references.",
-            "Validated DataCube, dataset roles, and display-ready previews.",
+            "Open an HDF5 / EMD file, assign the Target DataCube, and configure virtual imaging.",
+            "Validated DataCube, dataset roles, virtual image preview, and display-ready outputs.",
         )
-        if structure == "Crystalline":
-            analysis_page = "strain" if goal == "Strain" else "orientation" if goal == "Orientation" else "overview"
+        if structure == "Crystalline / Bragg-based":
+            analysis_page = (
+                "strain" if goal == "Strain Mapping"
+                else "orientation" if goal == "Orientation Mapping"
+                else "structural_phase" if goal == "Structural Phase Mapping"
+                else "overview"
+            )
             analysis_step = (
                 WorkflowStep.STRAIN_MAP
-                if goal == "Strain"
+                if goal == "Strain Mapping"
                 else WorkflowStep.ORIENTATION_MATCH
-                if goal == "Orientation"
+                if goal == "Orientation Mapping"
+                else WorkflowStep.STRUCTURAL_PHASE
+                if goal == "Structural Phase Mapping"
                 else None
             )
+            analysis_implemented = goal != "Structural Phase Mapping"
             modules = [
                 common_data,
-                RouteModule(
-                    "virtual_imaging", "Virtual Imaging", "virtual",
-                    "Target DataCube and virtual detector geometry.",
-                    "Bright-field, annular dark-field, or custom virtual image.",
-                    WorkflowStep.VIRTUAL_DETECTOR, "data_setup",
-                ),
                 RouteModule(
                     "bragg_detection", "Bragg Detection", "bragg",
                     "Target DataCube; probe kernel is optional but recommended.",
                     "BraggVectors, BVM, peak tables, and detection diagnostics.",
                     WorkflowStep.BRAGG_FULL, "data_setup",
+                ),
+                RouteModule(
+                    "bragg_vector_map", "Bragg Vector Map", "bragg_vector_map",
+                    "BraggVectors from Bragg Detection.",
+                    "Bragg Vector Map, peak count map, intensity statistics.",
+                    WorkflowStep.BRAGG_VECTOR_MAP, "bragg_detection",
                 ),
                 RouteModule(
                     "calibration", "Calibration", "calibration",
@@ -403,7 +497,7 @@ class MainWindow(QMainWindow):
                     "crystal_analysis", goal, analysis_page,
                     "Calibrated BraggVectors and analysis-specific reference inputs.",
                     f"{goal} result maps and quality diagnostics.",
-                    analysis_step, "calibration", goal != "Phase",
+                    analysis_step, "calibration", analysis_implemented,
                 ),
                 RouteModule(
                     "export", "Export", "overview",
@@ -412,22 +506,81 @@ class MainWindow(QMainWindow):
                     prerequisite="crystal_analysis",
                 ),
             ]
-        elif structure == "Amorphous":
+        elif structure == "Amorphous / Diffuse-scattering":
+            goal_page = {
+                "RDF": "rdf",
+                "FEM": "fem",
+                "Amorphous Strain": "amorphous_strain",
+            }.get(goal, "overview")
             modules = [
                 common_data,
-                RouteModule("ring_centering", "Ring Centering", "overview", "Target DataCube or averaged diffraction pattern.", "Centered ring pattern and center-fit diagnostics.", prerequisite="data_setup", implemented=False),
-                RouteModule("radial_profile", "Radial Profile", "overview", "Centered diffraction rings.", "Radial intensity profile and peak diagnostics.", prerequisite="ring_centering", implemented=False),
-                RouteModule("amorphous_analysis", goal, "overview", "Validated radial profile and analysis-specific parameters.", f"{goal} maps and diagnostics.", prerequisite="radial_profile", implemented=False),
-                RouteModule("export", "Export", "overview", "At least one registered result.", "Result arrays, images, project state, or scientific report.", prerequisite="amorphous_analysis"),
+                RouteModule("radial_profile", "Radial Profile", "radial_profile",
+                    "Target DataCube for radial analysis.",
+                    "Radial intensity profile and peak diagnostics.",
+                    WorkflowStep.RADIAL_PROFILE, "data_setup", implemented=False),
+                RouteModule("amorphous_analysis", goal, goal_page,
+                    "Validated radial profile and analysis-specific parameters.",
+                    f"{goal} maps and diagnostics.",
+                    prerequisite="radial_profile", implemented=False),
+                RouteModule("export", "Export", "overview",
+                    "At least one registered result.",
+                    "Result arrays, images, project state, or scientific report.",
+                    prerequisite="amorphous_analysis"),
+            ]
+        elif structure == "Phase Retrieval / Ptychography":
+            goal_page = {
+                "DPC / CoM": "dpc",
+                "Parallax": "parallax",
+                "Ptychography": "ptychography",
+                "Method Comparison": "method_comparison",
+            }.get(goal, "dpc")
+            goal_step = {
+                "DPC / CoM": WorkflowStep.DPC,
+                "Parallax": WorkflowStep.PARALLAX,
+                "Ptychography": WorkflowStep.PTYCHOGRAPHY,
+                "Method Comparison": WorkflowStep.METHOD_COMPARISON,
+            }.get(goal)
+            modules = [
+                common_data,
+                RouteModule(
+                    "bf_df_preview", "BF / DF Preview", "bf_df",
+                    "Target DataCube for bright-field / dark-field virtual imaging.",
+                    "BF and DF virtual images for phase retrieval workflow entry.",
+                    WorkflowStep.BF_DF_PREVIEW, "data_setup",
+                ),
+                RouteModule(
+                    "dpc", "DPC / CoM", "dpc",
+                    "Target DataCube; BF/DF preview recommended for mask calibration.",
+                    "Center-of-mass maps, rotation estimate, and DPC phase reconstruction.",
+                    WorkflowStep.DPC, "bf_df_preview",
+                ),
+                RouteModule(
+                    "parallax", "Parallax", "parallax",
+                    "Target DataCube; DPC recommended for rotation and defocus estimates.",
+                    "Aligned bright-field image, shift maps, and aberration estimates.",
+                    WorkflowStep.PARALLAX, "dpc",
+                ),
+                RouteModule(
+                    "ptychography", "Ptychography", "ptychography",
+                    "Target DataCube and optional vacuum probe; Parallax recommended for initialization.",
+                    "Phase and amplitude reconstruction from iterative ptychography.",
+                    WorkflowStep.PTYCHOGRAPHY, "parallax",
+                ),
+                RouteModule(
+                    "method_comparison", "Method Comparison", "method_comparison",
+                    "At least one phase retrieval result (DPC, Parallax, or Ptychography).",
+                    "Side-by-side comparison of phase retrieval method outputs.",
+                    WorkflowStep.METHOD_COMPARISON, "ptychography",
+                ),
+                RouteModule(
+                    "export", "Export", "overview",
+                    "At least one registered result.",
+                    "Result arrays, images, project state, or scientific report.",
+                    prerequisite="method_comparison",
+                ),
             ]
         else:
-            modules = [
-                common_data,
-                RouteModule("feature_extraction", "Feature Extraction", "overview", "Target DataCube and selected feature families.", "Feature stack and feature-quality metrics.", prerequisite="data_setup", implemented=False),
-                RouteModule("region_classification", "Region Classification", "overview", "Extracted features and classification settings.", "Region labels and confidence maps.", prerequisite="feature_extraction", implemented=False),
-                RouteModule("branch_analysis", f"Branch Analysis: {goal}", "overview", "Classified regions and branch-specific inputs.", "Per-region crystalline/amorphous analysis outputs.", prerequisite="region_classification", implemented=False),
-                RouteModule("component_map", "Component Map", "overview", "Completed branch analysis.", "Component map, uncertainty, and export-ready layers.", prerequisite="branch_analysis", implemented=False),
-            ]
+            modules = [common_data]
         self.route_modules = modules
         self.route_bar.set_modules(modules)
         if self.current_route_key not in {module.key for module in modules}:
@@ -439,29 +592,17 @@ class MainWindow(QMainWindow):
         data_ready = self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4
         for module in self.route_modules:
             if module.key == "data_setup":
-                states[module.key] = "Completed" if data_ready else "Ready"
+                states[module.key] = "Ready" if data_ready else "Ready"
                 continue
             if module.state_step and self.workflow_state.is_stale(module.state_step):
                 states[module.key] = "Warning"
             elif module.state_step and self.workflow_state.is_completed(module.state_step):
                 states[module.key] = "Completed"
-            elif module.prerequisite and states.get(module.prerequisite) not in {"Completed", "Warning"}:
-                states[module.key] = "Locked"
-            elif module.key == "export" and not self.result_registry.list_entries():
-                states[module.key] = "Locked"
             else:
                 states[module.key] = "Ready"
         return states
 
     def _select_route_module(self, key: str) -> None:
-        states = self._route_states()
-        if states.get(key) == "Locked":
-            module = next(item for item in self.route_modules if item.key == key)
-            self.log_panel.log(
-                f"WARN  {module.title} is locked because its input requirements are not met."
-            )
-            self._refresh_pipeline_state()
-            return
         self.current_route_key = key
         self._refresh_pipeline_state()
 
@@ -473,34 +614,41 @@ class MainWindow(QMainWindow):
         module = next(item for item in self.route_modules if item.key == self.current_route_key)
         self.viewer_stack.setCurrentWidget(self.viewer_pages[module.page_key])
         controls = self._controls_for_route(module.key)
-        display_status = "Current" if states[module.key] != "Locked" else "Locked"
-        self.module_panel.set_module(module, display_status, controls)
+        self.module_panel.set_module(module, controls)
         self._bold_section_titles()
-        self.data_state_panel.update_state(
-            str(self.current_file_path) if self.current_file_path else None,
-            self.workflow_state.dataset_roles.target_datacube,
-            self.selected_hdf5_path,
-            self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4,
-        )
 
     def _controls_for_route(self, key: str) -> QWidget | None:
+        goal = self.project_toolbar.goal.currentText()
         return {
             "data_setup": self.data_setup_controls,
-            "virtual_imaging": self.virtual_detector_page.controls_panel,
             "bragg_detection": self.bragg_peaks_page.controls_panel,
+            "bragg_vector_map": self.bragg_vector_map_page.controls_panel,
             "calibration": self.calibration_page.controls_panel,
             "crystal_analysis": (
                 self.strain_map_page.controls_panel
-                if self.project_toolbar.goal.currentText() == "Strain"
+                if goal == "Strain Mapping"
                 else self.orientation_page.controls_panel
-                if self.project_toolbar.goal.currentText() == "Orientation"
+                if goal == "Orientation Mapping"
+                else self.structural_phase_page.controls_panel
+                if goal == "Structural Phase Mapping"
                 else None
+            ),
+            "bf_df_preview": self.bf_df_preview_page.controls_panel,
+            "dpc": self.dpc_page.controls_panel,
+            "parallax": self.parallax_page.controls_panel,
+            "ptychography": self.ptychography_page.controls_panel,
+            "method_comparison": self.method_comparison_page.controls_panel,
+            "radial_profile": self.radial_profile_page.controls_panel,
+            "amorphous_analysis": self.amorphous_strain_page.controls_panel if goal == "Amorphous Strain" else (
+                self.rdf_page.controls_panel if goal == "RDF" else self.fem_page.controls_panel
             ),
         }.get(key)
 
-    def _build_role_panel(self) -> QGroupBox:
-        panel = QGroupBox("Dataset Roles / Sources")
-        layout = QVBoxLayout(panel)
+    def _build_role_panel(self) -> QWidget:
+        virtual_controls = self.virtual_detector_page.controls_panel
+        
+        roles_group = QGroupBox("Dataset Roles / Sources")
+        roles_layout = QVBoxLayout(roles_group)
         for label, role in [
             ("Set as Target", "target_datacube"),
             ("Set as Vacuum Probe", "vacuum_probe"),
@@ -509,7 +657,14 @@ class MainWindow(QMainWindow):
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
-            layout.addWidget(button)
+            roles_layout.addWidget(button)
+        
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(virtual_controls)
+        layout.addWidget(roles_group)
+        layout.addStretch(1)
         return panel
 
     def _populate_sidebar_controls(self) -> None:
@@ -519,6 +674,7 @@ class MainWindow(QMainWindow):
             self.calibration_page,
             self.orientation_page,
             self.strain_map_page,
+            self.phase_contrast_page,
         ]:
             self.sidebar_controls.addWidget(self._wrap_sidebar_panel(page.controls_panel))
 
@@ -590,7 +746,47 @@ class MainWindow(QMainWindow):
         if output_path.suffix.lower() != ".json":
             output_path = output_path.with_suffix(".json")
         try:
-            self.project_state_service.save(output_path, self._project_state())
+            result_data = {}
+            result_entries = []
+            for entry in self.result_registry.list_entries():
+                result_data[entry.key] = entry.data
+                result_entries.append({
+                    "key": entry.key,
+                    "name": entry.name,
+                    "category": entry.category,
+                    "export_formats": list(entry.export_formats),
+                    "metadata": {str(k): str(v) for k, v in entry.metadata.items()},
+                })
+            state = ProjectState(
+                file_path=str(self.current_file_path) if self.current_file_path else None,
+                selected_hdf5_path=self.selected_hdf5_path,
+                image_scaling=self.image_scaling,
+                image_cmap=self.image_cmap,
+                cuda_enabled=self.cuda_enabled,
+                recent_export_dir=str(self.recent_export_dir) if self.recent_export_dir else None,
+                dataset_roles={
+                    "target_datacube": roles.target_datacube,
+                    "polycrystal_calibration": roles.polycrystal_calibration,
+                    "vacuum_probe": roles.vacuum_probe,
+                    "defocused_cbed": roles.defocused_cbed,
+                },
+page_params={
+                    "virtual_detector": self.virtual_detector_page.params_snapshot(),
+                    "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
+                    "calibration": self.calibration_page.params_snapshot(),
+                    "orientation": self.orientation_page.params_snapshot(),
+                    "strain_map": self.strain_map_page.params_snapshot(),
+                    "bf_df_preview": self.bf_df_preview_page.params_snapshot(),
+                    "dpc": self.dpc_page.params_snapshot(),
+                    "parallax": self.parallax_page.params_snapshot(),
+                    "ptychography": self.ptychography_page.params_snapshot(),
+                },
+                result_entries=result_entries,
+            )
+            if result_data:
+                self.project_state_service.save_with_results(output_path, state, result_data)
+            else:
+                self.project_state_service.save(output_path, state)
             self.recent_export_dir = output_path.parent
             self.log_panel.log(f"Project saved: {output_path}")
         except Exception as exc:
@@ -609,6 +805,18 @@ class MainWindow(QMainWindow):
         try:
             state = self.project_state_service.load(path)
             self._apply_project_state(state)
+            if state.result_entries:
+                results = self.project_state_service.load_results(path, state.result_entries)
+                for entry_info in state.result_entries:
+                    key = entry_info.get("key", "")
+                    if key and key in results:
+                        self.result_registry.register(
+                            name=entry_info.get("name", key),
+                            category=entry_info.get("category", ""),
+                            data=results[key],
+                            export_formats=tuple(entry_info.get("export_formats", ("npy",))),
+                            metadata=entry_info.get("metadata", {}),
+                        )
             self.recent_export_dir = Path(path).parent
             self.log_panel.log(f"Project loaded: {path}")
         except Exception as exc:
@@ -698,7 +906,10 @@ class MainWindow(QMainWindow):
             self._show_node_info(info)
 
             if node_kind == "group":
-                if not self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
+                if self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
+                    return
+                displayed = self._try_display_first_dataset(node, hdf5_path)
+                if not displayed:
                     self._set_preview_empty("Select a 4D dataset or py4DSTEM DataCube group.")
                     self._clear_datacube_info()
                 return
@@ -729,6 +940,39 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._set_preview_empty("Could not display this node.")
             self.log_panel.log(f"Failed to inspect node: {exc}")
+
+    def _try_display_first_dataset(self, group: h5py.Group, group_path: str) -> bool:
+        for name in sorted(group.keys()):
+            child_path = f"{group_path}/{name}" if group_path != "/" else f"/{name}"
+            child = group[name]
+            if not isinstance(child, h5py.Dataset):
+                continue
+            shape = tuple(int(dim) for dim in child.shape)
+            if len(shape) == 2:
+                try:
+                    image = self.hdf5_service.read_2d_dataset(child)
+                except Exception:
+                    continue
+                self.scan_viewer.clear()
+                self.diffraction_viewer.set_image(image)
+                self._clear_datacube_info()
+                self.current_dataset_path = child_path
+                self.current_dataset_shape = shape
+                self.selected_hdf5_path = child_path
+                self.selected_node_kind = "dataset"
+                self.log_panel.log(f"Auto-displayed 2D dataset: {child_path} shape={shape}")
+                return True
+            if len(shape) == 4:
+                if self._try_load_py4dstem_datacube(child_path, show_warning=True):
+                    return True
+                try:
+                    self._load_raw_4d_dataset(child_path, shape)
+                    self._configure_4d_controls(shape)
+                    self._display_4d_slice(rx=0, ry=0)
+                    return True
+                except Exception:
+                    continue
+        return False
 
     def _show_node_info(self, info: dict[str, object]) -> None:
         self.path_label.setText(str(info.get("path", "-")))
@@ -796,22 +1040,21 @@ class MainWindow(QMainWindow):
         try:
             if self.current_4d_source == "py4dstem":
                 image = self.py4dstem_service.get_diffraction_pattern(rx, ry)
-            self.diffraction_viewer.set_image(image)
-            info = self.py4dstem_service.describe_current_datacube()
-            datapath = info.get("datapath", "DataCube")
-            self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
-            self._refresh_tree_data_info()
-            return
-
-            if self.current_file is None or self.current_dataset_path is None:
+                self.diffraction_viewer.set_image(image)
+                info = self.py4dstem_service.describe_current_datacube()
+                datapath = info.get("datapath", "DataCube")
+                self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
+            elif self.current_4d_source == "hdf5":
+                if self.current_file is None or self.current_dataset_path is None:
+                    return
+                dataset = self.current_file[self.current_dataset_path]
+                image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
+                self.diffraction_viewer.set_image(image)
+                self.log_panel.log(
+                    f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
+                )
+            else:
                 return
-
-            dataset = self.current_file[self.current_dataset_path]
-            image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
-            self.diffraction_viewer.set_image(image)
-            self.log_panel.log(
-                f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
-            )
             self._refresh_tree_data_info()
         except Exception as exc:
             self.log_panel.log(f"Failed to display diffraction pattern: {exc}")
@@ -901,6 +1144,13 @@ class MainWindow(QMainWindow):
         self.log_panel.log(f"Scan image clicked: rx={rx}, ry={ry}")
         self._display_4d_slice(rx, ry)
 
+    def _show_virtual_image_in_scan_viewer(self, image) -> None:
+        try:
+            import numpy as np
+            self.scan_viewer.set_image(np.asarray(image))
+        except Exception:
+            pass
+
     def _close_current_file(self) -> None:
         if self.current_file is not None:
             try:
@@ -918,6 +1168,7 @@ class MainWindow(QMainWindow):
         self.bragg_strain_service.probe_kernel = None
         self.braggvectors_by_datacube.clear()
         self.reference_braggvectors_cache.clear()
+        self.phase_retrieval_results.clear()
         self.workflow_state.set_dataset_role("target_datacube", None)
         self.workflow_state.set_dataset_role("polycrystal_calibration", None)
         self.workflow_state.set_dataset_role("vacuum_probe", None)
@@ -1029,6 +1280,18 @@ class MainWindow(QMainWindow):
         self.braggvectors_by_datacube[self.current_dataset_path] = self.bragg_strain_service.braggvectors
         self.log_panel.log(f"BraggVectors stored for DataCube: {self.current_dataset_path}")
 
+    def _store_dpc_result(self, result: PhaseContrastResult) -> None:
+        self.phase_retrieval_results["DPC"] = result
+        self.log_panel.log("DPC result stored for method comparison")
+
+    def _store_parallax_result(self, result: PhaseContrastResult) -> None:
+        self.phase_retrieval_results["Parallax"] = result
+        self.log_panel.log("Parallax result stored for method comparison")
+
+    def _store_ptychography_result(self, result: PhaseContrastResult) -> None:
+        self.phase_retrieval_results["Ptychography"] = result
+        self.log_panel.log("Ptychography result stored for method comparison")
+
     def _restore_current_braggvectors(self) -> None:
         if self.current_dataset_path is None:
             self.bragg_strain_service.braggvectors = None
@@ -1109,6 +1372,7 @@ class MainWindow(QMainWindow):
                 "calibration": self.calibration_page.params_snapshot(),
                 "orientation": self.orientation_page.params_snapshot(),
                 "strain_map": self.strain_map_page.params_snapshot(),
+                "phase_contrast": self.phase_contrast_page.params_snapshot(),
             },
         )
 
@@ -1142,6 +1406,10 @@ class MainWindow(QMainWindow):
             ("calibration", self.calibration_page),
             ("orientation", self.orientation_page),
             ("strain_map", self.strain_map_page),
+            ("bf_df_preview", self.bf_df_preview_page),
+            ("dpc", self.dpc_page),
+            ("parallax", self.parallax_page),
+            ("ptychography", self.ptychography_page),
         ]:
             params = page_params.get(key)
             if params:

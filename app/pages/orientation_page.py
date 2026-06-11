@@ -359,9 +359,6 @@ class OrientationPage(QWidget):
             self.workflow_state.watch(spin, WorkflowStep.ORIENTATION_PLAN, "valueChanged")
         for spin in [self.num_matches, self.min_match_angle, self.min_match_peaks]:
             self.workflow_state.watch(spin, WorkflowStep.ORIENTATION_MATCH, "valueChanged")
-        self.workflow_state.watch(
-            self.inversion_symmetry, WorkflowStep.ORIENTATION_MATCH, "toggled"
-        )
 
     def _refresh_stale_status(self) -> None:
         if self.workflow_state.any_stale(

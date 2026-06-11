@@ -21,3 +21,5 @@ env/
 packaging/installer/
 
 data/
+
+notebooks/
