@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +28,7 @@ from app.services.orientation_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -97,18 +96,7 @@ class OrientationPage(QWidget):
         self.match_progress.setTextVisible(True)
         self.match_progress.setVisible(False)
         self.last_progress_bucket = -10
-        self.viewer_tabs = QTabWidget()
-        self.viewers: dict[str, ImageViewer] = {}
-        for name in [
-            "Orientation RGB",
-            "Correlation Score",
-            "Reliability",
-            "Peak Count",
-            "Ambiguity",
-        ]:
-            viewer = ImageViewer("color" if name == "Orientation RGB" else "intensity")
-            self.viewers[name] = viewer
-            self.viewer_tabs.addTab(viewer, name)
+        self.workspace = AdaptiveImageWorkspace()
         self.load_button.clicked.connect(self.load_cif)
         self.plan_button.clicked.connect(
             lambda: self._run(
@@ -163,7 +151,7 @@ class OrientationPage(QWidget):
         left_layout.addStretch(1)
         self.controls_panel = left
         layout = QHBoxLayout(self)
-        layout.addWidget(self.viewer_tabs)
+        layout.addWidget(self.workspace)
 
     def load_cif(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Load crystal structure", "", "CIF files (*.cif)")
@@ -287,12 +275,14 @@ class OrientationPage(QWidget):
 
     def _finished(self, result) -> None:
         if isinstance(result, OrientationResult):
-            for name, viewer in self.viewers.items():
+            for name in ["Orientation RGB", "Correlation Score", "Reliability", "Peak Count", "Ambiguity"]:
                 image = result.quality.maps.get(name)
-                if image is None:
-                    viewer.clear(f"{name} is not available for this result.")
-                else:
-                    viewer.set_image(image)
+                if image is not None:
+                    self.workspace.append_result(FigureResult(
+                        f"Orientation: {name}",
+                        image,
+                        image_kind="color" if name == "Orientation RGB" else "intensity",
+                    ))
                     if self.result_registry is not None:
                         self.result_registry.register(
                             name,

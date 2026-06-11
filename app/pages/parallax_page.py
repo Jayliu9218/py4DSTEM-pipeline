@@ -26,7 +26,7 @@ from app.services.phase_contrast_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -98,9 +98,7 @@ class ParallaxPage(QWidget):
         self.run_button = QPushButton("Reconstruct")
         self.run_button.clicked.connect(self._run)
 
-        self.viewer = ImageViewer()
-        self.viewer.setMinimumSize(0, 0)
-        self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.workspace = AdaptiveImageWorkspace()
 
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
@@ -135,14 +133,14 @@ class ParallaxPage(QWidget):
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(self.viewer, 1)
+        main_layout.addWidget(self.workspace, 1)
 
     def _show_selected_image(self, key: str) -> None:
         if self.result is None or key not in self.result.images:
             return
         image = self.result.images[key]
         if image is not None:
-            self.viewer.set_image(np.asarray(image))
+            self.workspace.update_result("selected-preview", FigureResult(f"Selected: {key}", np.asarray(image)))
 
     def _current_params(self) -> ParallaxParams:
         return ParallaxParams(
@@ -210,7 +208,11 @@ class ParallaxPage(QWidget):
             self.image_selector.setCurrentText(default_key)
             image = result.images[default_key]
             if image is not None:
-                self.viewer.set_image(np.asarray(image))
+                self.workspace.update_result("selected-preview", FigureResult(f"Selected: {default_key}", np.asarray(image)))
+
+        for name, image in result.images.items():
+            if image is not None:
+                self.workspace.append_result(FigureResult(f"Parallax: {name}", np.asarray(image)))
 
         if self.result_registry is not None:
             for name, image in result.images.items():

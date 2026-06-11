@@ -27,7 +27,7 @@ class PipelineShellTests(unittest.TestCase):
 
         self.assertEqual(
             titles,
-            ["Data Setup", "Bragg Detection", "Bragg Vector Map", "Calibration", "Strain Mapping", "Export"],
+            ["Data & Preprocess", "Virtual Imaging", "Probe & Bragg", "Calibration", "Strain Analysis", "Export & Report"],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
 

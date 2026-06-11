@@ -13,7 +13,9 @@ STALE_RESULTS_MESSAGE = (
 
 class WorkflowStep:
     DATA_ROLES = "data_roles"
+    PREPROCESS_APPLY = "preprocess_apply"
     VIRTUAL_DETECTOR = "virtual_detector"
+    VIRTUAL_DIFFRACTION = "virtual_diffraction"
     PROBE_KERNEL = "probe_kernel"
     BRAGG_SINGLE = "bragg_single"
     BRAGG_SELECTED = "bragg_selected"
@@ -65,7 +67,9 @@ class WorkflowState(QObject):
 
     _DEPENDENCIES = {
         WorkflowStep.DATA_ROLES: {
+            WorkflowStep.PREPROCESS_APPLY,
             WorkflowStep.VIRTUAL_DETECTOR,
+            WorkflowStep.VIRTUAL_DIFFRACTION,
             WorkflowStep.PROBE_KERNEL,
             WorkflowStep.BRAGG_SINGLE,
             WorkflowStep.BRAGG_SELECTED,
@@ -79,6 +83,20 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
             WorkflowStep.BF_DF_PREVIEW,
+        },
+        WorkflowStep.PREPROCESS_APPLY: {
+            WorkflowStep.VIRTUAL_DETECTOR,
+            WorkflowStep.VIRTUAL_DIFFRACTION,
+            WorkflowStep.PROBE_KERNEL,
+            WorkflowStep.BRAGG_SINGLE,
+            WorkflowStep.BRAGG_SELECTED,
+            WorkflowStep.BRAGG_FULL,
+            WorkflowStep.CALIBRATION_ORIGIN,
+            WorkflowStep.CALIBRATION_ELLIPSE,
+            WorkflowStep.CALIBRATION_PIXEL,
+            WorkflowStep.CALIBRATION_ROTATION,
+            WorkflowStep.CALIBRATION_APPLY,
+            WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.PROBE_KERNEL: {
             WorkflowStep.BRAGG_SINGLE,
@@ -151,6 +169,15 @@ class WorkflowState(QObject):
 
     def is_completed(self, step: str) -> bool:
         return step in self._completed
+
+    def prerequisite_message(self, required_steps: Iterable[str]) -> str:
+        missing = [step.replace("_", " ") for step in required_steps if step not in self._completed]
+        stale = [step.replace("_", " ") for step in required_steps if step in self._stale]
+        if missing:
+            return f"Complete required step(s) first: {', '.join(missing)}."
+        if stale:
+            return f"Recalculate stale required step(s): {', '.join(stale)}."
+        return ""
 
     def any_stale(self, steps: Iterable[str]) -> bool:
         return bool(self._stale.intersection(steps))

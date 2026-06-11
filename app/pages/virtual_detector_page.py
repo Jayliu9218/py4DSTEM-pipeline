@@ -25,7 +25,7 @@ from app.services.virtual_detector_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 
@@ -82,6 +82,8 @@ class VirtualDetectorPage(QWidget):
                 VirtualDetectorService.BRIGHT_FIELD,
                 VirtualDetectorService.ANNULAR_DARK_FIELD,
                 VirtualDetectorService.CUSTOM_ANNULAR,
+                VirtualDetectorService.OFF_AXIS_DARK_FIELD,
+                VirtualDetectorService.VIRTUAL_DIFFRACTION,
             ]
         )
 
@@ -89,13 +91,17 @@ class VirtualDetectorPage(QWidget):
         self.center_y_spin = self._make_float_input(0, 100000, 1, unit="px")
         self.inner_radius_spin = self._make_float_input(0, 100000, 0, unit="px")
         self.outer_radius_spin = self._make_float_input(0.1, 100000, 10, unit="px")
+        self.roi_rx_start = self._make_float_input(0, 100000, 0, unit="px")
+        self.roi_rx_end = self._make_float_input(1, 100000, 1, unit="px")
+        self.roi_ry_start = self._make_float_input(0, 100000, 0, unit="px")
+        self.roi_ry_end = self._make_float_input(1, 100000, 1, unit="px")
 
         self.run_button = QPushButton("Plot")
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
-        self.viewer = ImageViewer()
+        self.workspace = AdaptiveImageWorkspace()
 
         self.run_button.clicked.connect(self.run_detector)
         self.export_button.clicked.connect(self.export_result)
@@ -114,6 +120,10 @@ class VirtualDetectorPage(QWidget):
         form.addRow("center_y", self.center_y_spin)
         form.addRow("inner_radius", self.inner_radius_spin)
         form.addRow("outer_radius", self.outer_radius_spin)
+        form.addRow("ROI rx start", self.roi_rx_start)
+        form.addRow("ROI rx end", self.roi_rx_end)
+        form.addRow("ROI ry start", self.roi_ry_start)
+        form.addRow("ROI ry end", self.roi_ry_end)
 
         button_row = QHBoxLayout()
         button_row.addWidget(self.run_button)
@@ -130,7 +140,7 @@ class VirtualDetectorPage(QWidget):
         self.controls_panel = left
 
         layout = QHBoxLayout(self)
-        layout.addWidget(self.viewer)
+        layout.addWidget(self.workspace)
 
     def add_controls_widget(self, widget: QWidget) -> None:
         self.left_layout.insertWidget(max(self.left_layout.count() - 1, 0), widget)
@@ -233,12 +243,17 @@ class VirtualDetectorPage(QWidget):
             center_y=self.center_y_spin.value(),
             inner_radius=self.inner_radius_spin.value(),
             outer_radius=self.outer_radius_spin.value(),
+            roi_rx_start=int(self.roi_rx_start.value()),
+            roi_rx_end=int(self.roi_rx_end.value()),
+            roi_ry_start=int(self.roi_ry_start.value()),
+            roi_ry_end=int(self.roi_ry_end.value()),
         )
 
     def _handle_finished(self, result: VirtualDetectorResult) -> None:
         self.result = result.image
-        self.viewer.set_image(result.image)
-        self.virtual_image_ready.emit(result.image)
+        self.workspace.append_result(FigureResult(result.mode, result.image))
+        if result.mode != VirtualDetectorService.VIRTUAL_DIFFRACTION:
+            self.virtual_image_ready.emit(result.image)
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
         self.run_button.setEnabled(True)
         self.export_button.setEnabled(True)
@@ -271,8 +286,14 @@ class VirtualDetectorPage(QWidget):
         self.worker_thread = None
 
     def _sync_mode_state(self) -> None:
-        is_bf = self.mode_combo.currentText() == VirtualDetectorService.BRIGHT_FIELD
-        self.inner_radius_spin.setEnabled(not is_bf)
+        mode = self.mode_combo.currentText()
+        is_circle = mode in {VirtualDetectorService.BRIGHT_FIELD, VirtualDetectorService.OFF_AXIS_DARK_FIELD}
+        is_diffraction = mode == VirtualDetectorService.VIRTUAL_DIFFRACTION
+        self.inner_radius_spin.setEnabled(not is_circle and not is_diffraction)
+        for control in [self.center_x_spin, self.center_y_spin, self.inner_radius_spin, self.outer_radius_spin]:
+            control.setVisible(not is_diffraction)
+        for control in [self.roi_rx_start, self.roi_rx_end, self.roi_ry_start, self.roi_ry_end]:
+            control.setVisible(is_diffraction)
 
     def _watch_parameters(self) -> None:
         self.workflow_state.watch(
@@ -283,6 +304,10 @@ class VirtualDetectorPage(QWidget):
             self.center_y_spin,
             self.inner_radius_spin,
             self.outer_radius_spin,
+            self.roi_rx_start,
+            self.roi_rx_end,
+            self.roi_ry_start,
+            self.roi_ry_end,
         ]:
             self.workflow_state.watch(spin, WorkflowStep.VIRTUAL_DETECTOR, "valueChanged")
 
@@ -321,6 +346,10 @@ class VirtualDetectorPage(QWidget):
             "center_y": self.center_y_spin.value(),
             "inner_radius": self.inner_radius_spin.value(),
             "outer_radius": self.outer_radius_spin.value(),
+            "roi_rx_start": int(self.roi_rx_start.value()),
+            "roi_rx_end": int(self.roi_rx_end.value()),
+            "roi_ry_start": int(self.roi_ry_start.value()),
+            "roi_ry_end": int(self.roi_ry_end.value()),
         }
 
     def apply_params_snapshot(self, params: dict[str, object]) -> None:
@@ -330,6 +359,10 @@ class VirtualDetectorPage(QWidget):
             ("center_y", self.center_y_spin),
             ("inner_radius", self.inner_radius_spin),
             ("outer_radius", self.outer_radius_spin),
+            ("roi_rx_start", self.roi_rx_start),
+            ("roi_rx_end", self.roi_rx_end),
+            ("roi_ry_start", self.roi_ry_start),
+            ("roi_ry_end", self.roi_ry_end),
         ]:
             if key in params:
                 spin.setValue(float(params[key]))

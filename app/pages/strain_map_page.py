@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +22,7 @@ from PySide6.QtWidgets import (
 from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -78,7 +77,7 @@ class StrainMapPage(QWidget):
         self.edge_spin = self._int_input(0, 10000, 1, unit="px")
         self.max_peaks_spin = self._int_input(1, 10000, 150, unit="peaks")
         self.reference_mode = QComboBox()
-        self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask"])
+        self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask", "manual_g1g2"])
         self.color_mode = QComboBox()
         self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
         self.color_min_spin = self._float_input(-1e6, 1e6, -1, unit="value")
@@ -87,6 +86,10 @@ class StrainMapPage(QWidget):
         self.roi_rx_end = self._int_input(0, 100000, 42, unit="px")
         self.roi_ry_start = self._int_input(0, 100000, 8, unit="px")
         self.roi_ry_end = self._int_input(0, 100000, 16, unit="px")
+        self.manual_g1_x = self._float_input(-100000, 100000, 1)
+        self.manual_g1_y = self._float_input(-100000, 100000, 0)
+        self.manual_g2_x = self._float_input(-100000, 100000, 0)
+        self.manual_g2_y = self._float_input(-100000, 100000, 1)
 
         self.run_button = QPushButton("Run Strain Map")
         self.pick_roi_button = QPushButton("Pick ROI From Map")
@@ -95,23 +98,7 @@ class StrainMapPage(QWidget):
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
 
-        self.viewer_tabs = QTabWidget()
-        self.viewers = {
-            name: ImageViewer()
-            for name in [
-                "exx",
-                "eyy",
-                "exy",
-                "theta",
-                "principal strain 1",
-                "principal strain 2",
-                "fit residual",
-                "valid mask",
-            ]
-        }
-        for name, viewer in self.viewers.items():
-            self.viewer_tabs.addTab(viewer, name)
-            viewer.image_clicked.connect(self._handle_roi_click)
+        self.workspace = AdaptiveImageWorkspace()
 
         self.run_button.clicked.connect(self.run_strain_map)
         self.pick_roi_button.clicked.connect(self.start_roi_pick)
@@ -130,6 +117,10 @@ class StrainMapPage(QWidget):
         braggvectors = self.braggvectors_provider()
         if braggvectors is None:
             QMessageBox.information(self, "Strain Map", "Run full BraggVectors first.")
+            return
+        prerequisite = self.workflow_state.prerequisite_message([WorkflowStep.CALIBRATION_APPLY])
+        if prerequisite:
+            QMessageBox.information(self, "Strain Map", prerequisite)
             return
         warning = self._calibration_warning(braggvectors)
         if warning:
@@ -234,6 +225,10 @@ class StrainMapPage(QWidget):
         form.addRow("reference ROI rx end", self.roi_rx_end)
         form.addRow("reference ROI ry start", self.roi_ry_start)
         form.addRow("reference ROI ry end", self.roi_ry_end)
+        form.addRow("manual g1 x", self.manual_g1_x)
+        form.addRow("manual g1 y", self.manual_g1_y)
+        form.addRow("manual g2 x", self.manual_g2_x)
+        form.addRow("manual g2 y", self.manual_g2_y)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -245,7 +240,7 @@ class StrainMapPage(QWidget):
         left_layout.addStretch(1)
         self.controls_panel = left
         layout = QHBoxLayout(self)
-        layout.addWidget(self.viewer_tabs)
+        layout.addWidget(self.workspace)
 
     def _float_input(
         self,
@@ -283,6 +278,10 @@ class StrainMapPage(QWidget):
             roi_rx_end=self.roi_rx_end.value(),
             roi_ry_start=self.roi_ry_start.value(),
             roi_ry_end=self.roi_ry_end.value(),
+            manual_g1_x=self.manual_g1_x.value(),
+            manual_g1_y=self.manual_g1_y.value(),
+            manual_g2_x=self.manual_g2_x.value(),
+            manual_g2_y=self.manual_g2_y.value(),
         )
 
     def _handle_finished(self, result: StrainMapResult) -> None:
@@ -348,12 +347,11 @@ class StrainMapPage(QWidget):
     def _display_result(self) -> None:
         if self.result is None:
             return
-        for name, viewer in self.viewers.items():
-            image = self.result.components.get(name)
-            if image is None:
-                viewer.clear(f"{name} is not available for this result.")
-            else:
-                viewer.set_image(image, levels=self._levels_for(image))
+        for name, image in self.result.components.items():
+            if image is not None:
+                self.workspace.append_result(
+                    FigureResult(name, image, levels=self._levels_for(image))
+                )
 
     def _levels_for(self, image) -> tuple[float, float] | None:
         array = np.asarray(image, dtype=float)
@@ -394,6 +392,10 @@ class StrainMapPage(QWidget):
             self.roi_rx_end,
             self.roi_ry_start,
             self.roi_ry_end,
+            self.manual_g1_x,
+            self.manual_g1_y,
+            self.manual_g2_x,
+            self.manual_g2_y,
         ]:
             self.workflow_state.watch(spin, WorkflowStep.STRAIN_MAP, "valueChanged")
         self.workflow_state.watch(
@@ -419,6 +421,10 @@ class StrainMapPage(QWidget):
             "roi_rx_end": params.roi_rx_end,
             "roi_ry_start": params.roi_ry_start,
             "roi_ry_end": params.roi_ry_end,
+            "manual_g1_x": params.manual_g1_x,
+            "manual_g1_y": params.manual_g1_y,
+            "manual_g2_x": params.manual_g2_x,
+            "manual_g2_y": params.manual_g2_y,
             "color_mode": self.color_mode.currentText(),
             "color_min": self.color_min_spin.value(),
             "color_max": self.color_max_spin.value(),
@@ -433,6 +439,10 @@ class StrainMapPage(QWidget):
             "min_spacing": self.min_spacing_spin,
             "color_min": self.color_min_spin,
             "color_max": self.color_max_spin,
+            "manual_g1_x": self.manual_g1_x,
+            "manual_g1_y": self.manual_g1_y,
+            "manual_g2_x": self.manual_g2_x,
+            "manual_g2_y": self.manual_g2_y,
         }
         int_controls = {
             "edge_boundary": self.edge_spin,

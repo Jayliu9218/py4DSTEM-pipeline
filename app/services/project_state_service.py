@@ -23,10 +23,11 @@ class ProjectState:
     dataset_roles: dict[str, str | None] = field(default_factory=dict)
     page_params: dict[str, dict[str, object]] = field(default_factory=dict)
     result_entries: list[dict[str, object]] = field(default_factory=list)
+    grid_states: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "version": 2,
+            "version": 3,
             "file_path": self.file_path,
             "selected_hdf5_path": self.selected_hdf5_path,
             "image_scaling": self.image_scaling,
@@ -36,6 +37,7 @@ class ProjectState:
             "dataset_roles": self.dataset_roles,
             "page_params": self.page_params,
             "result_entries": self.result_entries,
+            "grid_states": self.grid_states,
         }
 
     @classmethod
@@ -50,6 +52,7 @@ class ProjectState:
             dataset_roles=_string_map(payload.get("dataset_roles", {})),
             page_params=_page_params(payload.get("page_params", {})),
             result_entries=payload.get("result_entries", []),
+            grid_states=_page_params(payload.get("grid_states", {})),
         )
 
 
@@ -90,6 +93,7 @@ class ProjectStateService:
                 for entry in state.result_entries
                 if entry.get("key", "") in data_files
             ],
+            grid_states=state.grid_states,
         )
         output_path.write_text(
             json.dumps(state_with_files.to_dict(), indent=2, sort_keys=True, default=_json_default),

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from app.services.phase_contrast_service import PhaseContrastService, PhaseContrastServiceError
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -77,9 +77,7 @@ class BFDFPreviewPage(QWidget):
         self.compute_button = QPushButton("Compute BF / DF")
         self.compute_button.clicked.connect(self._run)
 
-        self.viewer = ImageViewer()
-        self.viewer.setMinimumSize(0, 0)
-        self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.workspace = AdaptiveImageWorkspace()
 
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
@@ -103,7 +101,7 @@ class BFDFPreviewPage(QWidget):
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(self.viewer, 1)
+        main_layout.addWidget(self.workspace, 1)
 
     def _run(self) -> None:
         source = self.source_provider()
@@ -145,9 +143,8 @@ class BFDFPreviewPage(QWidget):
         self.status_label.setText("Done")
         self.log_panel.log("BF / DF preview complete")
 
-        for _name, image in images.items():
-                self.viewer.set_image(image)
-                break
+        for name, image in images.items():
+            self.workspace.append_result(FigureResult(f"BF / DF: {name}", image))
 
         if self.result_registry is not None:
             for name, image in images.items():

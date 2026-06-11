@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 import h5py
 import numpy as np
@@ -31,8 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.pages.virtual_detector_page import VirtualDetectorPage
+from app.pages.preprocessing_page import PreprocessingPage
 from app.pages.bragg_peaks_page import BraggPeaksPage
-from app.pages.bragg_vector_map_page import BraggVectorMapPage
 from app.pages.calibration_page import CalibrationPage
 from app.pages.orientation_page import OrientationPage
 from app.pages.strain_map_page import StrainMapPage
@@ -57,6 +58,7 @@ from app.services.result_registry import ResultRegistry, ResultRegistryError
 from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.hdf5_tree_widget import Hdf5TreeWidget
 from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.pipeline_shell import (
@@ -110,6 +112,12 @@ class MainWindow(QMainWindow):
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
         )
+        self.preprocessing_page = PreprocessingPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+        )
         self.bragg_peaks_page = BraggPeaksPage(
             datacube_provider=self._get_py4dstem_datacube,
             shape_provider=self._get_current_4d_shape,
@@ -145,12 +153,6 @@ class MainWindow(QMainWindow):
         )
         self.phase_contrast_page = PhaseContrastPage(
             source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.bragg_vector_map_page = BraggVectorMapPage(
-            braggvectors_provider=self._get_braggvectors,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
@@ -262,9 +264,6 @@ class MainWindow(QMainWindow):
 
         self.file_menu.addSeparator()
 
-        export_results_action = self.file_menu.addAction("Export &Results")
-        export_results_action.triggered.connect(self.export_registered_result)
-
         report_action = self.file_menu.addAction("Generate &Report")
         report_action.triggered.connect(self.generate_report)
 
@@ -350,9 +349,9 @@ class MainWindow(QMainWindow):
         self.viewer_stack = QStackedWidget()
         self.viewer_pages = {
             "overview": self.main_view,
+            "preprocess": self.preprocessing_page,
             "virtual": self.virtual_detector_page,
             "bragg": self.bragg_peaks_page,
-            "bragg_vector_map": self.bragg_vector_map_page,
             "calibration": self.calibration_page,
             "orientation": self.orientation_page,
             "strain": self.strain_map_page,
@@ -396,10 +395,7 @@ class MainWindow(QMainWindow):
         self.project_toolbar = ProjectToolbar()
         self.route_bar = TechnicalRouteBar()
         self.data_setup_controls = self._build_role_panel()
-        self.project_toolbar.load_clicked.connect(self.open_file)
-        self.project_toolbar.project_clicked.connect(self.load_project)
-        self.project_toolbar.save_clicked.connect(self.save_project)
-        self.project_toolbar.export_clicked.connect(self.export_registered_result)
+        self.export_controls = self._build_export_panel()
         self.project_toolbar.structure_changed.connect(self._update_structure_route)
         self.project_toolbar.goal_changed.connect(self._update_structure_route)
         self.route_bar.module_selected.connect(self._select_route_module)
@@ -449,12 +445,13 @@ class MainWindow(QMainWindow):
         if not self.project_toolbar.goal.count() or self.project_toolbar.goal.currentText() not in goals:
             self.project_toolbar.set_goals(goals)
         goal = self.project_toolbar.goal.currentText() or goals[0]
+        notebook_strain_route = structure == "Crystalline / Bragg-based" and goal == "Strain Mapping"
         common_data = RouteModule(
             "data_setup",
-            "Data Setup",
-            "overview",
-            "Open an HDF5 / EMD file, assign the Target DataCube, and configure virtual imaging.",
-            "Validated DataCube, dataset roles, virtual image preview, and display-ready outputs.",
+            "Data & Preprocess" if notebook_strain_route else "Data Setup",
+            "preprocess" if notebook_strain_route else "overview",
+            "Open an HDF5 / EMD file, assign dataset roles, inspect the DataCube, and preview/apply preprocessing.",
+            "Validated roles, DataCube diagnostics, and an explicitly preprocessed working DataCube.",
         )
         if structure == "Crystalline / Bragg-based":
             analysis_page = (
@@ -473,39 +470,68 @@ class MainWindow(QMainWindow):
                 else None
             )
             analysis_implemented = goal != "Structural Phase Mapping"
-            modules = [
-                common_data,
-                RouteModule(
-                    "bragg_detection", "Bragg Detection", "bragg",
-                    "Target DataCube; probe kernel is optional but recommended.",
-                    "BraggVectors, BVM, peak tables, and detection diagnostics.",
-                    WorkflowStep.BRAGG_FULL, "data_setup",
-                ),
-                RouteModule(
-                    "bragg_vector_map", "Bragg Vector Map", "bragg_vector_map",
-                    "BraggVectors from Bragg Detection.",
-                    "Bragg Vector Map, peak count map, intensity statistics.",
-                    WorkflowStep.BRAGG_VECTOR_MAP, "bragg_detection",
-                ),
-                RouteModule(
-                    "calibration", "Calibration", "calibration",
-                    "BraggVectors; ellipse and rotation references when required.",
-                    "Applied origin, ellipse, pixel-size, and rotation calibration.",
-                    WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
-                ),
-                RouteModule(
-                    "crystal_analysis", goal, analysis_page,
-                    "Calibrated BraggVectors and analysis-specific reference inputs.",
-                    f"{goal} result maps and quality diagnostics.",
-                    analysis_step, "calibration", analysis_implemented,
-                ),
-                RouteModule(
-                    "export", "Export", "overview",
-                    "At least one registered result.",
-                    "Result arrays, images, project state, or scientific report.",
-                    prerequisite="crystal_analysis",
-                ),
-            ]
+            if goal == "Strain Mapping":
+                modules = [
+                    common_data,
+                    RouteModule(
+                        "virtual_imaging", "Virtual Imaging", "virtual",
+                        "Target DataCube; measured probe geometry is optional.",
+                        "BF, annular/off-axis DF, and ROI virtual diffraction.",
+                        WorkflowStep.VIRTUAL_DETECTOR, "data_setup",
+                    ),
+                    RouteModule(
+                        "bragg_detection", "Probe & Bragg", "bragg",
+                        "Target DataCube; vacuum probe or vacuum ROI recommended.",
+                        "Probe kernel, target/reference BraggVectors, histograms, and diagnostics.",
+                        WorkflowStep.BRAGG_FULL, "virtual_imaging",
+                    ),
+                    RouteModule(
+                        "calibration", "Calibration", "calibration",
+                        "Target and ellipse-reference BraggVectors plus rotation reference.",
+                        "Applied origin, ellipse, pixel-size, and rotation calibration.",
+                        WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
+                    ),
+                    RouteModule(
+                        "crystal_analysis", "Strain Analysis", "strain",
+                        "Fully applied calibration and selected strain reference.",
+                        "Basis diagnostics, strain components, quality maps, and references.",
+                        WorkflowStep.STRAIN_MAP, "calibration",
+                    ),
+                    RouteModule(
+                        "export", "Export & Report", "overview",
+                        "At least one registered result.",
+                        "Result arrays, project state, and scientific report.",
+                        prerequisite="crystal_analysis",
+                    ),
+                ]
+            else:
+                modules = [
+                    common_data,
+                    RouteModule(
+                        "bragg_detection", "Bragg Detection", "bragg",
+                        "Target DataCube; probe kernel is optional but recommended.",
+                        "BraggVectors, BVM, peak tables, and detection diagnostics.",
+                        WorkflowStep.BRAGG_FULL, "data_setup",
+                    ),
+                    RouteModule(
+                        "calibration", "Calibration", "calibration",
+                        "BraggVectors; ellipse and rotation references when required.",
+                        "Applied origin, ellipse, pixel-size, and rotation calibration.",
+                        WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
+                    ),
+                    RouteModule(
+                        "crystal_analysis", goal, analysis_page,
+                        "Calibrated BraggVectors and analysis-specific reference inputs.",
+                        f"{goal} result maps and quality diagnostics.",
+                        analysis_step, "calibration", analysis_implemented,
+                    ),
+                    RouteModule(
+                        "export", "Export", "overview",
+                        "At least one registered result.",
+                        "Result arrays, images, project state, or scientific report.",
+                        prerequisite="crystal_analysis",
+                    ),
+                ]
         elif structure == "Amorphous / Diffuse-scattering":
             goal_page = {
                 "RDF": "rdf",
@@ -615,14 +641,17 @@ class MainWindow(QMainWindow):
         self.viewer_stack.setCurrentWidget(self.viewer_pages[module.page_key])
         controls = self._controls_for_route(module.key)
         self.module_panel.set_module(module, controls)
+        workspace = self._workspace_for_page(self.viewer_pages[module.page_key])
+        if workspace is not None:
+            workspace.refresh_layout()
         self._bold_section_titles()
 
     def _controls_for_route(self, key: str) -> QWidget | None:
         goal = self.project_toolbar.goal.currentText()
         return {
             "data_setup": self.data_setup_controls,
+            "virtual_imaging": self.virtual_detector_page.controls_panel,
             "bragg_detection": self.bragg_peaks_page.controls_panel,
-            "bragg_vector_map": self.bragg_vector_map_page.controls_panel,
             "calibration": self.calibration_page.controls_panel,
             "crystal_analysis": (
                 self.strain_map_page.controls_panel
@@ -642,11 +671,10 @@ class MainWindow(QMainWindow):
             "amorphous_analysis": self.amorphous_strain_page.controls_panel if goal == "Amorphous Strain" else (
                 self.rdf_page.controls_panel if goal == "RDF" else self.fem_page.controls_panel
             ),
+            "export": self.export_controls,
         }.get(key)
 
     def _build_role_panel(self) -> QWidget:
-        virtual_controls = self.virtual_detector_page.controls_panel
-        
         roles_group = QGroupBox("Dataset Roles / Sources")
         roles_layout = QVBoxLayout(roles_group)
         for label, role in [
@@ -662,10 +690,54 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(virtual_controls)
         layout.addWidget(roles_group)
+        layout.addWidget(self.preprocessing_page.controls_panel)
         layout.addStretch(1)
         return panel
+
+    def _build_export_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        export_button = QPushButton("Export Registered Result")
+        export_button.clicked.connect(self.export_registered_result)
+        save_button = QPushButton("Save Project")
+        save_button.clicked.connect(self.save_project)
+        report_button = QPushButton("Generate Report")
+        report_button.clicked.connect(self.generate_report)
+        layout.addWidget(export_button)
+        layout.addWidget(save_button)
+        layout.addWidget(report_button)
+        layout.addStretch(1)
+        return panel
+
+    def export_registered_result(self) -> None:
+        entries = self.result_registry.list_entries()
+        if not entries:
+            QMessageBox.information(
+                self, "Export Results", "No results are available yet. Run a workflow step first."
+            )
+            return
+        labels = [entry.key for entry in entries]
+        key, ok = QInputDialog.getItem(self, "Export Results", "Result", labels, 0, False)
+        if not ok or not key:
+            return
+        entry = self.result_registry.get(key)
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export result",
+            str(self._default_output_dir() / self._safe_result_filename(entry.name, entry.export_formats[0])),
+            ";;".join(self._filters_for_entry(entry.export_formats)),
+        )
+        if not path:
+            return
+        output_path = self._path_with_supported_suffix(Path(path), entry.export_formats[0])
+        try:
+            exported = self.result_registry.export(key, output_path)
+            self.recent_export_dir = exported.parent
+            self.log_panel.log(f"Result exported: {exported}")
+        except ResultRegistryError as exc:
+            self.log_panel.log(f"Result export failed: {exc}")
+            QMessageBox.warning(self, "Export Results", str(exc))
 
     def _populate_sidebar_controls(self) -> None:
         for page in [
@@ -715,7 +787,7 @@ class MainWindow(QMainWindow):
             self.tree.populate(self.current_file)
             self._set_preview_empty()
             self._clear_dataset_info()
-            self.virtual_detector_page.viewer.clear()
+            self._clear_all_image_workspaces()
             self.bragg_strain_service.braggvectors = None
             self.bragg_strain_service.strainmap = None
             self.bragg_strain_service.strain_result = None
@@ -757,32 +829,7 @@ class MainWindow(QMainWindow):
                     "export_formats": list(entry.export_formats),
                     "metadata": {str(k): str(v) for k, v in entry.metadata.items()},
                 })
-            state = ProjectState(
-                file_path=str(self.current_file_path) if self.current_file_path else None,
-                selected_hdf5_path=self.selected_hdf5_path,
-                image_scaling=self.image_scaling,
-                image_cmap=self.image_cmap,
-                cuda_enabled=self.cuda_enabled,
-                recent_export_dir=str(self.recent_export_dir) if self.recent_export_dir else None,
-                dataset_roles={
-                    "target_datacube": roles.target_datacube,
-                    "polycrystal_calibration": roles.polycrystal_calibration,
-                    "vacuum_probe": roles.vacuum_probe,
-                    "defocused_cbed": roles.defocused_cbed,
-                },
-page_params={
-                    "virtual_detector": self.virtual_detector_page.params_snapshot(),
-                    "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
-                    "calibration": self.calibration_page.params_snapshot(),
-                    "orientation": self.orientation_page.params_snapshot(),
-                    "strain_map": self.strain_map_page.params_snapshot(),
-                    "bf_df_preview": self.bf_df_preview_page.params_snapshot(),
-                    "dpc": self.dpc_page.params_snapshot(),
-                    "parallax": self.parallax_page.params_snapshot(),
-                    "ptychography": self.ptychography_page.params_snapshot(),
-                },
-                result_entries=result_entries,
-            )
+            state = replace(self._project_state(), result_entries=result_entries)
             if result_data:
                 self.project_state_service.save_with_results(output_path, state, result_data)
             else:
@@ -822,45 +869,6 @@ page_params={
         except Exception as exc:
             self.log_panel.log(f"Project load failed: {exc}")
             QMessageBox.warning(self, "Load Project", str(exc))
-
-    def export_registered_result(self) -> None:
-        entries = self.result_registry.list_entries()
-        if not entries:
-            QMessageBox.information(
-                self,
-                "Export Results",
-                "No results are available yet. Run a workflow step first.",
-            )
-            return
-        labels = [entry.key for entry in entries]
-        key, ok = QInputDialog.getItem(
-            self,
-            "Export Results",
-            "Result",
-            labels,
-            0,
-            False,
-        )
-        if not ok or not key:
-            return
-        entry = self.result_registry.get(key)
-        filters = self._filters_for_entry(entry.export_formats)
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export result",
-            str(self._default_output_dir() / self._safe_result_filename(entry.name, entry.export_formats[0])),
-            ";;".join(filters),
-        )
-        if not path:
-            return
-        output_path = self._path_with_supported_suffix(Path(path), entry.export_formats[0])
-        try:
-            exported = self.result_registry.export(key, output_path)
-            self.recent_export_dir = exported.parent
-            self.log_panel.log(f"Result exported: {exported}")
-        except ResultRegistryError as exc:
-            self.log_panel.log(f"Result export failed: {exc}")
-            QMessageBox.warning(self, "Export Results", str(exc))
 
     def generate_report(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -1306,12 +1314,26 @@ page_params={
         return self.current_dataset_shape
 
     def _assign_current_role(self, role: str) -> None:
-        if self.selected_hdf5_path is None:
+        selected_path = self._current_tree_selection_path()
+        if selected_path is None:
             QMessageBox.information(self, "Dataset Roles", "Select a node in the HDF5 tree first.")
             return
-        self.workflow_state.set_dataset_role(role, self.selected_hdf5_path)
+        self.selected_hdf5_path = selected_path
+        previous_target = self.workflow_state.dataset_roles.target_datacube
+        self.workflow_state.set_dataset_role(role, selected_path)
+        if role == "target_datacube" and previous_target != selected_path:
+            self._clear_all_image_workspaces()
         self._refresh_role_labels()
-        self.log_panel.log(f"Assigned {role}: {self.selected_hdf5_path}")
+        self.log_panel.log(f"Assigned {role}: {selected_path}")
+
+    def _current_tree_selection_path(self) -> str | None:
+        item = self.tree.currentItem()
+        if item is not None:
+            path = item.data(0, 256)
+            kind = item.data(0, 257)
+            if path and kind:
+                return str(path)
+        return self.selected_hdf5_path or self.current_dataset_path
 
     def _refresh_role_labels(self) -> None:
         roles = self.workflow_state.dataset_roles
@@ -1368,12 +1390,19 @@ page_params={
             },
             page_params={
                 "virtual_detector": self.virtual_detector_page.params_snapshot(),
+                "preprocessing": self.preprocessing_page.params_snapshot(),
                 "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
                 "calibration": self.calibration_page.params_snapshot(),
                 "orientation": self.orientation_page.params_snapshot(),
                 "strain_map": self.strain_map_page.params_snapshot(),
                 "phase_contrast": self.phase_contrast_page.params_snapshot(),
+                "bf_df_preview": self.bf_df_preview_page.params_snapshot(),
+                "dpc": self.dpc_page.params_snapshot(),
+                "parallax": self.parallax_page.params_snapshot(),
+                "ptychography": self.ptychography_page.params_snapshot(),
+                "method_comparison": self.method_comparison_page.params_snapshot(),
             },
+            grid_states=self._grid_states(),
         )
 
     def _apply_project_state(self, state: ProjectState) -> None:
@@ -1391,6 +1420,10 @@ page_params={
             self.workflow_state.set_dataset_role(role, value)
         self._refresh_role_labels()
         self._apply_page_params(state.page_params)
+        for key, grid_state in state.grid_states.items():
+            workspace = self._named_workspaces().get(key)
+            if workspace is not None:
+                workspace.restore_grid_state(grid_state)
         if self.current_file is not None and state.selected_hdf5_path:
             try:
                 node = self.current_file[state.selected_hdf5_path]
@@ -1402,6 +1435,7 @@ page_params={
     def _apply_page_params(self, page_params: dict[str, dict[str, object]]) -> None:
         for key, page in [
             ("virtual_detector", self.virtual_detector_page),
+            ("preprocessing", self.preprocessing_page),
             ("bragg_peaks", self.bragg_peaks_page),
             ("calibration", self.calibration_page),
             ("orientation", self.orientation_page),
@@ -1421,6 +1455,40 @@ page_params={
         if self.current_file_path is not None:
             return self.current_file_path.parent
         return Path.cwd()
+
+    def _named_workspaces(self) -> dict[str, AdaptiveImageWorkspace]:
+        workspaces: dict[str, AdaptiveImageWorkspace] = {}
+        for key, page in self.viewer_pages.items():
+            workspace = self._workspace_for_page(page)
+            if workspace is not None:
+                workspaces[key] = workspace
+        return workspaces
+
+    def _workspace_for_page(self, page: QWidget) -> AdaptiveImageWorkspace | None:
+        if isinstance(page, AdaptiveImageWorkspace):
+            return page
+        for attribute in ("workspace", "viewers", "selected_grid"):
+            workspace = getattr(page, attribute, None)
+            if isinstance(workspace, AdaptiveImageWorkspace):
+                return workspace
+        return page.findChild(AdaptiveImageWorkspace)
+
+    def _grid_states(self) -> dict[str, dict[str, object]]:
+        return {key: workspace.grid_state() for key, workspace in self._named_workspaces().items()}
+
+    def _clear_all_image_workspaces(self) -> None:
+        cleared: set[int] = set()
+        for page in self.viewer_pages.values():
+            if id(page) in cleared:
+                continue
+            cleared.add(id(page))
+            clear_results = getattr(page, "clear_results", None)
+            if callable(clear_results):
+                clear_results()
+                continue
+            workspace = self._workspace_for_page(page)
+            if workspace is not None:
+                workspace.clear_results()
 
     def _filters_for_entry(self, formats: tuple[str, ...]) -> list[str]:
         labels = {

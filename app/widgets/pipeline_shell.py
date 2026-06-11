@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.image_viewer import ImageViewer
 
 
@@ -106,65 +107,27 @@ class DataStatePanel(QGroupBox):
 class MultiViewWorkspace(QWidget):
     def __init__(self, scan_viewer: ImageViewer, diffraction_viewer: ImageViewer) -> None:
         super().__init__()
-        self.viewers = [
-            scan_viewer,
-            diffraction_viewer,
-            ImageViewer(),
-            ImageViewer(),
-        ]
-        self.titles = [
-            "Virtual / Real-space Image",
-            "Diffraction Pattern",
-            "Analysis Result",
-            "Diagnostic / Comparison",
-        ]
-        self.layout_mode = QComboBox()
-        self.layout_mode.addItems(["Single View", "Split View", "Quad View"])
-        self.layout_mode.setCurrentText("Split View")
-        self.layout_mode.currentTextChanged.connect(self._apply_layout)
-        self.grid = QGridLayout()
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setSpacing(5)
-        self.panels = [self._panel(title, viewer) for title, viewer in zip(self.titles, self.viewers)]
-        header = QHBoxLayout()
-        title = QLabel("Main Viewer")
-        title.setObjectName("sectionTitle")
-        header.addWidget(title)
-        header.addStretch(1)
-        header.addWidget(QLabel("Layout"))
-        header.addWidget(self.layout_mode)
+        self.scan_viewer = scan_viewer
+        self.diffraction_viewer = diffraction_viewer
+        self.workspace = AdaptiveImageWorkspace()
+        self.workspace.set_layout("2")
+        self.clear_results()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addLayout(header)
-        layout.addLayout(self.grid, 1)
-        self._apply_layout("Split View")
+        layout.addWidget(self.workspace, 1)
 
-    def _panel(self, title: str, viewer: ImageViewer) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("viewerPanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(5, 5, 5, 5)
-        label = QLabel(title)
-        label.setObjectName("viewerTitle")
-        layout.addWidget(label)
-        layout.addWidget(viewer, 1)
-        return panel
+    def clear_results(self) -> None:
+        self.workspace.set_results([
+            FigureResult("Virtual / Real-space Image", [[0]], key="scan", viewer=self.scan_viewer),
+            FigureResult("Diffraction Pattern", [[0]], key="diffraction", viewer=self.diffraction_viewer),
+            FigureResult("Analysis Result", [[0]], key="analysis"),
+            FigureResult("Diagnostic / Comparison", [[0]], key="diagnostic"),
+        ])
+        self.scan_viewer.clear("Mean real-space image / virtual bright field preview")
+        self.diffraction_viewer.clear("No DataCube loaded.")
 
-    def _apply_layout(self, mode: str) -> None:
-        for panel in self.panels:
-            self.grid.removeWidget(panel)
-            panel.setVisible(False)
-        positions = [(0, 0)]
-        if mode == "Split View":
-            positions = [(0, 0), (0, 1)]
-        elif mode == "Quad View":
-            positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
-        for panel, position in zip(self.panels, positions):
-            self.grid.addWidget(panel, *position)
-            panel.setVisible(True)
-        for index in range(2):
-            self.grid.setRowStretch(index, 1)
-            self.grid.setColumnStretch(index, 1)
+    def update_image(self, key: str, title: str, image, image_kind: str = "intensity") -> None:
+        self.workspace.update_result(key, FigureResult(title, image, key=key, image_kind=image_kind))
 
 
 class ModuleControlPanel(QWidget):
@@ -172,31 +135,27 @@ class ModuleControlPanel(QWidget):
         super().__init__()
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
-        self.controls_host = QVBoxLayout()
-        self.controls_host.setContentsMargins(0, 0, 0, 0)
-        self.controls_host.addWidget(QLabel("Select a module to inspect its parameters."))
+        self.controls_stack = QStackedWidget()
+        self._controls: dict[str, QWidget] = {}
+        self._placeholder = QLabel("Select a module to inspect its parameters.")
+        self._placeholder.setWordWrap(True)
+        self.controls_stack.addWidget(self._placeholder)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         header = QHBoxLayout()
         header.addWidget(self.title, 1)
         layout.addLayout(header)
-        layout.addLayout(self.controls_host, 1)
+        layout.addWidget(self.controls_stack, 1)
 
     def set_module(self, module: RouteModule, controls: QWidget | None) -> None:
         self.title.setText(module.title)
-        while self.controls_host.count():
-            item = self.controls_host.takeAt(0)
-            if item.widget() is not None:
-                item.widget().setParent(None)
         if controls is None:
-            placeholder = QLabel(
-                "This module is represented in the dependency graph. "
-                "Its calculation action can be connected here without changing the main layout."
-            )
-            placeholder.setWordWrap(True)
-            self.controls_host.addWidget(placeholder)
-        else:
-            self.controls_host.addWidget(controls)
+            self.controls_stack.setCurrentWidget(self._placeholder)
+            return
+        if module.key not in self._controls:
+            self._controls[module.key] = controls
+            self.controls_stack.addWidget(controls)
+        self.controls_stack.setCurrentWidget(self._controls[module.key])
 
 
 class ProjectToolbar(QWidget):
@@ -210,9 +169,6 @@ class ProjectToolbar(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("projectToolbar")
-        font = self.font()
-        font.setPointSize(font.pointSize() + 2)
-        self.setFont(font)
         self.structure = QComboBox()
         self.structure.addItems(["Crystalline / Bragg-based", "Amorphous / Diffuse-scattering", "Phase Retrieval / Ptychography"])
         self.goal = QComboBox()
@@ -220,23 +176,17 @@ class ProjectToolbar(QWidget):
         self.goal.currentTextChanged.connect(self.goal_changed)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
-        for text, signal in [
-            ("Project", self.project_clicked),
-            ("Load Data", self.load_clicked),
-        ]:
-            button = QPushButton(text)
-            button.clicked.connect(signal)
-            layout.addWidget(button)
-        layout.addWidget(QLabel("Analysis Route"))
+        layout.addStretch()
+
+        layout.addWidget(QLabel("Analysis Route"), alignment=Qt.AlignRight)
         layout.addWidget(self.structure)
-        layout.addWidget(QLabel("Target"))
-        layout.addWidget(self.goal, 1)
-        save = QPushButton("Save")
-        save.clicked.connect(self.save_clicked)
-        export = QPushButton("Export")
-        export.clicked.connect(self.export_clicked)
-        layout.addWidget(save)
-        layout.addWidget(export)
+
+        layout.addSpacing(20)
+
+        layout.addWidget(QLabel("Target"), alignment=Qt.AlignRight)
+        layout.addWidget(self.goal)
+
+        layout.addStretch()
 
     def set_goals(self, goals: list[str]) -> None:
         current = self.goal.currentText()
