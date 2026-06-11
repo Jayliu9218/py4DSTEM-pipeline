@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
+import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -13,7 +14,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -31,7 +31,7 @@ from app.services.bragg_strain_service import (
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
-from app.widgets.image_grid_viewer import ImageGridViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -186,14 +186,11 @@ class BraggPeaksPage(QWidget):
         self.count_label = QLabel("Peaks: -")
         self.viewer = ImageViewer()
         self.roi_viewer = ImageViewer()
-        self.selected_grid = ImageGridViewer()
+        self.workspace = AdaptiveImageWorkspace()
+        self.selected_grid = self.workspace
         self.full_map_viewer = ImageViewer()
         self.full_map_viewer.set_bragg_sampling_provider(self._sampled_bragg_vector_map)
-        self.visual_tabs = QTabWidget()
-        self.visual_tabs.addTab(self.roi_viewer, "Probe ROI")
-        self.visual_tabs.addTab(self.viewer, "Single Position")
-        self.visual_tabs.addTab(self.selected_grid, "Selected 6 Positions")
-        self.visual_tabs.addTab(self.full_map_viewer, "Full Bragg Vector Map")
+        self.clear_results()
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["index", "qx", "qy", "intensity", "distance"])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -209,6 +206,22 @@ class BraggPeaksPage(QWidget):
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
 
+    def clear_results(self) -> None:
+        self.workspace.set_results([
+            FigureResult("Probe ROI", np.zeros((2, 2)), key="probe-roi", viewer=self.roi_viewer),
+            FigureResult("Single Position", np.zeros((2, 2)), key="single-position", viewer=self.viewer),
+            FigureResult(
+                "Full Bragg Vector Map",
+                np.zeros((2, 2)),
+                key="full-map",
+                viewer=self.full_map_viewer,
+                bragg_sampling_provider=self._sampled_bragg_vector_map,
+            ),
+        ])
+        self.roi_viewer.clear("Run a virtual image first, then select a probe ROI here.")
+        self.viewer.clear("Run current pattern to detect Bragg peaks.")
+        self.full_map_viewer.clear("Run full BraggVectors to display the map.")
+
     def set_cuda_enabled(self, enabled: bool) -> None:
         self.cuda_enabled = enabled
 
@@ -218,7 +231,6 @@ class BraggPeaksPage(QWidget):
             return
         self.roi_viewer.set_image(image)
         self._update_roi_overlay()
-        self.visual_tabs.setCurrentWidget(self.roi_viewer)
         self.log_panel.log("Virtual image sent to Probe ROI selection.")
 
     def refresh_from_datacube(self) -> None:
@@ -364,7 +376,7 @@ class BraggPeaksPage(QWidget):
         self.controls_panel = left
 
         layout = QHBoxLayout(self)
-        layout.addWidget(self.visual_tabs)
+        layout.addWidget(self.workspace)
 
     def _float_input(
         self,
@@ -447,6 +459,11 @@ class BraggPeaksPage(QWidget):
         self.viewer.clear_points()
         if len(result.peaks):
             self.viewer.set_points(result.peaks[:, 0], result.peaks[:, 1])
+        self.workspace.append_result(FigureResult(
+            f"Single Position: {len(result.peaks)} peaks",
+            result.diffraction_pattern,
+            points=result.peaks,
+        ))
         self._fill_table(result.peaks)
         self.count_label.setText(f"Peaks: {len(result.peaks)}")
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
@@ -454,7 +471,6 @@ class BraggPeaksPage(QWidget):
         self.log_panel.process_finished(
             "Bragg calculation", f"single position, {len(result.peaks)} peaks"
         )
-        self.visual_tabs.setCurrentWidget(self.viewer)
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_SINGLE)
 
     def _handle_braggvectors_result(self, result: BraggVectorsResult) -> None:
@@ -464,7 +480,22 @@ class BraggPeaksPage(QWidget):
         self.log_panel.log(f"Full BraggVectors completed: peaks={count}.")
         self.log_panel.process_finished("Bragg calculation", f"full map, peaks={count}")
         self.full_map_viewer.set_image(result.bragg_vector_map)
-        self.visual_tabs.setCurrentWidget(self.full_map_viewer)
+        self.workspace.update_result(
+            "full-map",
+            FigureResult(
+                "Full Bragg Vector Map",
+                result.bragg_vector_map,
+                viewer=self.full_map_viewer,
+                bragg_sampling_provider=self._sampled_bragg_vector_map,
+            ),
+        )
+        for name, image in [
+            ("Peak Count Map", result.quality.peak_count_map),
+            ("Mean Peak Intensity Map", result.quality.mean_intensity_map),
+            ("Max Peak Intensity Map", result.quality.max_intensity_map),
+            ("Detection Failure Mask", result.quality.failure_mask.astype(float)),
+        ]:
+            self.workspace.append_result(FigureResult(name, image))
         self.braggvectors_ready.emit()
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_FULL)
         if self.result_registry is not None:
@@ -517,17 +548,14 @@ class BraggPeaksPage(QWidget):
         self.log_panel.process_finished(
             "Bragg calculation", f"selected counts={result.peak_counts}"
         )
-        self.selected_grid.clear()
-        for index, (position, pattern, peaks, count) in enumerate(
-            zip(result.positions, result.patterns, result.peaks, result.peak_counts)
+        for position, pattern, peaks, count in zip(
+            result.positions, result.patterns, result.peaks, result.peak_counts
         ):
-            self.selected_grid.set_result(
-                index,
+            self.workspace.append_result(FigureResult(
                 f"({position[0]}, {position[1]}) | {count} peaks",
                 pattern,
-                peaks,
-            )
-        self.visual_tabs.setCurrentWidget(self.selected_grid)
+                points=peaks,
+            ))
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_SELECTED)
 
     def _handle_failed(self, message: str) -> None:
@@ -610,7 +638,6 @@ class BraggPeaksPage(QWidget):
             )
             return
         self.roi_pick_points = []
-        self.visual_tabs.setCurrentWidget(self.roi_viewer)
         self.roi_viewer.set_interactive_roi_rect(
             self.roi_rx_start.value(),
             self.roi_rx_end.value(),

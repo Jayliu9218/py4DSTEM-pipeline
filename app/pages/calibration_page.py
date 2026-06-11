@@ -6,6 +6,7 @@ from typing import Callable
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -14,15 +15,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from app.services.bragg_strain_service import BraggStrainService, CalibrationActionResult
+from app.services.bragg_strain_service import (
+    BraggStrainService,
+    CalibrationActionResult,
+    CrystalPixelParams,
+)
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -102,12 +107,20 @@ class CalibrationPage(QWidget):
         self.ellipse_outer = self._float_input(0.1, 100000, 100, unit="px")
         self.sampling_spin = self._int_input(1, 64, 8, unit="x")
         self.pixel_spin = self._float_input(0.000001, 1000, 0.02, decimals=6, unit="A^-1")
+        self.crystal_cif_path = ""
+        self.crystal_path_label = QLabel("Manual FCC crystal")
+        self.crystal_path_label.setWordWrap(True)
+        self.crystal_lattice = self._float_input(0.000001, 1000, 4.08, decimals=5, unit="A")
+        self.crystal_atomic_number = self._int_input(1, 118, 79)
+        self.crystal_k_max = self._float_input(0.000001, 1000, 1.5, decimals=4, unit="A^-1")
         self.rotation_spin = self._float_input(-360, 360, -83, unit="deg")
         self.refresh_button = QPushButton("Check Calibration")
         self.origin_button = QPushButton("Measure Origin")
         self.draw_ellipse_circle_button = QPushButton("Draw Ring Fit ROI")
         self.ellipse_button = QPushButton("Fit Ellipse")
         self.pixel_button = QPushButton("Set Q Pixel Size")
+        self.load_cif_button = QPushButton("Load Crystal CIF")
+        self.fit_pixel_button = QPushButton("Fit Pixel Size From Crystal Reference")
         self.rotation_button = QPushButton("Set QR Rotation")
         self.apply_origin_button = QPushButton("Apply")
         self.apply_ellipse_button = QPushButton("Apply")
@@ -128,6 +141,8 @@ class CalibrationPage(QWidget):
             self.draw_ellipse_circle_button,
             self.ellipse_button,
             self.pixel_button,
+            self.load_cif_button,
+            self.fit_pixel_button,
             self.rotation_button,
             self.apply_origin_button,
             self.apply_ellipse_button,
@@ -137,7 +152,8 @@ class CalibrationPage(QWidget):
             self.validate_button,
             self.reset_button,
         ]
-        self.viewers = QTabWidget()
+        self.viewers = AdaptiveImageWorkspace()
+        self.figure_results: dict[str, FigureResult] = {}
 
         self.refresh_button.clicked.connect(self.refresh_status)
         self.origin_button.clicked.connect(
@@ -181,6 +197,27 @@ class CalibrationPage(QWidget):
                 WorkflowStep.CALIBRATION_PIXEL,
             )
         )
+        self.load_cif_button.clicked.connect(self._load_crystal_cif)
+        self.fit_pixel_button.clicked.connect(
+            lambda: self._run(
+                lambda: self.service.fit_pixel_size_from_crystal(
+                    (
+                        self.ellipse_braggvectors_provider()
+                        if self.ellipse_braggvectors_provider is not None
+                        else self.braggvectors_provider()
+                    ),
+                    CrystalPixelParams(
+                        cif_path=self.crystal_cif_path or None,
+                        lattice_parameter=self.crystal_lattice.value(),
+                        atomic_number=int(self.crystal_atomic_number.value()),
+                        k_max=self.crystal_k_max.value(),
+                        initial_pixel_size=self.pixel_spin.value(),
+                    ),
+                ),
+                "Fit Q pixel size from crystal reference",
+                WorkflowStep.CALIBRATION_PIXEL,
+            )
+        )
         self.apply_pixel_button.clicked.connect(
             lambda: self._apply_single_correction("pixel", "Apply pixel-size correction")
         )
@@ -217,6 +254,13 @@ class CalibrationPage(QWidget):
         self._build_layout()
         self.refresh_transfer_targets()
         self.show_braggvectors_histogram()
+
+    def _load_crystal_cif(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load crystal CIF", "", "CIF files (*.cif)")
+        if path:
+            self.crystal_cif_path = path
+            self.crystal_path_label.setText(path)
+            self.workflow_state.parameters_updated(WorkflowStep.CALIBRATION_PIXEL)
 
     def _build_layout(self) -> None:
         status_group = QGroupBox("Existing Calibration")
@@ -266,6 +310,12 @@ class CalibrationPage(QWidget):
         pixel_layout = QFormLayout(pixel_group)
         pixel_layout.addRow("Q pixel size (A^-1)", self.pixel_spin)
         pixel_layout.addRow("", self.pixel_button)
+        pixel_layout.addRow("crystal source", self.crystal_path_label)
+        pixel_layout.addRow("", self.load_cif_button)
+        pixel_layout.addRow("manual FCC lattice a", self.crystal_lattice)
+        pixel_layout.addRow("atomic number", self.crystal_atomic_number)
+        pixel_layout.addRow("k max", self.crystal_k_max)
+        pixel_layout.addRow("", self.fit_pixel_button)
         pixel_layout.addRow("", self.apply_pixel_button)
 
         rotation_group = QGroupBox("QR Rotation")
@@ -478,6 +528,7 @@ class CalibrationPage(QWidget):
         self.log_panel.log(result.message)
         self.log_panel.process_finished(self.current_process_name, result.message)
         self.viewers.clear()
+        self.figure_results.clear()
         self._set_comparison_tab(result)
         for name, image in result.images.items():
             self._set_viewer_tab(
@@ -620,51 +671,28 @@ class CalibrationPage(QWidget):
         make_current: bool = False,
         overlay: dict[str, float | str] | None = None,
     ) -> None:
-        for index in range(self.viewers.count()):
-            if self.viewers.tabText(index) == name:
-                viewer = self.viewers.widget(index)
-                if isinstance(viewer, ImageViewer):
-                    viewer.set_image(image)
-                    viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
-                    self._apply_overlay(viewer, overlay)
-                    if make_current:
-                        self.viewers.setCurrentIndex(index)
-                return
-        viewer = ImageViewer()
-        viewer.set_image(image)
+        provider = None
         if "bragg vector" in name.lower() or "braggvectors" in name.lower():
             mode = "cal" if "calibrated" in name.lower() or "corrected" in name.lower() else "raw"
-            viewer.set_bragg_sampling_provider(
-                lambda sampling, mode=mode: np.asarray(
+            provider = lambda sampling, mode=mode: np.asarray(
                     self.braggvectors_provider().histogram(mode=mode, sampling=sampling).data
                 )
-            )
-        viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
-        self._apply_overlay(viewer, overlay)
-        self.viewers.addTab(viewer, name)
-        if make_current:
-            self.viewers.setCurrentWidget(viewer)
+        self.figure_results[name] = FigureResult(
+            name, image, overlay=overlay, bragg_sampling_provider=provider, key=name
+        )
+        self.viewers.set_results(list(self.figure_results.values()))
+        for panel in self.viewers.panels:
+            panel.viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
 
     def _set_comparison_tab(self, result: CalibrationActionResult) -> None:
         pairs = self._comparison_images(result.images)
         if len(pairs) < 2:
             return
-        panel = QWidget()
-        layout = QHBoxLayout(panel)
-        layout.setContentsMargins(2, 2, 2, 2)
         for name, image in pairs[:2]:
-            child = QWidget()
-            child_layout = QVBoxLayout(child)
-            child_layout.setContentsMargins(2, 2, 2, 2)
-            label = QLabel(name)
-            viewer = ImageViewer()
-            viewer.set_image(image)
-            self._apply_overlay(viewer, result.overlays.get(name))
-            child_layout.addWidget(label)
-            child_layout.addWidget(viewer, 1)
-            layout.addWidget(child, 1)
-        self.viewers.addTab(panel, "Comparison")
-        self.viewers.setCurrentWidget(panel)
+            self.figure_results[name] = FigureResult(
+                name, image, overlay=result.overlays.get(name), key=name
+            )
+        self.viewers.set_results(list(self.figure_results.values()))
 
     def _comparison_images(self, images: dict[str, object]) -> list[tuple[str, object]]:
         if len(images) < 2:
@@ -782,8 +810,7 @@ class CalibrationPage(QWidget):
         )
 
     def _current_image_viewer(self) -> ImageViewer | None:
-        widget = self.viewers.currentWidget()
-        return widget if isinstance(widget, ImageViewer) else None
+        return self.viewers.panels[0].viewer if self.viewers.panels else None
 
     def _set_default_ellipse_center(self, image) -> None:
         if self.ellipse_center_x.value() or self.ellipse_center_y.value():
@@ -805,6 +832,10 @@ class CalibrationPage(QWidget):
             "sampling": self.sampling_spin.value(),
             "q_pixel_size": self.pixel_spin.value(),
             "qr_rotation": self.rotation_spin.value(),
+            "crystal_cif_path": self.crystal_cif_path,
+            "crystal_lattice_parameter": self.crystal_lattice.value(),
+            "crystal_atomic_number": int(self.crystal_atomic_number.value()),
+            "crystal_k_max": self.crystal_k_max.value(),
             "transfer_correction": self.transfer_correction.currentData(),
             "transfer_target": self.transfer_target.currentText(),
         }
@@ -819,11 +850,16 @@ class CalibrationPage(QWidget):
             ("ellipse_center_y", self.ellipse_center_y),
             ("q_pixel_size", self.pixel_spin),
             ("qr_rotation", self.rotation_spin),
+            ("crystal_lattice_parameter", self.crystal_lattice),
+            ("crystal_atomic_number", self.crystal_atomic_number),
+            ("crystal_k_max", self.crystal_k_max),
         ]:
             if key in params:
                 spin.setValue(float(params[key]))
         if "sampling" in params:
             self.sampling_spin.setValue(int(params["sampling"]))
+        self.crystal_cif_path = str(params.get("crystal_cif_path", self.crystal_cif_path))
+        self.crystal_path_label.setText(self.crystal_cif_path or "Manual FCC crystal")
         if "transfer_correction" in params:
             index = self.transfer_correction.findData(str(params["transfer_correction"]))
             if index >= 0:

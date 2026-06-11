@@ -21,5 +21,6 @@ env/
 packaging/installer/
 
 data/
+design/
 
 notebooks/

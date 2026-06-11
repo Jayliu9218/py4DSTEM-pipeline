@@ -11,7 +11,7 @@ class Hdf5TreeWidget(QTreeWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setHeaderLabels(["HDF5 tree"])
-        self.itemClicked.connect(self._emit_selected_node)
+        self.currentItemChanged.connect(self._emit_selected_node)
         self.info_root_item: QTreeWidgetItem | None = None
 
     def populate(self, hdf5_file: h5py.File) -> None:
@@ -47,7 +47,9 @@ class Hdf5TreeWidget(QTreeWidget):
             if isinstance(node, h5py.Group):
                 self._add_children(item, node, node_path)
 
-    def _emit_selected_node(self, item: QTreeWidgetItem) -> None:
+    def _emit_selected_node(self, item: QTreeWidgetItem | None, *_args) -> None:
+        if item is None:
+            return
         hdf5_path = item.data(0, 256)
         node_kind = item.data(0, 257)
         if hdf5_path and node_kind:

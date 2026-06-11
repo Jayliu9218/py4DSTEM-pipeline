@@ -105,6 +105,19 @@ class StrainMapParams:
     roi_rx_end: int = 1
     roi_ry_start: int = 0
     roi_ry_end: int = 1
+    manual_g1_x: float = 1.0
+    manual_g1_y: float = 0.0
+    manual_g2_x: float = 0.0
+    manual_g2_y: float = 1.0
+
+
+@dataclass(frozen=True)
+class CrystalPixelParams:
+    cif_path: str | None = None
+    lattice_parameter: float = 4.08
+    atomic_number: int = 79
+    k_max: float = 1.5
+    initial_pixel_size: float = 0.02
 
 
 @dataclass(frozen=True)
@@ -448,6 +461,49 @@ class BraggStrainService:
             perf_counter() - start,
         )
 
+    def fit_pixel_size_from_crystal(
+        self,
+        reference_braggvectors: Any | None,
+        params: CrystalPixelParams,
+    ) -> CalibrationActionResult:
+        source = self._require_braggvectors(reference_braggvectors)
+        if params.initial_pixel_size <= 0 or params.lattice_parameter <= 0 or params.k_max <= 0:
+            raise BraggStrainServiceError("Crystal and initial pixel-size values must be positive.")
+        start = perf_counter()
+        try:
+            py4DSTEM = self._py4dstem()
+            if params.cif_path:
+                crystal = py4DSTEM.process.diffraction.Crystal.from_CIF(Path(params.cif_path))
+            else:
+                positions = np.array(
+                    [[0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]]
+                )
+                crystal = py4DSTEM.process.diffraction.Crystal(
+                    positions, params.atomic_number, params.lattice_parameter
+                )
+            crystal.calculate_structure_factors(params.k_max)
+            source.calibration.set_Q_pixel_size(params.initial_pixel_size)
+            source.calibration.set_Q_pixel_units("A^-1")
+            source.setcal()
+            crystal.calibrate_pixel_size(
+                bragg_peaks=source,
+                bragg_k_power=2.0,
+                plot_result=False,
+            )
+            fitted = float(source.calibration.get_Q_pixel_size())
+            images = {
+                "reference raw Bragg vector map": np.asarray(source.histogram(mode="raw").data),
+                "reference calibrated Bragg vector map": np.asarray(source.histogram(mode="cal").data),
+            }
+        except (AttributeError, TypeError, ValueError, RuntimeError, OSError) as exc:
+            raise BraggStrainServiceError(f"Crystal pixel-size fitting failed: {exc}") from exc
+        return CalibrationActionResult(
+            f"Crystal pixel-size fit complete: {fitted:g} A^-1. Transfer it to the target after review.",
+            images,
+            perf_counter() - start,
+            measurements={"pixel_size": fitted},
+        )
+
     def set_qr_rotation(
         self,
         braggvectors: Any | None,
@@ -570,6 +626,13 @@ class BraggStrainService:
         except (AttributeError, TypeError):
             status = CalibrationStatus("missing", "missing", "missing", "missing", False)
             applied = []
+        required_applied = {"center", "ellipse", "pixel", "rotate"}
+        if not status.complete or not required_applied.issubset(set(applied)):
+            missing = sorted(required_applied - set(applied))
+            raise BraggStrainServiceError(
+                "Strain calibration is not ready. Measure and apply origin, ellipse, "
+                f"pixel size, and rotation. Missing applied corrections: {', '.join(missing) or 'metadata'}."
+            )
         return CalibrationActionResult(
             "Calibration validation complete: "
             f"origin={status.origin}, ellipse={status.ellipse}, pixel={status.pixel}, "
@@ -678,6 +741,11 @@ class BraggStrainService:
             if not valid.any():
                 raise BraggStrainServiceError("No valid fitted g1/g2 points are available.")
             return valid
+        if params.reference_mode == "manual_g1g2":
+            return (
+                np.asarray([params.manual_g1_x, params.manual_g1_y], dtype=float),
+                np.asarray([params.manual_g2_x, params.manual_g2_y], dtype=float),
+            )
 
         scan_shape = self._scan_shape(braggvectors.raw, braggvectors)
         if not (

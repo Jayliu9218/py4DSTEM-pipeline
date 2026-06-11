@@ -19,6 +19,10 @@ class VirtualDetectorParams:
     center_y: float
     inner_radius: float
     outer_radius: float
+    roi_rx_start: int = 0
+    roi_rx_end: int = 1
+    roi_ry_start: int = 0
+    roi_ry_end: int = 1
 
 
 @dataclass(frozen=True)
@@ -32,10 +36,15 @@ class VirtualDetectorService:
     BRIGHT_FIELD = "Bright Field"
     ANNULAR_DARK_FIELD = "Annular Dark Field"
     CUSTOM_ANNULAR = "Custom Annular Detector"
+    OFF_AXIS_DARK_FIELD = "Off-axis Dark Field"
+    VIRTUAL_DIFFRACTION = "Virtual Diffraction"
 
     def compute(self, source: Any, params: VirtualDetectorParams) -> VirtualDetectorResult:
         start = perf_counter()
         self._validate_params(params)
+        if params.mode == self.VIRTUAL_DIFFRACTION:
+            image = self.compute_virtual_diffraction(source, params)
+            return VirtualDetectorResult(np.asarray(image), perf_counter() - start, params.mode)
 
         try:
             image = self._compute_with_py4dstem(source, params)
@@ -53,7 +62,7 @@ class VirtualDetectorService:
         if not hasattr(source, "get_virtual_image"):
             raise VirtualDetectorServiceError("Source does not expose py4DSTEM virtual imaging.")
 
-        if params.mode == self.BRIGHT_FIELD:
+        if params.mode in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD}:
             virtual_image = source.get_virtual_image(
                 mode="circle",
                 geometry=((params.center_x, params.center_y), params.outer_radius),
@@ -74,8 +83,32 @@ class VirtualDetectorService:
 
         return np.asarray(getattr(virtual_image, "data", virtual_image))
 
+    def compute_virtual_diffraction(self, source: Any, params: VirtualDetectorParams) -> np.ndarray:
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        shape = tuple(int(dim) for dim in getattr(data, "shape", ()))
+        if len(shape) != 4:
+            raise VirtualDetectorServiceError("A 4D DataCube is required for virtual diffraction.")
+        if not (
+            0 <= params.roi_rx_start < params.roi_rx_end <= shape[0]
+            and 0 <= params.roi_ry_start < params.roi_ry_end <= shape[1]
+        ):
+            raise VirtualDetectorServiceError(f"Real-space ROI must fit inside scan shape {shape[:2]}.")
+        if hasattr(source, "get_virtual_diffraction"):
+            mask = np.zeros(shape[:2], dtype=bool)
+            mask[params.roi_rx_start:params.roi_rx_end, params.roi_ry_start:params.roi_ry_end] = True
+            result = source.get_virtual_diffraction(method="mean", mask=mask, returncalc=True)
+            return np.asarray(getattr(result, "data", result))
+        return np.asarray(
+            data[
+                params.roi_rx_start:params.roi_rx_end,
+                params.roi_ry_start:params.roi_ry_end,
+                :,
+                :,
+            ]
+        ).mean(axis=(0, 1))
+
     def _compute_with_array(self, source: Any, params: VirtualDetectorParams) -> np.ndarray:
-        data = getattr(source, "data", source)
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         shape = getattr(data, "shape", None)
         if shape is None or len(tuple(shape)) != 4:
             raise VirtualDetectorServiceError("A 4D DataCube or 4D HDF5 dataset is required.")
@@ -102,7 +135,7 @@ class VirtualDetectorService:
         x, y = np.ogrid[:qx_size, :qy_size]
         radius = np.sqrt((x - params.center_x) ** 2 + (y - params.center_y) ** 2)
 
-        if params.mode == self.BRIGHT_FIELD:
+        if params.mode in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD}:
             return radius <= params.outer_radius
         return (radius >= params.inner_radius) & (radius <= params.outer_radius)
 
@@ -111,11 +144,13 @@ class VirtualDetectorService:
             self.BRIGHT_FIELD,
             self.ANNULAR_DARK_FIELD,
             self.CUSTOM_ANNULAR,
+            self.OFF_AXIS_DARK_FIELD,
+            self.VIRTUAL_DIFFRACTION,
         }:
             raise VirtualDetectorServiceError(f"Unsupported detector mode: {params.mode}")
-        if params.outer_radius <= 0:
+        if params.mode != self.VIRTUAL_DIFFRACTION and params.outer_radius <= 0:
             raise VirtualDetectorServiceError("outer_radius must be greater than 0.")
-        if params.mode != self.BRIGHT_FIELD and params.inner_radius < 0:
+        if params.mode not in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD, self.VIRTUAL_DIFFRACTION} and params.inner_radius < 0:
             raise VirtualDetectorServiceError("inner_radius must be 0 or greater.")
-        if params.mode != self.BRIGHT_FIELD and params.inner_radius >= params.outer_radius:
+        if params.mode not in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD, self.VIRTUAL_DIFFRACTION} and params.inner_radius >= params.outer_radius:
             raise VirtualDetectorServiceError("inner_radius must be smaller than outer_radius.")

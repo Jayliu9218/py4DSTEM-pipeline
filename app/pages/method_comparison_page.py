@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.workflow_state import WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel
 
 
@@ -34,17 +34,7 @@ class MethodComparisonPage(QWidget):
         self.log_panel = log_panel
         self.workflow_state = workflow_state
 
-        self.dpc_viewer = ImageViewer()
-        self.dpc_viewer.setMinimumSize(0, 0)
-        self.dpc_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.parallax_viewer = ImageViewer()
-        self.parallax_viewer.setMinimumSize(0, 0)
-        self.parallax_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.ptychography_viewer = ImageViewer()
-        self.ptychography_viewer.setMinimumSize(0, 0)
-        self.ptychography_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.workspace = AdaptiveImageWorkspace()
 
         self.refresh_button = QPushButton("Refresh Results")
         self.refresh_button.clicked.connect(self._refresh)
@@ -64,21 +54,9 @@ class MethodComparisonPage(QWidget):
         layout.addStretch(1)
         self.controls_panel = controls
 
-        dpc_label = QLabel("DPC / CoM")
-        dpc_label.setObjectName("viewerTitle")
-        parallax_label = QLabel("Parallax")
-        parallax_label.setObjectName("viewerTitle")
-        ptychography_label = QLabel("Ptychography")
-        ptychography_label.setObjectName("viewerTitle")
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(dpc_label)
-        layout.addWidget(self.dpc_viewer, 1)
-        layout.addWidget(parallax_label)
-        layout.addWidget(self.parallax_viewer, 1)
-        layout.addWidget(ptychography_label)
-        layout.addWidget(self.ptychography_viewer, 1)
+        layout.addWidget(self.workspace, 1)
 
     def _refresh(self) -> None:
         dpc = self.dpc_result_provider()
@@ -87,29 +65,23 @@ class MethodComparisonPage(QWidget):
             if image is None:
                 image = dpc.images.get("Phase")
             if image is not None:
-                self.dpc_viewer.set_image(np.asarray(image))
+                self.workspace.update_result("dpc", FigureResult("DPC / CoM", np.asarray(image)))
             else:
                 first_image = next(iter(dpc.images.values()), None)
                 if first_image is not None:
-                    self.dpc_viewer.set_image(np.asarray(first_image))
-        else:
-            self.dpc_viewer.clear("No DPC result")
+                    self.workspace.update_result("dpc", FigureResult("DPC / CoM", np.asarray(first_image)))
 
         parallax = self.parallax_result_provider()
         if parallax is not None:
             for name, image in parallax.images.items():
-                self.parallax_viewer.set_image(np.asarray(image))
+                self.workspace.update_result("parallax", FigureResult("Parallax", np.asarray(image)))
                 break
-        else:
-            self.parallax_viewer.clear("No Parallax result")
 
         ptychography = self.ptychography_result_provider()
         if ptychography is not None:
             for name, image in ptychography.images.items():
-                self.ptychography_viewer.set_image(np.asarray(image))
+                self.workspace.update_result("ptychography", FigureResult("Ptychography", np.asarray(image)))
                 break
-        else:
-            self.ptychography_viewer.clear("No Ptychography result")
 
         has_any = dpc is not None or parallax is not None or ptychography is not None
         if has_any:

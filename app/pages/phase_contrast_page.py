@@ -29,7 +29,7 @@ from app.services.phase_contrast_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
-from app.widgets.image_viewer import ImageViewer
+from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.progress_stream import ProgressStream
@@ -129,9 +129,7 @@ class PhaseContrastPage(QWidget):
         self.run_button = QPushButton("Reconstruct")
         self.run_button.clicked.connect(self._run)
 
-        self.viewer = ImageViewer()
-        self.viewer.setMinimumSize(0, 0)
-        self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.workspace = AdaptiveImageWorkspace()
 
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
@@ -225,7 +223,7 @@ class PhaseContrastPage(QWidget):
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(self.viewer, 1)
+        main_layout.addWidget(self.workspace, 1)
 
     def _sync_method_params(self, method: str) -> None:
         for key, widget in self._param_widgets.items():
@@ -309,16 +307,9 @@ class PhaseContrastPage(QWidget):
         if result.rotation_degrees is not None:
             self.log_panel.log(f"Estimated rotation: {result.rotation_degrees:.1f} degrees")
 
-        if result.method == PhaseContrastService.DPC:
-            image = result.images.get("Complex CoM")
-            if image is None:
-                image = result.images.get("Phase")
+        for name, image in result.images.items():
             if image is not None:
-                self.viewer.set_image(image)
-        else:
-            for name, image in result.images.items():
-                self.viewer.set_image(image)
-                break
+                self.workspace.append_result(FigureResult(f"{result.method}: {name}", image))
 
         self.phase_contrast_ready.emit(result)
         self.workflow_state.mark_completed(self.current_process_step)
