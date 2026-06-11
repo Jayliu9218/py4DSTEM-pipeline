@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class Py4DSTEMServiceError(Exception):
@@ -46,8 +49,15 @@ class Py4DSTEMService:
         self.file_path = path
         try:
             self.root = py4DSTEM.read(path, tree=True, verbose=False)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.root = None
+            raise Py4DSTEMServiceError(
+                "py4DSTEM could not read this file as a py4DSTEM object. "
+                "The raw HDF5 tree can still be browsed."
+            ) from exc
         except Exception as exc:
             self.root = None
+            logger.exception("Unexpected error reading py4DSTEM file")
             raise Py4DSTEMServiceError(
                 "py4DSTEM could not read this file as a py4DSTEM object. "
                 "The raw HDF5 tree can still be browsed."
@@ -82,19 +92,24 @@ class Py4DSTEMService:
                 tree=False,
                 verbose=False,
             )
+        except (AttributeError, OSError, ValueError, RuntimeError) as exc:
+            raise Py4DSTEMServiceError(
+                "py4DSTEM could not load this node as a DataCube. "
+                "Select a py4DSTEM DataCube group or a 4D HDF5 dataset."
+            ) from exc
         except Exception as exc:
+            logger.exception("Unexpected error loading py4DSTEM DataCube")
             raise Py4DSTEMServiceError(
                 "py4DSTEM could not load this node as a DataCube. "
                 "Select a py4DSTEM DataCube group or a 4D HDF5 dataset."
             ) from exc
 
         if not self.is_datacube(obj):
-            pass
-            """
-            raise Py4DSTEMServiceError(
-                f"The selected py4DSTEM object is {type(obj).__name__}, not a DataCube."
+            logger.warning(
+                "Loaded object is %s, not a DataCube. "
+                "Attempting to continue, but some operations may fail.",
+                type(obj).__name__,
             )
-            """
 
         shape = self.get_datacube_shape(obj)
         info = DataCubeInfo(
@@ -121,7 +136,10 @@ class Py4DSTEMService:
                 tree=False,
                 verbose=False,
             )
+        except (AttributeError, OSError, ValueError, RuntimeError) as exc:
+            raise Py4DSTEMServiceError(f"py4DSTEM could not load reference node {datapath}.") from exc
         except Exception as exc:
+            logger.exception("Unexpected error loading py4DSTEM reference node %s", datapath)
             raise Py4DSTEMServiceError(f"py4DSTEM could not load reference node {datapath}.") from exc
 
     def load_raw_4d_array(self, data: Any, datapath: str) -> DataCubeInfo:
@@ -173,7 +191,8 @@ class Py4DSTEMService:
                 returncalc=True,
             )
             return np.asarray(getattr(virtual_image, "data", virtual_image))
-        except Exception:
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            logger.debug("get_virtual_image failed, falling back to raw sum", exc_info=True)
             data = np.asarray(self.datacube.data)
             return data.sum(axis=(2, 3))
 
@@ -195,7 +214,10 @@ class Py4DSTEMService:
                 dp=dp_mean,
                 plot=False,
             )
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            raise Py4DSTEMServiceError(f"Could not measure probe geometry: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error measuring probe geometry")
             raise Py4DSTEMServiceError(f"Could not measure probe geometry: {exc}") from exc
 
         geometry = ProbeGeometry(
@@ -238,7 +260,7 @@ class Py4DSTEMService:
     def _py4dstem(self):
         try:
             return import_module("py4DSTEM")
-        except Exception as exc:
+        except ImportError as exc:
             raise Py4DSTEMServiceError(
                 "py4DSTEM could not be imported in this environment. "
                 "The HDF5 file is open, but py4DSTEM-specific loading is unavailable. "

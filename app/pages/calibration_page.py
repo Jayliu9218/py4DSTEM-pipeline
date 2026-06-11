@@ -695,14 +695,33 @@ class CalibrationPage(QWidget):
     def _apply_overlay(self, viewer: ImageViewer, overlay: dict[str, float | str] | None) -> None:
         if overlay is None:
             return
-        if overlay.get("kind") == "circle":
+        kind = overlay.get("kind")
+        if kind == "circle":
             viewer.set_circle_overlay(
                 float(overlay.get("x", 0.0)),
                 float(overlay.get("y", 0.0)),
                 float(overlay.get("r", 0.0)),
                 color="r",
             )
-        elif overlay.get("kind") == "ellipse":
+        elif kind == "ring":
+            viewer.clear_overlays()
+            viewer.add_ring_overlay(
+                float(overlay.get("x", 0.0)),
+                float(overlay.get("y", 0.0)),
+                float(overlay.get("inner_radius", 0.0)),
+                float(overlay.get("outer_radius", 0.0)),
+                color="r",
+            )
+            if "a" in overlay and "b" in overlay:
+                viewer.add_ellipse_overlay(
+                    float(overlay.get("x", 0.0)),
+                    float(overlay.get("y", 0.0)),
+                    float(overlay.get("a", 0.0)),
+                    float(overlay.get("b", 0.0)),
+                    float(overlay.get("theta", 0.0)),
+                    color="c",
+                )
+        elif kind == "ellipse":
             viewer.set_ellipse_overlay(
                 float(overlay.get("x", 0.0)),
                 float(overlay.get("y", 0.0)),

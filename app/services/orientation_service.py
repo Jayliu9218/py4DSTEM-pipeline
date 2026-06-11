@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -7,6 +8,8 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class OrientationServiceError(Exception):
@@ -58,7 +61,10 @@ class OrientationService:
         try:
             py4DSTEM = self._py4dstem()
             self.crystal = py4DSTEM.process.diffraction.Crystal.from_CIF(path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise OrientationServiceError(f"Could not load crystal structure: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error loading crystal structure")
             raise OrientationServiceError(f"Could not load crystal structure: {exc}") from exc
         self.orientation_map = None
         return str(path)
@@ -82,7 +88,10 @@ class OrientationService:
                 CUDA=params.cuda,
                 progress_bar=False,
             )
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            raise OrientationServiceError(f"Orientation plan failed: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error in orientation plan")
             raise OrientationServiceError(f"Orientation plan failed: {exc}") from exc
         return perf_counter() - start
 
@@ -118,7 +127,10 @@ class OrientationService:
             import matplotlib.pyplot as plt
 
             plt.close(fig)
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            raise OrientationServiceError(f"Orientation matching failed: {exc}") from exc
         except Exception as exc:
+            logger.exception("Unexpected error in orientation matching")
             raise OrientationServiceError(f"Orientation matching failed: {exc}") from exc
         self.orientation_map = orientation_map
         quality = self.orientation_quality(orientation_map, braggvectors, preview)
@@ -188,13 +200,13 @@ class OrientationService:
             if value is None and hasattr(obj, "get"):
                 try:
                     value = obj.get(name)
-                except Exception:
+                except (TypeError, KeyError, AttributeError):
                     value = None
             if value is None:
                 continue
             try:
                 array = np.asarray(getattr(value, "data", value), dtype=float)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
             if array.ndim == 2:
                 return array
@@ -204,23 +216,60 @@ class OrientationService:
 
     def _peak_count_map(self, braggvectors: Any | None) -> np.ndarray | None:
         raw = getattr(braggvectors, "raw", None)
-        if raw is None or not hasattr(raw, "shape"):
+        if raw is None:
             return None
-        shape = tuple(int(dim) for dim in raw.shape[:2])
+        shape = self._scan_shape(raw, braggvectors)
         counts = np.zeros(shape, dtype=float)
         try:
             for rx in range(shape[0]):
                 for ry in range(shape[1]):
                     data = getattr(raw[rx, ry], "data", raw[rx, ry])
                     counts[rx, ry] = len(data)
-        except Exception:
+        except (AttributeError, TypeError, IndexError):
             return None
         return counts
+
+    def _scan_shape(self, raw: Any, braggvectors: Any | None = None) -> tuple[int, int]:
+        if braggvectors is not None:
+            for attr in ("Rshape", "shape", "scan_shape"):
+                val = getattr(braggvectors, attr, None)
+                if val is not None:
+                    try:
+                        return tuple(int(dim) for dim in tuple(val)[:2])
+                    except Exception:
+                        pass
+        for obj in (raw, getattr(raw, "_data", None)):
+            if obj is None:
+                continue
+            for attr in ("shape", "scan_shape"):
+                val = getattr(obj, attr, None)
+                if val is not None:
+                    try:
+                        return tuple(int(dim) for dim in tuple(val)[:2])
+                    except Exception:
+                        pass
+        if braggvectors is not None:
+            try:
+                histogram = braggvectors.histogram(mode="raw")
+                data = getattr(histogram, "data", histogram)
+                shape = getattr(data, "shape", None)
+                if shape is not None:
+                    return tuple(int(dim) for dim in tuple(shape)[:2])
+            except Exception:
+                pass
+            try:
+                rows = len(raw)
+                cols = len(raw[0]) if rows else 0
+                if rows > 0 and cols > 0:
+                    return rows, cols
+            except Exception:
+                pass
+        raise OrientationServiceError("Could not determine scan shape from BraggVectors raw data.")
 
     def _py4dstem(self):
         try:
             return import_module("py4DSTEM")
-        except Exception as exc:
+        except ImportError as exc:
             raise OrientationServiceError(
                 "py4DSTEM could not be imported in this environment."
             ) from exc
