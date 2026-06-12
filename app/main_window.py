@@ -50,6 +50,7 @@ from app.pages.rdf_page import RDFPage
 from app.pages.fem_page import FEMPage
 from app.pages.amorphous_strain_page import AmorphousStrainPage
 from app.services.phase_contrast_service import PhaseContrastResult, PhaseContrastService
+from app.services.parallax_service import ParallaxService
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
@@ -209,12 +210,48 @@ class MainWindow(QMainWindow):
             stage_mode="all",
         )
         self.dpc_page = self.dpc_reconstruction_page
-        self.parallax_page = ParallaxPage(
+        self.parallax_service = ParallaxService()
+        self.parallax_bf_page = ParallaxPage(
             source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
+            service=self.parallax_service,
+            stage_mode="bf",
         )
+        self.parallax_alignment_page = ParallaxPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.parallax_service,
+            stage_mode="alignment",
+        )
+        self.parallax_review_page = ParallaxPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.parallax_service,
+            stage_mode="review",
+        )
+        self.parallax_advanced_page = ParallaxPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.parallax_service,
+            stage_mode="advanced",
+        )
+        self.parallax_export_page = ParallaxPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.parallax_service,
+            stage_mode="export",
+        )
+        self.parallax_page = self.parallax_alignment_page
         self.ptychography_page = PtychographyPage(
             source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
@@ -275,7 +312,8 @@ class MainWindow(QMainWindow):
         self.log_panel.log("Application started.")
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
         self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
-        self.parallax_page.parallax_result_ready.connect(self._store_parallax_result)
+        self.parallax_review_page.parallax_result_ready.connect(self._store_parallax_result)
+        self.parallax_advanced_page.parallax_result_ready.connect(self._store_parallax_result)
         self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
@@ -404,7 +442,12 @@ class MainWindow(QMainWindow):
             "dpc_review": self.dpc_review_page,
             "dpc": self.dpc_reconstruction_page,
             "dpc_legacy": self.dpc_legacy_page,
-            "parallax": self.parallax_page,
+            "parallax_bf": self.parallax_bf_page,
+            "parallax_alignment": self.parallax_alignment_page,
+            "parallax_review": self.parallax_review_page,
+            "parallax_advanced": self.parallax_advanced_page,
+            "parallax_export": self.parallax_export_page,
+            "parallax": self.parallax_alignment_page,
             "ptychography": self.ptychography_page,
             "method_comparison": self.method_comparison_page,
             "radial_profile": self.radial_profile_page,
@@ -673,6 +716,40 @@ class MainWindow(QMainWindow):
                         prerequisite="dpc",
                     ),
                 ]
+            elif goal == "Parallax":
+                modules = [
+                    common_data,
+                    RouteModule(
+                        "parallax_bf", "BF Disk & Virtual BF", "parallax_bf",
+                        "Target DataCube.",
+                        "Reviewed and explicitly accepted bright-field disk mask.",
+                        WorkflowStep.PARALLAX_BF_ACCEPT, "data_setup",
+                    ),
+                    RouteModule(
+                        "parallax_alignment", "Parallax Alignment", "parallax_alignment",
+                        "Accepted BF disk mask.",
+                        "Core cross-correlation Parallax alignment.",
+                        WorkflowStep.PARALLAX_ALIGNMENT, "parallax_bf",
+                    ),
+                    RouteModule(
+                        "parallax_review", "Alignment Review", "parallax_review",
+                        "Completed Parallax alignment.",
+                        "Reviewed shifts and explicitly accepted aligned BF result.",
+                        WorkflowStep.PARALLAX_REVIEW, "parallax_alignment",
+                    ),
+                    RouteModule(
+                        "parallax_advanced", "Advanced Reconstruction", "parallax_advanced",
+                        "Accepted alignment review.",
+                        "Optional subpixel reconstruction and expert aberration processing.",
+                        WorkflowStep.PARALLAX_ADVANCED, "parallax_review",
+                    ),
+                    RouteModule(
+                        "export", "Export", "parallax_export",
+                        "Accepted core alignment or advanced reconstruction.",
+                        "Registered results and an explicitly saved Parallax package.",
+                        prerequisite="parallax_review",
+                    ),
+                ]
             else:
                 modules = [
                     common_data,
@@ -783,14 +860,22 @@ class MainWindow(QMainWindow):
                 if goal == "DPC / CoM"
                 else self.dpc_legacy_page.controls_panel
             ),
-            "parallax": self.parallax_page.controls_panel,
+            "parallax_bf": self.parallax_bf_page.controls_panel,
+            "parallax_alignment": self.parallax_alignment_page.controls_panel,
+            "parallax_review": self.parallax_review_page.controls_panel,
+            "parallax_advanced": self.parallax_advanced_page.controls_panel,
+            "parallax": self.parallax_alignment_page.controls_panel,
             "ptychography": self.ptychography_page.controls_panel,
             "method_comparison": self.method_comparison_page.controls_panel,
             "radial_profile": self.radial_profile_page.controls_panel,
             "amorphous_analysis": self.amorphous_strain_page.controls_panel if goal == "Amorphous Strain" else (
                 self.rdf_page.controls_panel if goal == "RDF" else self.fem_page.controls_panel
             ),
-            "export": self.export_controls,
+            "export": (
+                self.parallax_export_page.controls_panel
+                if goal == "Parallax"
+                else self.export_controls
+            ),
         }.get(key)
 
     def _build_role_panel(self) -> QWidget:
@@ -913,6 +998,7 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
             self.dpc_service.reset_dpc_workflow()
+            self.parallax_service.reset()
             self.workflow_state.data_source_updated()
             self.py4dstem_service.defer_open_file(file_path)
             self.log_panel.log(f"Opened file: {file_path}")
@@ -1465,6 +1551,7 @@ class MainWindow(QMainWindow):
         self.workflow_state.set_dataset_role(role, selected_path)
         if role == "target_datacube" and previous_target != selected_path:
             self.dpc_service.reset_dpc_workflow()
+            self.parallax_service.reset()
             if previous_target is None:
                 self._clear_all_image_workspaces(exclude_keys={"preprocess"})
             else:
@@ -1551,6 +1638,11 @@ class MainWindow(QMainWindow):
                 "dpc_reconstruction": self.dpc_reconstruction_page.params_snapshot(),
                 "dpc_legacy": self.dpc_legacy_page.params_snapshot(),
                 "parallax": self.parallax_page.params_snapshot(),
+                "parallax_bf": self.parallax_bf_page.params_snapshot(),
+                "parallax_alignment": self.parallax_alignment_page.params_snapshot(),
+                "parallax_review": self.parallax_review_page.params_snapshot(),
+                "parallax_advanced": self.parallax_advanced_page.params_snapshot(),
+                "parallax_export": self.parallax_export_page.params_snapshot(),
                 "ptychography": self.ptychography_page.params_snapshot(),
                 "method_comparison": self.method_comparison_page.params_snapshot(),
             },
@@ -1593,10 +1685,20 @@ class MainWindow(QMainWindow):
             ("orientation", self.orientation_page),
             ("strain_map", self.strain_map_page),
             ("bf_df_preview", self.bf_df_preview_page),
-            ("parallax", self.parallax_page),
             ("ptychography", self.ptychography_page),
         ]:
             params = page_params.get(key)
+            if params:
+                page.apply_params_snapshot(params)
+        legacy_parallax = page_params.get("parallax", {})
+        for key, page in [
+            ("parallax_bf", self.parallax_bf_page),
+            ("parallax_alignment", self.parallax_alignment_page),
+            ("parallax_review", self.parallax_review_page),
+            ("parallax_advanced", self.parallax_advanced_page),
+            ("parallax_export", self.parallax_export_page),
+        ]:
+            params = page_params.get(key) or legacy_parallax
             if params:
                 page.apply_params_snapshot(params)
         legacy_dpc = page_params.get("dpc", {})
