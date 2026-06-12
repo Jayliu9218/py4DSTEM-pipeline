@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import h5py
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 
@@ -11,19 +11,26 @@ class Hdf5TreeWidget(QTreeWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setHeaderLabels(["HDF5 tree"])
+        self.setTextElideMode(Qt.ElideMiddle)
         self.currentItemChanged.connect(self._emit_selected_node)
         self.info_root_item: QTreeWidgetItem | None = None
 
     def populate(self, hdf5_file: h5py.File) -> None:
         self.clear()
         root_item = QTreeWidgetItem(["/"])
+        root_item.setToolTip(0, "/")
         root_item.setData(0, 256, "/")
         root_item.setData(0, 257, "group")
         self.addTopLevelItem(root_item)
 
         self._add_children(root_item, hdf5_file, "/")
         root_item.setExpanded(True)
+        spacer = QTreeWidgetItem([""])
+        spacer.setFlags(Qt.NoItemFlags)
+        spacer.setSizeHint(0, QSize(0, 12))
+        self.addTopLevelItem(spacer)
         self.info_root_item = QTreeWidgetItem(["Data info"])
+        self.info_root_item.setToolTip(0, "Data info")
         self.addTopLevelItem(self.info_root_item)
         self.set_data_info()
 
@@ -40,6 +47,7 @@ class Hdf5TreeWidget(QTreeWidget):
                 node_kind = "group"
 
             item = QTreeWidgetItem([label])
+            item.setToolTip(0, label)
             item.setData(0, 256, node_path)
             item.setData(0, 257, node_kind)
             parent_item.addChild(item)
@@ -72,11 +80,17 @@ class Hdf5TreeWidget(QTreeWidget):
             ("Attributes", attrs or {}),
         ]:
             group = QTreeWidgetItem([title])
+            group.setToolTip(0, title)
             self.info_root_item.addChild(group)
             if values:
                 for key, value in values.items():
-                    group.addChild(QTreeWidgetItem([f"{key}: {value}"]))
+                    text = f"{key}: {value}"
+                    child = QTreeWidgetItem([text])
+                    child.setToolTip(0, text)
+                    group.addChild(child)
             else:
-                group.addChild(QTreeWidgetItem(["-"]))
+                child = QTreeWidgetItem(["-"])
+                child.setToolTip(0, "-")
+                group.addChild(child)
             group.setExpanded(True)
         self.info_root_item.setExpanded(True)

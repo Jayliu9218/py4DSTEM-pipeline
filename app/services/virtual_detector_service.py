@@ -30,6 +30,8 @@ class VirtualDetectorResult:
     image: np.ndarray
     elapsed_seconds: float
     mode: str
+    detector_preview: np.ndarray | None = None
+    detector_overlay: dict[str, float | str] | None = None
 
 
 class VirtualDetectorService:
@@ -56,7 +58,40 @@ class VirtualDetectorService:
             image=np.asarray(image),
             elapsed_seconds=elapsed,
             mode=params.mode,
+            detector_preview=self._detector_preview(source),
+            detector_overlay=self._detector_overlay(params),
         )
+
+    def _detector_preview(self, source: Any) -> np.ndarray:
+        if hasattr(source, "get_dp_mean"):
+            result = source.get_dp_mean()
+            return np.asarray(getattr(result, "data", result))
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        if getattr(data, "ndim", None) != 4:
+            raise VirtualDetectorServiceError("A 4D DataCube is required for detector preview.")
+        if isinstance(data, h5py.Dataset):
+            preview = np.zeros(tuple(int(dim) for dim in data.shape[2:]), dtype=float)
+            for rx in range(int(data.shape[0])):
+                for ry in range(int(data.shape[1])):
+                    preview += np.asarray(data[rx, ry], dtype=float)
+            return preview / max(int(data.shape[0]) * int(data.shape[1]), 1)
+        return np.asarray(data).mean(axis=(0, 1))
+
+    def _detector_overlay(self, params: VirtualDetectorParams) -> dict[str, float | str]:
+        if params.mode in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD}:
+            return {
+                "kind": "circle",
+                "x": params.center_x,
+                "y": params.center_y,
+                "r": params.outer_radius,
+            }
+        return {
+            "kind": "ring",
+            "x": params.center_x,
+            "y": params.center_y,
+            "inner_radius": params.inner_radius,
+            "outer_radius": params.outer_radius,
+        }
 
     def _compute_with_py4dstem(self, source: Any, params: VirtualDetectorParams) -> np.ndarray:
         if not hasattr(source, "get_virtual_image"):

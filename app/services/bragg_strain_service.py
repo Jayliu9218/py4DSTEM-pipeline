@@ -78,8 +78,6 @@ class CalibrationStatus:
 
 @dataclass(frozen=True)
 class StrainQualityResult:
-    principal_strain_1: np.ndarray
-    principal_strain_2: np.ndarray
     valid_mask: np.ndarray | None
     fit_residual: np.ndarray | None
 
@@ -87,6 +85,8 @@ class StrainQualityResult:
 @dataclass(frozen=True)
 class StrainMapResult:
     components: dict[str, np.ndarray]
+    process_images: dict[str, np.ndarray]
+    process_vectors: dict[str, np.ndarray]
     quality: StrainQualityResult
     elapsed_seconds: float
 
@@ -132,6 +132,8 @@ class CalibrationActionResult:
 @dataclass(frozen=True)
 class ProbeKernelResult:
     kernel: np.ndarray
+    centered_kernel: np.ndarray
+    profile_plot: np.ndarray
     probe_radius: float
     center_x: float
     center_y: float
@@ -144,6 +146,7 @@ class BraggStrainService:
         self.strainmap: Any | None = None
         self.strain_result: StrainMapResult | None = None
         self.probe_kernel: np.ndarray | None = None
+        self.pending_ellipse: tuple[Any, Any, Any] | None = None
 
     def prepare_probe_kernel(
         self,
@@ -169,6 +172,7 @@ class BraggStrainService:
             radius, center_x, center_y = py4DSTEM.process.calibration.get_probe_size(probe.probe)
             probe.get_kernel(mode="sigmoid", radii=(radius, 2 * radius))
             kernel = np.asarray(probe.kernel)
+            centered_kernel, profile_plot = self._kernel_diagnostics(kernel, R=24, L=24, W=1)
         except (AttributeError, TypeError, ValueError) as exc:
             raise BraggStrainServiceError(f"Could not prepare vacuum-probe kernel: {exc}") from exc
         except Exception as exc:
@@ -178,6 +182,8 @@ class BraggStrainService:
         self.probe_kernel = kernel
         return ProbeKernelResult(
             kernel=kernel,
+            centered_kernel=centered_kernel,
+            profile_plot=profile_plot,
             probe_radius=float(radius),
             center_x=float(center_x),
             center_y=float(center_y),
@@ -355,16 +361,36 @@ class BraggStrainService:
                 f"x={measurements['x']:.4g}, y={measurements['y']:.4g}."
             ),
             {
-                "raw Bragg vector map": raw_bvm,
-                "qx measured": np.asarray(qx_meas),
-                "qy measured": np.asarray(qy_meas),
-                "valid mask": np.asarray(mask),
+                "qx measured": self._center_origin_fit_map(qx_meas, mask),
+                "qx fitted": self._center_origin_fit_map(qx_fit, mask),
                 "qx residual": np.asarray(qx_residuals),
+                "qy measured": self._center_origin_fit_map(qy_meas, mask),
+                "qy fitted": self._center_origin_fit_map(qy_fit, mask),
                 "qy residual": np.asarray(qy_residuals),
             },
             perf_counter() - start,
             measurements=measurements,
-            overlays={"raw Bragg vector map": {"kind": "circle", **measurements}},
+        )
+
+    def compare_origin_correction(self, braggvectors: Any | None) -> CalibrationActionResult:
+        source = self._require_braggvectors(braggvectors)
+        previous_state = dict(source.calstate)
+        start = perf_counter()
+        try:
+            raw_bvm = np.asarray(source.histogram(mode="raw").data)
+            source.setcal(
+                center=True,
+                ellipse=bool(previous_state.get("ellipse", False)),
+                pixel=bool(previous_state.get("pixel", False)),
+                rotate=bool(previous_state.get("rotate", False)),
+            )
+            centered_bvm = np.asarray(source.histogram(mode="cal").data)
+        finally:
+            source.setcal(**previous_state)
+        return CalibrationActionResult(
+            "Origin correction comparison generated.",
+            {"raw Bragg vector map": raw_bvm, "origin-centered Bragg vector map": centered_bvm},
+            perf_counter() - start,
         )
 
     def calibrate_ellipse(
@@ -383,10 +409,10 @@ class BraggStrainService:
         previous_target_state = dict(getattr(target, "calstate", {}))
         if inner_radius <= 0 or outer_radius <= inner_radius:
             raise BraggStrainServiceError("Ellipse fit radii must satisfy 0 < inner < outer.")
+        self.pending_ellipse = None
         start = perf_counter()
         try:
             py4DSTEM = self._py4dstem()
-            raw_bvm = source.histogram(mode="raw", sampling=sampling)
             bvm = source.histogram(mode="cal", sampling=sampling)
             fit_center = center if center is not None else bvm.origin
             p_ellipse = py4DSTEM.process.calibration.fit_ellipse_1D(
@@ -394,15 +420,10 @@ class BraggStrainService:
                 center=fit_center,
                 fitradii=(inner_radius, outer_radius),
             )
-            source.calibration.set_p_ellipse(p_ellipse)
-            if target is not source:
-                target.calibration.set_p_ellipse(p_ellipse)
-            source.setcal(**previous_source_state)
-            if target is not source:
-                target.setcal(**previous_target_state)
-            measurements = self._ellipse_measurements(p_ellipse, raw_bvm, bvm)
+            measurements = self._ellipse_measurements(p_ellipse, bvm, bvm)
             if center is not None:
                 measurements = {**measurements, "x": float(center[0]), "y": float(center[1])}
+            self.pending_ellipse = (target, source, p_ellipse)
         except BraggStrainServiceError:
             source.setcal(**previous_source_state)
             if target is not source:
@@ -427,18 +448,17 @@ class BraggStrainService:
                 f"ellipticity={measurements['ellipticity']:.4g}."
             ),
             {
-                "raw Bragg vector map": np.asarray(raw_bvm.data),
-                "calibrated Bragg vector map": np.asarray(bvm.data),
+                "ellipse fit Bragg vector map": np.asarray(bvm.data),
             },
             perf_counter() - start,
             measurements=measurements,
             overlays={
-                "raw Bragg vector map": {
+                "ellipse fit Bragg vector map": {
                     "kind": "ring",
                     "x": measurements["x"],
                     "y": measurements["y"],
-                    "inner_radius": float(min(measurements["a"], measurements["b"])),
-                    "outer_radius": float(max(measurements["a"], measurements["b"])),
+                    "inner_radius": float(inner_radius),
+                    "outer_radius": float(outer_radius),
                     "a": measurements["a"],
                     "b": measurements["b"],
                     "theta": measurements.get("theta", 0.0),
@@ -646,10 +666,10 @@ class BraggStrainService:
         if calibration is None:
             return CalibrationStatus("missing", "missing", "missing", "missing", False)
 
-        origin = self._safe_calibration_value(calibration, "get_origin")
-        ellipse = self._safe_calibration_value(calibration, "get_ellipse")
-        pixel = self._safe_calibration_value(calibration, "get_Q_pixel_size")
-        rotate = self._safe_calibration_value(calibration, "get_QR_rotation")
+        origin = self._format_origin(calibration)
+        ellipse = self._format_ellipse(calibration)
+        pixel = self._format_pixel(calibration)
+        rotate = self._format_rotation(calibration)
         complete = all(value != "missing" for value in [origin, ellipse, pixel, rotate])
         return CalibrationStatus(origin, ellipse, pixel, rotate, complete)
 
@@ -665,7 +685,7 @@ class BraggStrainService:
         try:
             py4DSTEM = self._py4dstem()
             strainmap = py4DSTEM.StrainMap(braggvectors=braggvectors)
-            _basis_calc, basis_figax = strainmap.choose_basis_vectors(
+            basis_calc, basis_figax = strainmap.choose_basis_vectors(
                 minAbsoluteIntensity=params.min_absolute_intensity,
                 minRelativeIntensity=params.min_relative_intensity,
                 minSpacing=params.min_spacing,
@@ -699,17 +719,18 @@ class BraggStrainService:
             "theta": np.asarray(strainmap.data[3]),
         }
         quality = self.strain_quality(strainmap, components)
-        components = {
-            **components,
-            "principal strain 1": quality.principal_strain_1,
-            "principal strain 2": quality.principal_strain_2,
-        }
+        process_images, process_vectors = self._strain_process_diagnostics(
+            strainmap, basis_calc, gvects, braggvectors
+        )
         if quality.fit_residual is not None:
-            components["fit residual"] = quality.fit_residual
+            process_images["basis fit residual"] = quality.fit_residual
         elif quality.valid_mask is not None:
-            components["valid mask"] = quality.valid_mask.astype(float)
+            process_images["basis fit valid mask"] = quality.valid_mask.astype(float)
+
         result = StrainMapResult(
             components=components,
+            process_images=process_images,
+            process_vectors=process_vectors,
             quality=quality,
             elapsed_seconds=perf_counter() - start,
         )
@@ -722,17 +743,41 @@ class BraggStrainService:
         strainmap: Any | None,
         components: dict[str, np.ndarray],
     ) -> StrainQualityResult:
-        exx = np.asarray(components["exx"], dtype=float)
-        eyy = np.asarray(components["eyy"], dtype=float)
-        exy = np.asarray(components["exy"], dtype=float)
-        mean = 0.5 * (exx + eyy)
-        radius = np.sqrt(((exx - eyy) * 0.5) ** 2 + exy**2)
         valid_mask = self._strain_valid_mask(strainmap)
         return StrainQualityResult(
-            principal_strain_1=mean + radius,
-            principal_strain_2=mean - radius,
             valid_mask=valid_mask,
             fit_residual=self._strain_residual(strainmap),
+        )
+
+    def accept_pending_ellipse(self) -> CalibrationActionResult:
+        if self.pending_ellipse is None:
+            raise BraggStrainServiceError("Fit an ellipse before accepting it.")
+        target, source, p_ellipse = self.pending_ellipse
+        start = perf_counter()
+        target_state = dict(getattr(target, "calstate", {}))
+        raw_bvm = np.asarray(target.histogram(mode="raw").data)
+        try:
+            source.calibration.set_p_ellipse(p_ellipse)
+            if target is not source:
+                target.calibration.set_p_ellipse(p_ellipse)
+            target.setcal(
+                center=bool(target_state.get("center", False)),
+                ellipse=True,
+                pixel=bool(target_state.get("pixel", False)),
+                rotate=bool(target_state.get("rotate", False)),
+            )
+            corrected_bvm = np.asarray(target.histogram(mode="cal").data)
+        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+            target.setcal(**target_state)
+            raise BraggStrainServiceError(f"Could not accept ellipse calibration: {exc}") from exc
+        self.pending_ellipse = None
+        return CalibrationActionResult(
+            "Ellipse calibration accepted and applied.",
+            {
+                "raw Bragg vector map": raw_bvm,
+                "ellipse-corrected Bragg vector map": corrected_bvm,
+            },
+            perf_counter() - start,
         )
 
     def _strain_reference(self, strainmap: Any, params: StrainMapParams, braggvectors: Any) -> Any:
@@ -764,6 +809,52 @@ class BraggStrainService:
             return np.asarray(reference)
         raise BraggStrainServiceError(f"Unsupported strain reference mode: {params.reference_mode}")
 
+    def _strain_process_diagnostics(
+        self, strainmap: Any, basis_calc: Any, gvects: Any, braggvectors: Any
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        images: dict[str, np.ndarray] = {}
+        vectors: dict[str, np.ndarray] = {}
+        bvm = getattr(getattr(strainmap, "bvm", None), "data", None)
+        if bvm is None:
+            try:
+                bvm = braggvectors.histogram(mode="cal").data
+            except (AttributeError, TypeError, ValueError):
+                bvm = braggvectors.histogram(mode="raw").data
+        images["basis selection"] = np.asarray(bvm)
+        values = list(basis_calc) if isinstance(basis_calc, (tuple, list)) else []
+        if len(values) >= 3:
+            try:
+                g0 = np.asarray(values[0], dtype=float).ravel()
+            except (TypeError, ValueError):
+                g0 = np.asarray([])
+            rows = []
+            for vector in values[1:3]:
+                try:
+                    value = np.asarray(vector, dtype=float).ravel()
+                except (TypeError, ValueError):
+                    continue
+                if g0.size >= 2 and value.size >= 2:
+                    rows.append([g0[0], g0[1], value[0], value[1]])
+            if rows:
+                vectors["basis selection"] = np.asarray(rows)
+        valid = self._strain_valid_mask(strainmap)
+        if valid is not None:
+            images["basis fit valid mask"] = valid.astype(float)
+        reference = np.asarray(gvects)
+        if valid is not None and reference.ndim == 2 and reference.shape == valid.shape:
+            images["reference mask"] = reference.astype(float)
+        elif isinstance(gvects, (tuple, list)) and len(gvects) >= 2:
+            center = np.asarray(self._image_center(np.asarray(bvm)))
+            rows = []
+            for vector in gvects[:2]:
+                value = np.asarray(vector, dtype=float).ravel()
+                if value.size >= 2:
+                    rows.append([center[0], center[1], value[0], value[1]])
+            if rows:
+                images["reference directions"] = np.asarray(bvm)
+                vectors["reference directions"] = np.asarray(rows)
+        return images, vectors
+
     def export_strain_result(self, result: StrainMapResult, file_path: str | Path) -> None:
         path = Path(file_path)
         if path.suffix.lower() == ".npz":
@@ -788,7 +879,7 @@ class BraggStrainService:
     def _save_strain_png(self, result: StrainMapResult, path: Path) -> None:
         fig, axes = plt.subplots(2, 2, figsize=(8, 7), constrained_layout=True)
         for ax, name in zip(axes.ravel(), ["exx", "eyy", "exy", "theta"]):
-            im = ax.imshow(result.components[name], cmap="RdBu_r")
+            im = ax.imshow(result.components[name], cmap="PRGn" if name == "theta" else "RdBu_r")
             ax.set_title(name)
             ax.set_xticks([])
             ax.set_yticks([])
@@ -806,6 +897,32 @@ class BraggStrainService:
         except Exception:
             logger.debug("Could not close matplotlib figure, closing all", exc_info=True)
             plt.close("all")
+
+    def _kernel_diagnostics(
+        self, kernel: np.ndarray, R: int, L: int, W: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        shifted = np.fft.fftshift(np.asarray(kernel))
+        cx, cy = shifted.shape[0] // 2, shifted.shape[1] // 2
+        centered = shifted[
+            max(cx - R, 0) : min(cx + R, shifted.shape[0]),
+            max(cy - R, 0) : min(cy + R, shifted.shape[1]),
+        ]
+        half_width = max(int(W), 1)
+        horizontal = shifted[max(cx - half_width, 0) : cx + half_width + 1, :].mean(axis=0)
+        vertical = shifted[:, max(cy - half_width, 0) : cy + half_width + 1].mean(axis=1)
+        h0, h1 = max(cy - L, 0), min(cy + L, horizontal.size)
+        v0, v1 = max(cx - L, 0), min(cx + L, vertical.size)
+        fig, ax = plt.subplots(figsize=(5, 3), dpi=100)
+        ax.plot(np.arange(h0, h1) - cy, horizontal[h0:h1], label="horizontal")
+        ax.plot(np.arange(v0, v1) - cx, vertical[v0:v1], label="vertical")
+        ax.set_xlabel("q offset (px)")
+        ax.set_ylabel("kernel")
+        ax.legend(loc="best")
+        fig.tight_layout()
+        fig.canvas.draw()
+        profile_plot = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+        plt.close(fig)
+        return centered, profile_plot
 
     def _ensure_datacube(self, datacube: Any) -> None:
         if datacube is None or not hasattr(datacube, "data"):
@@ -931,6 +1048,58 @@ class BraggStrainService:
         if hasattr(value, "shape"):
             return f"set, shape={tuple(np.asarray(value).shape)}"
         return str(value)
+
+    def _format_origin(self, calibration: Any) -> str:
+        value = self._calibration_value(calibration, ("get_origin",))
+        if value is None:
+            return "missing"
+        values = self._numeric_sequence(value)
+        if len(values) >= 2:
+            return f"x={values[0]:.6g}, y={values[1]:.6g}"
+        if isinstance(value, (tuple, list)) and len(value) >= 2:
+            x = self._finite_mean(value[0])
+            y = self._finite_mean(value[1])
+            if np.isfinite(x) and np.isfinite(y):
+                return f"x={x:.6g}, y={y:.6g}"
+        return self._safe_calibration_value(calibration, "get_origin")
+
+    def _format_ellipse(self, calibration: Any) -> str:
+        value = self._calibration_value(calibration, ("get_ellipse",))
+        if value is None:
+            return "missing"
+        values = self._numeric_sequence(value)
+        if len(values) >= 5:
+            _x, _y, a, b, theta = values[:5]
+        elif len(values) >= 3:
+            a, b, theta = values[:3]
+        else:
+            return self._safe_calibration_value(calibration, "get_ellipse")
+        ellipticity = max(abs(a), abs(b)) / max(min(abs(a), abs(b)), 1e-12)
+        return f"a={a:.6g}, b={b:.6g}, theta={theta:.6g} rad, ellipticity={ellipticity:.6g}"
+
+    def _format_pixel(self, calibration: Any) -> str:
+        value = self._calibration_value(calibration, ("get_Q_pixel_size",))
+        if value is None:
+            return "missing"
+        units = self._calibration_value(calibration, ("get_Q_pixel_units",))
+        return f"{float(value):.6g} {units or 'units unknown'}"
+
+    def _format_rotation(self, calibration: Any) -> str:
+        value = self._calibration_value(
+            calibration, ("get_QR_rotation_degrees", "get_QR_rotation")
+        )
+        if value is None:
+            return "missing"
+        return f"{float(value):.6g} deg"
+
+    def _calibration_value(self, calibration: Any, getter_names: tuple[str, ...]) -> Any | None:
+        getter = self._first_attr(calibration, getter_names)
+        if getter is None:
+            return None
+        try:
+            return getter()
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     def _copy_calibration_value(self, source: Any, target: Any, correction: str) -> None:
         source_calibration = getattr(source, "calibration", None)
@@ -1092,6 +1261,13 @@ class BraggStrainService:
         if not np.isfinite(residual_radius) or residual_radius <= 0:
             residual_radius = max(min(raw_bvm.shape[:2]) * 0.03, 3.0)
         return {"x": float(x), "y": float(y), "r": float(residual_radius)}
+
+    def _center_origin_fit_map(self, value: Any, mask: Any) -> np.ndarray:
+        array = np.asarray(value, dtype=float)
+        valid = np.asarray(mask, dtype=bool)
+        selected = array[valid] if valid.shape == array.shape and valid.any() else array[np.isfinite(array)]
+        center = float(np.nanmedian(selected)) if selected.size else 0.0
+        return array - center
 
     def _ellipse_measurements(self, p_ellipse: Any, raw_bvm: Any, calibrated_bvm: Any) -> dict[str, float]:
         values = self._numeric_sequence(p_ellipse)

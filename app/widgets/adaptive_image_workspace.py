@@ -31,7 +31,10 @@ class FigureResult:
     diagnostic: str = ""
     image_kind: str = "intensity"
     levels: tuple[float, float] | None = None
+    colormap: str | None = None
+    scaling: str | None = None
     points: np.ndarray | None = None
+    vectors: np.ndarray | None = None
     overlay: dict[str, float | str] | None = None
     bragg_sampling_provider: Callable[[int], np.ndarray] | None = None
     metadata: dict[str, object] = field(default_factory=dict)
@@ -74,9 +77,16 @@ class FigurePanel(QFrame):
 
     def _render(self, viewer: ImageViewer) -> None:
         viewer.clear_points()
+        viewer.clear_overlays()
+        if self.result.scaling is not None:
+            viewer.set_scaling(self.result.scaling)
+        if self.result.colormap is not None:
+            viewer.set_colormap(self.result.colormap)
         viewer.set_image(np.asarray(self.result.image), levels=self.result.levels)
         if self.result.points is not None and len(self.result.points):
             viewer.set_points(self.result.points[:, 0], self.result.points[:, 1], size=7)
+        if self.result.vectors is not None and len(self.result.vectors):
+            viewer.add_vector_overlays(self.result.vectors)
         if self.result.bragg_sampling_provider is not None:
             viewer.set_bragg_sampling_provider(self.result.bragg_sampling_provider)
         overlay = self.result.overlay or {}
@@ -88,6 +98,7 @@ class FigurePanel(QFrame):
                 color="r",
             )
         elif overlay.get("kind") == "ring":
+            viewer.clear_overlays()
             viewer.add_ring_overlay(
                 float(overlay.get("x", 0)),
                 float(overlay.get("y", 0)),
@@ -95,6 +106,15 @@ class FigurePanel(QFrame):
                 float(overlay.get("outer_radius", 0)),
                 color="r",
             )
+            if "a" in overlay and "b" in overlay:
+                viewer.add_ellipse_overlay(
+                    float(overlay.get("x", 0)),
+                    float(overlay.get("y", 0)),
+                    float(overlay.get("a", 0)),
+                    float(overlay.get("b", 0)),
+                    float(overlay.get("theta", 0)),
+                    color="c",
+                )
 
     def _show_maximized(self) -> None:
         dialog = QDialog(self)
@@ -108,6 +128,7 @@ class FigurePanel(QFrame):
 
 
 class AdaptiveImageWorkspace(QWidget):
+    MAX_RESULTS = 6
     LAYOUT_CAPACITY = {"Auto": 0, "1": 1, "2": 2, "4": 4, "6": 6}
 
     def __init__(self) -> None:
@@ -128,9 +149,12 @@ class AdaptiveImageWorkspace(QWidget):
         self.previous_button.clicked.connect(lambda: self.set_page(self.current_page - 1))
         self.next_button.clicked.connect(lambda: self.set_page(self.current_page + 1))
         self.page_label = QLabel("Page 0 / 0")
+        self.reset_button = QPushButton("Reset Grid")
+        self.reset_button.clicked.connect(self.reset_grid)
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Grid"))
         controls.addWidget(self.layout_choice)
+        controls.addWidget(self.reset_button)
         controls.addStretch(1)
         controls.addWidget(self.previous_button)
         controls.addWidget(self.page_label)
@@ -159,12 +183,17 @@ class AdaptiveImageWorkspace(QWidget):
         return {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3)}[capacity]
 
     def set_results(self, results: list[FigureResult]) -> None:
-        normalized = [self._with_key(result, f"result-{index}") for index, result in enumerate(results)]
+        normalized = [
+            self._with_key(result, f"result-{index}")
+            for index, result in enumerate(results[: self.MAX_RESULTS])
+        ]
         keep = {result.key for result in normalized}
         for key in list(self._panels_by_key):
             if key not in keep:
                 panel = self._panels_by_key.pop(key)
                 self.grid.removeWidget(panel)
+                if panel.result.viewer is not None:
+                    panel.viewer.setParent(self)
                 panel.deleteLater()
         self.results = normalized
         self._result_keys = [result.key for result in normalized]
@@ -172,13 +201,24 @@ class AdaptiveImageWorkspace(QWidget):
         self._render()
 
     def append_result(self, result: FigureResult) -> str:
-        result = self._with_key(result, f"history-{uuid4().hex}")
-        if result.key in self._result_keys:
-            result = self._with_key(result, f"{result.key}-{uuid4().hex}")
-        self.results.append(result)
-        self._result_keys.append(result.key)
+        return self.append_results([result])[0]
+
+    def append_results(self, results: list[FigureResult]) -> list[str]:
+        incoming = list(results[: self.MAX_RESULTS])
+        if not incoming:
+            return []
+        if len(self.results) + len(incoming) > self.MAX_RESULTS:
+            self.clear_results()
+        keys: list[str] = []
+        for result in incoming:
+            result = self._with_key(result, f"history-{uuid4().hex}")
+            if result.key in self._result_keys:
+                result = self._with_key(result, f"{result.key}-{uuid4().hex}")
+            self.results.append(result)
+            self._result_keys.append(result.key)
+            keys.append(result.key)
         self._render()
-        return result.key
+        return keys
 
     def update_result(self, key: str, result: FigureResult) -> None:
         result = self._with_key(result, key)
@@ -186,8 +226,8 @@ class AdaptiveImageWorkspace(QWidget):
             index = self._result_keys.index(key)
             self.results[index] = result
         else:
-            self._result_keys.append(key)
-            self.results.append(result)
+            self.append_results([result])
+            return
         panel = self._panels_by_key.get(key)
         if panel is not None:
             panel.update_result(result)
@@ -195,6 +235,9 @@ class AdaptiveImageWorkspace(QWidget):
 
     def clear_results(self) -> None:
         self.set_results([])
+
+    def reset_grid(self) -> None:
+        self.clear_results()
 
     def clear(self) -> None:
         self.clear_results()

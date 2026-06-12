@@ -307,9 +307,11 @@ class PhaseContrastPage(QWidget):
         if result.rotation_degrees is not None:
             self.log_panel.log(f"Estimated rotation: {result.rotation_degrees:.1f} degrees")
 
-        for name, image in result.images.items():
-            if image is not None:
-                self.workspace.append_result(FigureResult(f"{result.method}: {name}", image))
+        self.workspace.append_results([
+            FigureResult(f"{result.method}: {name}", image)
+            for name, image in result.images.items()
+            if image is not None
+        ])
 
         self.phase_contrast_ready.emit(result)
         self.workflow_state.mark_completed(self.current_process_step)

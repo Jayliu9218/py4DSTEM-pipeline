@@ -143,8 +143,9 @@ class BFDFPreviewPage(QWidget):
         self.status_label.setText("Done")
         self.log_panel.log("BF / DF preview complete")
 
-        for name, image in images.items():
-            self.workspace.append_result(FigureResult(f"BF / DF: {name}", image))
+        self.workspace.append_results([
+            FigureResult(f"BF / DF: {name}", image) for name, image in images.items()
+        ])
 
         if self.result_registry is not None:
             for name, image in images.items():

@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         )
         self.preprocessing_page = PreprocessingPage(
             source_provider=self._get_py4dstem_datacube,
+            selected_source_provider=self._get_selected_display_source,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
@@ -224,7 +225,6 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_layout()
         self._apply_cuda_setting(self.cuda_enabled)
-        self.setWindowState(self.windowState() | Qt.WindowMaximized)
 
         self.tree.node_selected.connect(self._handle_node_selected)
         self.scan_viewer.image_clicked.connect(self._handle_scan_image_clicked)
@@ -342,8 +342,9 @@ class MainWindow(QMainWindow):
         data_title.setObjectName("sectionTitle")
         data_browser_layout.addWidget(data_title)
         data_browser_layout.addWidget(self.tree, 1)
-        data_browser.setFixedWidth(250)
-        data_browser.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        data_browser.setMinimumWidth(220)
+        data_browser.setMaximumWidth(500)
+        data_browser.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
         self.viewer_stack = QStackedWidget()
@@ -373,24 +374,20 @@ class MainWindow(QMainWindow):
         self.module_panel = ModuleControlPanel()
         self.module_panel.setFixedWidth(400)
         self.module_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.addWidget(data_browser)
-        main_splitter.addWidget(self.viewer_stack)
-        main_splitter.addWidget(self.module_panel)
-        main_splitter.setStretchFactor(0, 0)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setStretchFactor(2, 0)
-        main_splitter.setSizes([250, 900, 400])
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.addWidget(data_browser)
+        self.main_splitter.addWidget(self.viewer_stack)
+        self.main_splitter.addWidget(self.module_panel)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(2, False)
+        self.main_splitter.setSizes([300, 900, 350])
 
         log_panel_widget = self.log_panel
-        log_panel_widget.setFixedHeight(180)
+        log_panel_widget.setFixedHeight(140)
         log_panel_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        workspace = QSplitter(Qt.Vertical)
-        workspace.addWidget(main_splitter)
-        workspace.addWidget(log_panel_widget)
-        workspace.setStretchFactor(0, 1)
-        workspace.setStretchFactor(1, 0)
-        workspace.setSizes([720, 180])
 
         self.project_toolbar = ProjectToolbar()
         self.route_bar = TechnicalRouteBar()
@@ -415,7 +412,8 @@ class MainWindow(QMainWindow):
         central_layout.setSpacing(0)
         central_layout.addWidget(self.project_toolbar)
         central_layout.addWidget(self.route_bar)
-        central_layout.addWidget(workspace, 1)
+        central_layout.addWidget(self.main_splitter, 1)
+        central_layout.addWidget(log_panel_widget, 0)
         self.setCentralWidget(central)
 
         self._set_index_controls_visible(False)
@@ -493,9 +491,9 @@ class MainWindow(QMainWindow):
                     ),
                     RouteModule(
                         "crystal_analysis", "Strain Analysis", "strain",
-                        "Fully applied calibration and selected strain reference.",
+                        "Target BraggVectors; calibration is recommended for accuracy.",
                         "Basis diagnostics, strain components, quality maps, and references.",
-                        WorkflowStep.STRAIN_MAP, "calibration",
+                        WorkflowStep.STRAIN_MAP, "bragg_detection",
                     ),
                     RouteModule(
                         "export", "Export & Report", "overview",
@@ -690,8 +688,9 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(roles_group)
         layout.addWidget(self.preprocessing_page.controls_panel)
+        layout.addStretch(1)
+        layout.addWidget(roles_group)
         layout.addStretch(1)
         return panel
 
@@ -1197,6 +1196,27 @@ class MainWindow(QMainWindow):
         if self.current_4d_source == "py4dstem":
             return self.py4dstem_service.datacube
         return None
+
+    def _get_selected_display_source(self):
+        path = self._current_tree_selection_path()
+        if path and self.current_file is not None:
+            try:
+                node = self.current_file[path]
+                if isinstance(node, h5py.Dataset):
+                    return node
+            except Exception:
+                pass
+            try:
+                return self.py4dstem_service.read_datapath(path)
+            except Exception:
+                pass
+        target_path = self.workflow_state.dataset_roles.target_datacube
+        if target_path and target_path != path:
+            try:
+                return self.py4dstem_service.read_datapath(target_path)
+            except Exception:
+                pass
+        return self._get_virtual_detector_source()
 
     def _get_braggvectors(self):
         if self.current_dataset_path and self.current_dataset_path in self.braggvectors_by_datacube:

@@ -251,7 +251,17 @@ class VirtualDetectorPage(QWidget):
 
     def _handle_finished(self, result: VirtualDetectorResult) -> None:
         self.result = result.image
-        self.workspace.append_result(FigureResult(result.mode, result.image))
+        figures = []
+        if result.detector_preview is not None:
+            figures.append(
+                FigureResult(
+                    "Detector Position",
+                    result.detector_preview,
+                    overlay=result.detector_overlay,
+                )
+            )
+        figures.append(FigureResult(result.mode, result.image))
+        self.workspace.append_results(figures)
         if result.mode != VirtualDetectorService.VIRTUAL_DIFFRACTION:
             self.virtual_image_ready.emit(result.image)
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
@@ -272,6 +282,14 @@ class VirtualDetectorPage(QWidget):
                 ("npy", "png", "tiff"),
                 {"mode": result.mode, **self.params_snapshot()},
             )
+            if result.detector_preview is not None:
+                self.result_registry.register(
+                    "virtual detector position",
+                    "Check data",
+                    result.detector_preview,
+                    ("npy", "png", "tiff"),
+                    {"mode": result.mode, "overlay": result.detector_overlay, **self.params_snapshot()},
+                )
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")

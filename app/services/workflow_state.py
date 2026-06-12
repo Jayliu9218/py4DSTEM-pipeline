@@ -109,6 +109,7 @@ class WorkflowState(QObject):
             WorkflowStep.CALIBRATION_ELLIPSE,
             WorkflowStep.CALIBRATION_PIXEL,
             WorkflowStep.CALIBRATION_ROTATION,
+            WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.BRAGG_VECTOR_MAP: {
             WorkflowStep.CALIBRATION_ORIGIN,

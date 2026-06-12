@@ -38,6 +38,15 @@ class WorkflowStateTests(unittest.TestCase):
 
         self.assertTrue(state.is_stale(WorkflowStep.ORIENTATION_MATCH))
 
+    def test_strain_requires_braggvectors_not_calibration_completion(self) -> None:
+        state = WorkflowState()
+        self.assertIn("bragg full", state.prerequisite_message([WorkflowStep.BRAGG_FULL]))
+
+        state.mark_completed(WorkflowStep.BRAGG_FULL)
+
+        self.assertEqual(state.prerequisite_message([WorkflowStep.BRAGG_FULL]), "")
+        self.assertFalse(state.is_completed(WorkflowStep.CALIBRATION_APPLY))
+
     def test_dataset_role_change_marks_completed_workflow_stale(self) -> None:
         state = WorkflowState()
         state.mark_completed(WorkflowStep.BRAGG_FULL)

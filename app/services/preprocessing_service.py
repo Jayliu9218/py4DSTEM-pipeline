@@ -26,6 +26,25 @@ class HotPixelPreview:
 
 
 class PreprocessingService:
+    def display_data(self, source: Any) -> dict[str, np.ndarray]:
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        shape = getattr(data, "shape", None)
+        if shape is None:
+            raise PreprocessingServiceError("The selected object has no displayable array data.")
+        shape = tuple(int(value) for value in shape)
+        if len(shape) == 4:
+            rx, ry = shape[0] // 2, shape[1] // 2
+            qx, qy = shape[2] // 2, shape[3] // 2
+            return {
+                "Center diffraction pattern": np.asarray(data[rx, ry, :, :]),
+                "Center real-space slice": np.asarray(data[:, :, qx, qy]),
+            }
+        if len(shape) == 2:
+            return {"Selected diffraction slice": np.asarray(data[...])}
+        raise PreprocessingServiceError(
+            f"Selected data must be a 4D DataCube or 2D DiffractionSlice, got shape {shape}."
+        )
+
     def preview_hot_pixels(self, source: Any, params: HotPixelParams) -> HotPixelPreview:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         shape = getattr(data, "shape", None)

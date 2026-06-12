@@ -275,10 +275,11 @@ class OrientationPage(QWidget):
 
     def _finished(self, result) -> None:
         if isinstance(result, OrientationResult):
+            figures = []
             for name in ["Orientation RGB", "Correlation Score", "Reliability", "Peak Count", "Ambiguity"]:
                 image = result.quality.maps.get(name)
                 if image is not None:
-                    self.workspace.append_result(FigureResult(
+                    figures.append(FigureResult(
                         f"Orientation: {name}",
                         image,
                         image_kind="color" if name == "Orientation RGB" else "intensity",
@@ -291,6 +292,7 @@ class OrientationPage(QWidget):
                             ("npy", "png", "tiff"),
                             self.params_snapshot(),
                         )
+            self.workspace.append_results(figures)
             self.status_label.setText(f"Orientation map ready in {result.elapsed_seconds:.2f} s")
             if result.quality.warnings:
                 self.status_label.setText(

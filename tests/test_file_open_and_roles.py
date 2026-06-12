@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
@@ -41,6 +42,12 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.window._assign_current_role("target_datacube")
 
         self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/target")
+
+    def test_tree_uses_middle_elision_and_full_text_tooltips(self) -> None:
+        self.window._open_file_path(str(self.path))
+        target_item = self.window.tree.topLevelItem(0).child(0)
+        self.assertEqual(self.window.tree.textElideMode(), Qt.ElideMiddle)
+        self.assertEqual(target_item.toolTip(0), target_item.text(0))
 
 
 if __name__ == "__main__":
