@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 from PySide6.QtWidgets import QApplication
 from app.widgets.image_viewer import ImageViewer
+from app.widgets.rgb_image_viewer import RgbImageViewer
 
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult, FigurePanel
 
@@ -122,6 +123,17 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
         viewer = workspace.panels[0].viewer
         self.assertEqual(viewer.colormap, "RdBu_r")
         self.assertEqual(viewer.scaling, "linear")
+
+    def test_rgb_result_uses_dedicated_viewer_and_display_only_flip(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        image = np.asarray([[[255, 0, 0], [0, 0, 255]]], dtype=np.uint8)
+        workspace.set_results([FigureResult("plot", image, image_kind="color", flip_x=True)])
+
+        viewer = workspace.panels[0].viewer
+        self.assertIsInstance(viewer, RgbImageViewer)
+        np.testing.assert_array_equal(viewer.raw_image, image)
+        self.assertEqual(viewer._pixmap.toImage().pixelColor(0, 0).blue(), 255)
+        self.assertFalse(hasattr(viewer, "set_scaling"))
 
 
 if __name__ == "__main__":

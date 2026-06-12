@@ -11,7 +11,7 @@ sys.modules["py4DSTEM"] = types.SimpleNamespace(
     )
 )
 
-from app.services.bragg_strain_service import BraggStrainService, StrainMapParams
+from app.services.bragg_strain_service import BasisSelectionParams, BraggStrainService, StrainMapParams
 
 
 class _PeakCell:
@@ -129,6 +129,8 @@ class _FakeG1G2Map:
 
 
 class _FakeStrainMap:
+    last_coordinate_rotation = None
+
     def __init__(self, braggvectors):
         self.braggvectors = braggvectors
         self.g1g2_map = _FakeG1G2Map()
@@ -139,19 +141,29 @@ class _FakeStrainMap:
             np.asarray([[0.0]]),
         ]
         self.returnfig_seen = False
+        self.bvm = types.SimpleNamespace(data=np.ones((7, 9)))
+        self.origin = (3.0, 4.0)
+        self.braggdirections = np.asarray(
+            [(1.0, 0.0), (0.0, 1.0)],
+            dtype=[("qx", float), ("qy", float)],
+        )
 
     def choose_basis_vectors(self, **kwargs):
         self.returnfig_seen = kwargs.get("returnfig")
         fig, ax = plt.subplots()
-        return (None, None, None, None), (fig, ax)
+        return ((3.0, 4.0), (1.0, 0.0), (0.0, 1.0), self.braggdirections), (fig, ax)
 
-    def set_max_peak_spacing(self, **_kwargs):
+    def set_max_peak_spacing(self, max_peak_spacing=None, **_kwargs):
+        self.max_peak_spacing = max_peak_spacing
+        if _kwargs.get("returnfig"):
+            return plt.subplots()
         return None
 
     def fit_basis_vectors(self, **_kwargs):
         return None
 
     def get_strain(self, **_kwargs):
+        type(self).last_coordinate_rotation = _kwargs.get("coordinate_rotation")
         if _kwargs.get("returncalc"):
             raise AttributeError("'StrainMap' object has no attribute 'strainmap'")
         return None
@@ -262,6 +274,32 @@ class QualityResultTests(unittest.TestCase):
         )
         self.assertEqual(source.calstate, previous)
 
+    def test_setting_qr_rotation_leaves_rotation_applied(self) -> None:
+        service = BraggStrainService()
+        source = _BraggVectorsForEllipse()
+
+        result = service.set_qr_rotation(source, -83)
+
+        self.assertTrue(source.calstate["rotate"])
+        self.assertEqual(source.calibration.get_QR_rotation_degrees(), -83)
+        self.assertIn("applied", result.message)
+
+    def test_qr_rotation_comparison_exposes_real_and_reciprocal_arrows(self) -> None:
+        service = BraggStrainService()
+        source = _BraggVectorsForEllipse()
+        result = service.set_qr_rotation(
+            source,
+            -83,
+            {
+                "target DataCube bright-field": np.ones((80, 100)),
+                "rotation reference bright-field": np.ones((220, 240)),
+            },
+        )
+
+        self.assertIn("target DataCube bright-field", result.vectors)
+        self.assertIn("rotation reference bright-field", result.vectors)
+        self.assertEqual(result.vectors["target DataCube bright-field"].shape, (1, 4))
+
     def test_strain_map_does_not_block_on_incomplete_calibration(self) -> None:
         service = BraggStrainService()
 
@@ -275,12 +313,35 @@ class QualityResultTests(unittest.TestCase):
         sys.modules["py4DSTEM"] = types.SimpleNamespace(StrainMap=_FakeStrainMap)
         try:
             service = BraggStrainService()
-            result = service.compute_strain_map(_BraggVectorsForEllipse(), StrainMapParams())
+            result = service.compute_strain_map(
+                _BraggVectorsForEllipse(), StrainMapParams(coordinate_rotation=-21.5)
+            )
         finally:
             sys.modules["py4DSTEM"] = previous
 
         self.assertEqual(result.components["exx"][0, 0], 1.0)
+        self.assertEqual(_FakeStrainMap.last_coordinate_rotation, -21.5)
         self.assertEqual(plt.get_fignums(), [])
+
+    def test_strain_stages_expose_basis_spacing_and_fit_quality(self) -> None:
+        previous = sys.modules["py4DSTEM"]
+        sys.modules["py4DSTEM"] = types.SimpleNamespace(StrainMap=_FakeStrainMap)
+        try:
+            service = BraggStrainService()
+            source = _BraggVectorsForEllipse()
+            basis = service.choose_strain_basis(source, BasisSelectionParams())
+            spacing = service.set_strain_peak_spacing(3)
+            fitted = service.fit_strain_basis()
+        finally:
+            sys.modules["py4DSTEM"] = previous
+
+        self.assertIn("basis selection", basis.vectors)
+        self.assertEqual(spacing.quality["max_peak_spacing"], 3)
+        self.assertIn("peak acceptance regions", spacing.circles)
+        self.assertEqual(fitted.quality["valid_fraction"], 1)
+        state = service.accept_strain_stage("basis_selection")
+        self.assertTrue(state.basis_selection)
+        self.assertFalse(state.reference)
 
 
 if __name__ == "__main__":

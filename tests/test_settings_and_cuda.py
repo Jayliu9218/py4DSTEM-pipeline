@@ -31,12 +31,14 @@ class _DataCube:
 
     def __init__(self):
         self.cuda_seen = None
+        self.kwargs_seen = {}
 
     def get_dp_mean(self):
         return types.SimpleNamespace(data=np.ones((2, 2)))
 
     def find_Bragg_disks(self, **kwargs):
         self.cuda_seen = kwargs.get("CUDA")
+        self.kwargs_seen = kwargs
         return _BraggVectors()
 
 
@@ -105,9 +107,30 @@ class SettingsAndCudaTests(unittest.TestCase):
     def test_braggvectors_forwards_cuda_flag(self) -> None:
         datacube = _DataCube()
 
-        BraggStrainService().compute_braggvectors(datacube, BraggDetectionParams(cuda=True))
+        BraggStrainService().compute_braggvectors(
+            datacube, BraggDetectionParams(cuda=True, allow_gaussian_fallback=True)
+        )
 
         self.assertTrue(datacube.cuda_seen)
+
+    def test_braggvectors_forwards_advanced_cbs_parameters(self) -> None:
+        datacube = _DataCube()
+        params = BraggDetectionParams(
+            allow_gaussian_fallback=True,
+            corr_power=0.75,
+            sigma_dp=1.5,
+            sigma_cc=0.5,
+            upsample_factor=8,
+            radial_background_subtraction=True,
+        )
+
+        BraggStrainService().compute_braggvectors(datacube, params)
+
+        self.assertEqual(datacube.kwargs_seen["corrPower"], 0.75)
+        self.assertEqual(datacube.kwargs_seen["sigma_dp"], 1.5)
+        self.assertEqual(datacube.kwargs_seen["sigma_cc"], 0.5)
+        self.assertEqual(datacube.kwargs_seen["upsample_factor"], 8)
+        self.assertTrue(datacube.kwargs_seen["radial_bksb"])
 
     def test_orientation_plan_forwards_cuda_flag(self) -> None:
         crystal = _Crystal()

@@ -185,6 +185,15 @@ class PipelineShellTests(unittest.TestCase):
         self.assertTrue(page.ellipse_measurement_label.wordWrap())
         self.assertEqual(page.apply_ellipse_button.text(), "Accept && Apply Ellipse")
 
+    def test_calibration_origin_process_maps_use_signed_colormap(self) -> None:
+        page = self.window.calibration_page
+        page.viewers.clear_results()
+        page._set_viewer_tab("qx residual", np.asarray([[-1.0, 1.0]]))
+
+        result = page.viewers.results[-1]
+        self.assertEqual(result.colormap, "RdBu_r")
+        self.assertEqual(result.scaling, "linear")
+
     def test_main_window_uses_native_qt_style(self) -> None:
         self.assertEqual(self.window.styleSheet(), "")
 

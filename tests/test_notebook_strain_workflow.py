@@ -3,13 +3,42 @@ import unittest
 
 import numpy as np
 
-from app.services.bragg_strain_service import BraggStrainService, StrainMapParams
+from app.services.bragg_strain_service import (
+    BraggDetectionParams,
+    BraggStrainService,
+    CBSPreset,
+    StrainMapParams,
+)
 from app.services.preprocessing_service import HotPixelParams, PreprocessingService
 from app.services.virtual_detector_service import VirtualDetectorParams, VirtualDetectorService
 from app.services.workflow_state import WorkflowState, WorkflowStep
 
 
 class NotebookStrainWorkflowTests(unittest.TestCase):
+    def test_au_notebook_preset_matches_cbs_parameters(self) -> None:
+        params = CBSPreset.au_notebook().bragg
+        self.assertEqual(
+            (
+                params.min_absolute_intensity,
+                params.min_relative_intensity,
+                params.min_peak_spacing,
+                params.edge_boundary,
+                params.sigma_cc,
+                params.max_num_peaks,
+                params.subpixel,
+                params.corr_power,
+            ),
+            (2, 0, 18, 2, 0, 100, "poly", 1),
+        )
+
+    def test_bragg_detection_requires_kernel_unless_fallback_is_explicit(self) -> None:
+        datacube = types.SimpleNamespace(
+            shape=(1, 1, 4, 4),
+            data=np.ones((1, 1, 4, 4)),
+        )
+        with self.assertRaisesRegex(Exception, "Prepare probe.kernel"):
+            BraggStrainService().detect_peaks(datacube, 0, 0, BraggDetectionParams())
+
     def test_hot_pixel_preview_requires_explicit_apply(self) -> None:
         data = np.ones((2, 2, 5, 5), dtype=float)
         data[:, :, 2, 2] = 100
@@ -58,7 +87,7 @@ class NotebookStrainWorkflowTests(unittest.TestCase):
         self.assertEqual(result.profile_plot.shape[-1], 3)
 
     def test_off_axis_df_and_virtual_diffraction(self) -> None:
-        data = np.arange(2 * 2 * 4 * 4, dtype=float).reshape(2, 2, 4, 4)
+        data = np.arange(2 * 3 * 4 * 4, dtype=float).reshape(2, 3, 4, 4)
         service = VirtualDetectorService()
         off_axis = service.compute(
             data,
@@ -70,11 +99,28 @@ class NotebookStrainWorkflowTests(unittest.TestCase):
                 VirtualDetectorService.VIRTUAL_DIFFRACTION, 0, 0, 0, 1, 0, 2, 0, 2
             ),
         )
-        self.assertEqual(off_axis.image.shape, (2, 2))
+        self.assertEqual(off_axis.image.shape, (2, 3))
         self.assertEqual(off_axis.detector_preview.shape, (4, 4))
         self.assertEqual(off_axis.detector_overlay["kind"], "circle")
         self.assertEqual(diffraction.image.shape, (4, 4))
         self.assertIsNone(diffraction.detector_preview)
+
+    def test_circular_virtual_diffraction_uses_real_space_mask(self) -> None:
+        data = np.arange(5 * 7 * 3 * 4, dtype=float).reshape(5, 7, 3, 4)
+        result = VirtualDetectorService().compute(
+            data,
+            VirtualDetectorParams(
+                VirtualDetectorService.VIRTUAL_DIFFRACTION,
+                0, 0, 0, 1,
+                roi_mode="circle",
+                roi_center_x=2,
+                roi_center_y=3,
+                roi_radius=1.5,
+            ),
+        )
+        self.assertEqual(result.image.shape, (3, 4))
+        self.assertEqual(result.real_space_preview.shape, (5, 7))
+        self.assertEqual(result.real_space_overlay["kind"], "circle")
 
     def test_manual_g1g2_reference(self) -> None:
         params = StrainMapParams(
