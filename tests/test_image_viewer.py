@@ -75,6 +75,14 @@ class ImageViewerTests(unittest.TestCase):
 
         self.assertEqual(viewer.interactive_circle(), (5.0, 6.0, 3.0))
 
+    def test_interactive_annulus_has_independent_radii_and_shared_center(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_image(np.ones((20, 20)))
+
+        viewer.set_interactive_annulus(10, 11, 3, 7)
+
+        self.assertEqual(viewer.interactive_annulus(), (10.0, 11.0, 3.0, 7.0))
+
     def test_interactive_ellipse_can_be_set_and_read(self) -> None:
         viewer = ImageViewer()
         viewer.set_image(np.ones((10, 12)))
@@ -82,6 +90,14 @@ class ImageViewerTests(unittest.TestCase):
         viewer.set_interactive_ellipse(5, 6, 3, 2, 15)
 
         self.assertEqual(viewer.interactive_ellipse(), (5.0, 6.0, 3.0, 2.0, 15.0))
+
+    def test_vector_overlays_can_be_added_and_cleared(self) -> None:
+        viewer = ImageViewer()
+        viewer.set_image(np.ones((8, 8)))
+        viewer.add_vector_overlays(np.asarray([[2, 3, 1, -1], [4, 5, -2, 1]]))
+        self.assertEqual(len(viewer.overlay_items), 2)
+        viewer.clear_overlays()
+        self.assertEqual(viewer.overlay_items, [])
 
     def test_intensity_scaling_changes_grayscale_display(self) -> None:
         viewer = ImageViewer()

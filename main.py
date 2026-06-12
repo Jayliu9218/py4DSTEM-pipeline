@@ -11,7 +11,7 @@ def main() -> int:
     app.setApplicationName("4D-STEM Analysis Pipeline")
 
     window = MainWindow()
-    window.show()
+    window.showMaximized()
 
     return app.exec()
 

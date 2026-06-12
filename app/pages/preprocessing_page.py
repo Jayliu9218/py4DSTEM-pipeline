@@ -16,12 +16,14 @@ class PreprocessingPage(QWidget):
     def __init__(
         self,
         source_provider: Callable[[], object | None],
+        selected_source_provider: Callable[[], object | None],
         log_panel: LogPanel,
         workflow_state: WorkflowState,
         result_registry: ResultRegistry | None = None,
     ) -> None:
         super().__init__()
         self.source_provider = source_provider
+        self.selected_source_provider = selected_source_provider
         self.log_panel = log_panel
         self.workflow_state = workflow_state
         self.result_registry = result_registry
@@ -32,12 +34,14 @@ class PreprocessingPage(QWidget):
         self.apply_button = QPushButton("Apply Hot-Pixel Filter")
         self.apply_button.setEnabled(False)
         self.diagnostics_button = QPushButton("Show Basic Diagnostics")
+        self.show_selected_button = QPushButton("Show Selected Data")
         self.status = QLabel("Load and assign a Target DataCube.")
         self.status.setWordWrap(True)
         self.workspace = AdaptiveImageWorkspace()
         self.preview_button.clicked.connect(self.preview_hot_pixels)
         self.apply_button.clicked.connect(self.apply_hot_pixels)
         self.diagnostics_button.clicked.connect(self.show_diagnostics)
+        self.show_selected_button.clicked.connect(self.show_selected_data)
         self.threshold.valueChanged.connect(self._threshold_changed)
         controls = QWidget()
         form = QFormLayout(controls)
@@ -45,6 +49,7 @@ class PreprocessingPage(QWidget):
         control_layout = QVBoxLayout()
         control_layout.addWidget(controls)
         control_layout.addWidget(self.diagnostics_button)
+        control_layout.addWidget(self.show_selected_button)
         control_layout.addWidget(self.preview_button)
         control_layout.addWidget(self.apply_button)
         control_layout.addWidget(self.status)
@@ -53,6 +58,21 @@ class PreprocessingPage(QWidget):
         self.controls_panel.setLayout(control_layout)
         layout = QVBoxLayout(self)
         layout.addWidget(self.workspace)
+
+    def show_selected_data(self) -> None:
+        source = self.selected_source_provider()
+        if source is None:
+            source = self.source_provider()
+        if source is None:
+            QMessageBox.information(self, "Preprocess", "Select or assign a displayable data object first.")
+            return
+        try:
+            images = self.service.display_data(source)
+        except Exception as exc:
+            QMessageBox.warning(self, "Preprocess", str(exc))
+            return
+        self.workspace.append_results([FigureResult(name, image) for name, image in images.items()])
+        self.status.setText("Selected data display ready.")
 
     def show_diagnostics(self) -> None:
         source = self.source_provider()
@@ -64,8 +84,7 @@ class PreprocessingPage(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Preprocess", str(exc))
             return
-        for name, image in images.items():
-            self.workspace.append_result(FigureResult(name, image))
+        self.workspace.append_results([FigureResult(name, image) for name, image in images.items()])
         self.status.setText("Basic DataCube diagnostics ready.")
 
     def preview_hot_pixels(self) -> None:
@@ -80,12 +99,11 @@ class PreprocessingPage(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Preprocess", str(exc))
             return
-        for result in [
+        self.workspace.append_results([
             FigureResult("Mean diffraction before", self.preview.before_mean),
             FigureResult("Detected hot pixels", self.preview.hot_pixel_mask.astype(float)),
             FigureResult("Mean diffraction preview after", self.preview.after_mean),
-        ]:
-            self.workspace.append_result(result)
+        ])
         self.apply_button.setEnabled(True)
         self.status.setText(f"Detected {self.preview.hot_pixel_count} hot pixels. Review, then Apply.")
 

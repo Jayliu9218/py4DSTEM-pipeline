@@ -230,6 +230,10 @@ class BraggPeaksPage(QWidget):
             self.roi_viewer.clear("Run a virtual image first, then select a probe ROI here.")
             return
         self.roi_viewer.set_image(image)
+        self.workspace.update_result(
+            "probe-roi",
+            FigureResult("Probe ROI", image, viewer=self.roi_viewer),
+        )
         self._update_roi_overlay()
         self.log_panel.log("Virtual image sent to Probe ROI selection.")
 
@@ -480,22 +484,13 @@ class BraggPeaksPage(QWidget):
         self.log_panel.log(f"Full BraggVectors completed: peaks={count}.")
         self.log_panel.process_finished("Bragg calculation", f"full map, peaks={count}")
         self.full_map_viewer.set_image(result.bragg_vector_map)
-        self.workspace.update_result(
-            "full-map",
-            FigureResult(
-                "Full Bragg Vector Map",
-                result.bragg_vector_map,
-                viewer=self.full_map_viewer,
-                bragg_sampling_provider=self._sampled_bragg_vector_map,
-            ),
-        )
-        for name, image in [
-            ("Peak Count Map", result.quality.peak_count_map),
-            ("Mean Peak Intensity Map", result.quality.mean_intensity_map),
-            ("Max Peak Intensity Map", result.quality.max_intensity_map),
-            ("Detection Failure Mask", result.quality.failure_mask.astype(float)),
-        ]:
-            self.workspace.append_result(FigureResult(name, image))
+        self.workspace.append_result(FigureResult(
+            "Full Bragg Vector Map",
+            result.bragg_vector_map,
+            viewer=self.full_map_viewer,
+            bragg_sampling_provider=self._sampled_bragg_vector_map,
+        ))
+
         self.braggvectors_ready.emit()
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_FULL)
         if self.result_registry is not None:
@@ -534,6 +529,14 @@ class BraggPeaksPage(QWidget):
             f"radius={result.probe_radius:.3g}, center=({result.center_x:.3g}, {result.center_y:.3g})."
         )
         self.log_panel.process_finished("Bragg calculation", "vacuum-probe kernel ready")
+        self.workspace.append_results([
+            FigureResult("Probe Kernel (R=24)", result.centered_kernel),
+            FigureResult(
+                "Probe Kernel Line Profiles (L=24, W=1)",
+                result.profile_plot,
+                image_kind="color",
+            ),
+        ])
         self.workflow_state.mark_completed(WorkflowStep.PROBE_KERNEL)
 
     def _handle_selected_result(self, result: SelectedPeaksResult) -> None:
@@ -548,14 +551,16 @@ class BraggPeaksPage(QWidget):
         self.log_panel.process_finished(
             "Bragg calculation", f"selected counts={result.peak_counts}"
         )
-        for position, pattern, peaks, count in zip(
-            result.positions, result.patterns, result.peaks, result.peak_counts
-        ):
-            self.workspace.append_result(FigureResult(
+        self.workspace.append_results([
+            FigureResult(
                 f"({position[0]}, {position[1]}) | {count} peaks",
                 pattern,
                 points=peaks,
-            ))
+            )
+            for position, pattern, peaks, count in zip(
+                result.positions, result.patterns, result.peaks, result.peak_counts
+            )
+        ])
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_SELECTED)
 
     def _handle_failed(self, message: str) -> None:

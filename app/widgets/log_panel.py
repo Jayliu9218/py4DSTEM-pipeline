@@ -5,12 +5,10 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QProgressBar,
     QTabWidget,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,15 +35,9 @@ class LogPanel(QWidget):
         self.tabs.addTab(self._progress_panel(), "Progress")
         self.tabs.addTab(self.event_log, "Activity Log")
         self.tabs.addTab(self.warning_log, "Warnings")
-        header = QHBoxLayout()
-        title = QLabel("Console")
-        title.setStyleSheet("font-weight: 700;")
-        header.addWidget(title)
-        header.addStretch(1)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.addLayout(header)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(2)
         layout.addWidget(self.tabs)
 
     def log(self, message: str) -> None:
@@ -104,9 +96,10 @@ class LogPanel(QWidget):
     def _progress_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
         layout.addWidget(QLabel("Current calculation status"))
         layout.addWidget(self.progress)
-        layout.addWidget(QLabel("Calculation process"))
         layout.addWidget(self.process_log)
         return panel
 

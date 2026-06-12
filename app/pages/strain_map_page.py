@@ -77,7 +77,9 @@ class StrainMapPage(QWidget):
         self.edge_spin = self._int_input(0, 10000, 1, unit="px")
         self.max_peaks_spin = self._int_input(1, 10000, 150, unit="peaks")
         self.reference_mode = QComboBox()
-        self.reference_mode.addItems(["roi_vectors", "auto_valid", "roi_mask", "manual_g1g2"])
+        self.reference_mode.addItems(["auto_valid", "roi_vectors", "roi_mask", "manual_g1g2"])
+        self.display_mode = QComboBox()
+        self.display_mode.addItems(["Process", "Final Strain"])
         self.color_mode = QComboBox()
         self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
         self.color_min_spin = self._float_input(-1e6, 1e6, -1, unit="value")
@@ -97,6 +99,8 @@ class StrainMapPage(QWidget):
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
+        self.applied_qr_rotation_label = QLabel("missing / not applied")
+        self.applied_qr_rotation_label.setWordWrap(True)
 
         self.workspace = AdaptiveImageWorkspace()
 
@@ -104,6 +108,7 @@ class StrainMapPage(QWidget):
         self.pick_roi_button.clicked.connect(self.start_roi_pick)
         self.export_button.clicked.connect(self.export_result)
         self.color_mode.currentTextChanged.connect(lambda _text: self._display_result())
+        self.display_mode.currentTextChanged.connect(lambda _text: self._display_result())
         self.color_min_spin.valueChanged.connect(lambda _value: self._display_result())
         self.color_max_spin.valueChanged.connect(lambda _value: self._display_result())
         self._watch_parameters()
@@ -112,22 +117,20 @@ class StrainMapPage(QWidget):
 
     def notify_braggvectors_ready(self) -> None:
         self.status_label.setText("BraggVectors available")
+        self._refresh_qr_rotation_summary()
 
     def run_strain_map(self) -> None:
         braggvectors = self.braggvectors_provider()
         if braggvectors is None:
             QMessageBox.information(self, "Strain Map", "Run full BraggVectors first.")
             return
-        prerequisite = self.workflow_state.prerequisite_message([WorkflowStep.CALIBRATION_APPLY])
-        if prerequisite:
-            QMessageBox.information(self, "Strain Map", prerequisite)
-            return
+        self._refresh_qr_rotation_summary()
         warning = self._calibration_warning(braggvectors)
         if warning:
             self.log_panel.log(f"WARN  {warning}")
             self.status_label.setText(warning)
 
-        self.status_label.setText("Running...")
+        self.status_label.setText(f"Running... {warning}" if warning else "Running...")
         self.run_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.log_panel.log("Strain map calculation running...")
@@ -211,6 +214,7 @@ class StrainMapPage(QWidget):
         controls = QWidget()
         form = QFormLayout(controls)
         form.addRow("coordinate_rotation", self.rotation_spin)
+        form.addRow("applied QR rotation", self.applied_qr_rotation_label)
         form.addRow("max_peak_spacing", self.max_spacing_spin)
         form.addRow("minAbsoluteIntensity", self.min_abs_spin)
         form.addRow("minRelativeIntensity", self.min_rel_spin)
@@ -218,6 +222,7 @@ class StrainMapPage(QWidget):
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
         form.addRow("reference mode", self.reference_mode)
+        form.addRow("display", self.display_mode)
         form.addRow("color range", self.color_mode)
         form.addRow("manual color min", self.color_min_spin)
         form.addRow("manual color max", self.color_max_spin)
@@ -309,6 +314,14 @@ class StrainMapPage(QWidget):
                     ("npy", "png", "tiff"),
                     metadata,
                 )
+            for name, image in result.process_images.items():
+                self.result_registry.register(
+                    name,
+                    "strain process",
+                    image,
+                    ("npy", "png", "tiff"),
+                    metadata,
+                )
 
     def _handle_failed(self, message: str) -> None:
         self.status_label.setText("Failed")
@@ -347,11 +360,38 @@ class StrainMapPage(QWidget):
     def _display_result(self) -> None:
         if self.result is None:
             return
-        for name, image in self.result.components.items():
-            if image is not None:
-                self.workspace.append_result(
-                    FigureResult(name, image, levels=self._levels_for(image))
+        process_images = getattr(self.result, "process_images", {})
+        if self.display_mode.currentText() == "Process" and process_images:
+            process_vectors = getattr(self.result, "process_vectors", {})
+            self.workspace.set_results([
+                FigureResult(
+                    name,
+                    image,
+                    vectors=process_vectors.get(name),
+                    scaling="linear",
                 )
+                for name, image in process_images.items()
+                if image is not None
+            ])
+            return
+        self.workspace.set_results([
+            FigureResult(
+                name,
+                image,
+                levels=self._levels_for(image),
+                colormap="PRGn" if name == "theta" else "RdBu_r",
+                scaling="linear",
+            )
+            for name, image in self.result.components.items()
+            if image is not None
+        ])
+
+    def _refresh_qr_rotation_summary(self) -> None:
+        braggvectors = self.braggvectors_provider()
+        status = self.service.calibration_status(braggvectors)
+        applied = bool(getattr(braggvectors, "calstate", {}).get("rotate", False)) if braggvectors else False
+        suffix = "applied" if applied else "not applied"
+        self.applied_qr_rotation_label.setText(f"{status.rotate} ({suffix})")
 
     def _levels_for(self, image) -> tuple[float, float] | None:
         array = np.asarray(image, dtype=float)
@@ -403,6 +443,7 @@ class StrainMapPage(QWidget):
         )
 
     def _refresh_stale_status(self) -> None:
+        self._refresh_qr_rotation_summary()
         if self.workflow_state.is_stale(WorkflowStep.STRAIN_MAP):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
 
@@ -417,6 +458,7 @@ class StrainMapPage(QWidget):
             "edge_boundary": params.edge_boundary,
             "max_num_peaks": params.max_num_peaks,
             "reference_mode": params.reference_mode,
+            "display_mode": self.display_mode.currentText(),
             "roi_rx_start": params.roi_rx_start,
             "roi_rx_end": params.roi_rx_end,
             "roi_ry_start": params.roi_ry_start,
@@ -460,5 +502,7 @@ class StrainMapPage(QWidget):
                 spin.setValue(int(params[key]))
         if "reference_mode" in params:
             self.reference_mode.setCurrentText(str(params["reference_mode"]))
+        if "display_mode" in params:
+            self.display_mode.setCurrentText(str(params["display_mode"]))
         if "color_mode" in params:
             self.color_mode.setCurrentText(str(params["color_mode"]))

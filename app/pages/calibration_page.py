@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
+import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -116,6 +117,7 @@ class CalibrationPage(QWidget):
         self.rotation_spin = self._float_input(-360, 360, -83, unit="deg")
         self.refresh_button = QPushButton("Check Calibration")
         self.origin_button = QPushButton("Measure Origin")
+        self.compare_origin_button = QPushButton("Compare Origin Correction")
         self.draw_ellipse_circle_button = QPushButton("Draw Ring Fit ROI")
         self.ellipse_button = QPushButton("Fit Ellipse")
         self.pixel_button = QPushButton("Set Q Pixel Size")
@@ -123,7 +125,8 @@ class CalibrationPage(QWidget):
         self.fit_pixel_button = QPushButton("Fit Pixel Size From Crystal Reference")
         self.rotation_button = QPushButton("Set QR Rotation")
         self.apply_origin_button = QPushButton("Apply")
-        self.apply_ellipse_button = QPushButton("Apply")
+        self.apply_ellipse_button = QPushButton("Accept && Apply Ellipse")
+        self.apply_ellipse_button.setEnabled(False)
         self.apply_pixel_button = QPushButton("Apply")
         self.apply_rotation_button = QPushButton("Apply")
         self.transfer_correction = QComboBox()
@@ -138,6 +141,7 @@ class CalibrationPage(QWidget):
         self.buttons = [
             self.refresh_button,
             self.origin_button,
+            self.compare_origin_button,
             self.draw_ellipse_circle_button,
             self.ellipse_button,
             self.pixel_button,
@@ -155,7 +159,7 @@ class CalibrationPage(QWidget):
         self.viewers = AdaptiveImageWorkspace()
         self.figure_results: dict[str, FigureResult] = {}
 
-        self.refresh_button.clicked.connect(self.refresh_status)
+        self.refresh_button.clicked.connect(lambda: self.refresh_status())
         self.origin_button.clicked.connect(
             lambda: self._run(
                 lambda: self.service.calibrate_origin(self.braggvectors_provider()),
@@ -165,6 +169,13 @@ class CalibrationPage(QWidget):
         )
         self.apply_origin_button.clicked.connect(
             lambda: self._apply_single_correction("center", "Apply origin correction")
+        )
+        self.compare_origin_button.clicked.connect(
+            lambda: self._run(
+                lambda: self.service.compare_origin_correction(self.braggvectors_provider()),
+                "Compare origin correction",
+                WorkflowStep.CALIBRATION_ORIGIN,
+            )
         )
         self.draw_ellipse_circle_button.clicked.connect(self.start_ellipse_circle_draw)
         self.ellipse_button.clicked.connect(
@@ -186,7 +197,11 @@ class CalibrationPage(QWidget):
             )
         )
         self.apply_ellipse_button.clicked.connect(
-            lambda: self._apply_single_correction("ellipse", "Apply ellipse correction")
+            lambda: self._run(
+                self.service.accept_pending_ellipse,
+                "Accept and apply ellipse correction",
+                WorkflowStep.CALIBRATION_ELLIPSE,
+            )
         )
         self.pixel_button.clicked.connect(
             lambda: self._run(
@@ -292,6 +307,7 @@ class CalibrationPage(QWidget):
         origin_layout = QVBoxLayout(origin_group)
         origin_layout.addWidget(self.origin_measurement_label)
         origin_layout.addWidget(self.origin_button)
+        origin_layout.addWidget(self.compare_origin_button)
         origin_layout.addWidget(self.apply_origin_button)
 
         ellipse_group = QGroupBox("Ellipse Calibration")
@@ -358,18 +374,26 @@ class CalibrationPage(QWidget):
         layout = QHBoxLayout(self)
         layout.addWidget(self.viewers)
         for form in left.findChildren(QFormLayout):
-            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            form.setRowWrapPolicy(QFormLayout.WrapAllRows)
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        for label in [
+            self.source_label,
+            self.origin_label,
+            self.ellipse_label,
+            self.pixel_label,
+            self.rotate_label,
+            self.complete_label,
+            self.applied_label,
+            *self.decision_labels.values(),
+        ]:
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
 
-    def refresh_status(self) -> None:
+    def refresh_status(self, show_histogram: bool = True) -> None:
         braggvectors = self.braggvectors_provider()
         source = braggvectors if braggvectors is not None else self.datacube_provider()
         status = self.service.calibration_status(source)
         self.source_label.setText("BraggVectors" if braggvectors is not None else "DataCube")
-        self.origin_label.setText(status.origin)
-        self.ellipse_label.setText(status.ellipse)
-        self.pixel_label.setText(status.pixel)
-        self.rotate_label.setText(status.rotate)
         self.complete_label.setText("yes" if status.complete else "no")
         if braggvectors is not None:
             state = braggvectors.calstate
@@ -378,10 +402,16 @@ class CalibrationPage(QWidget):
         else:
             self.applied_label.setText("none")
             enabled = []
+        applied = set(enabled)
+        self.origin_label.setText(self._status_text(status.origin, "center" in applied))
+        self.ellipse_label.setText(self._status_text(status.ellipse, "ellipse" in applied))
+        self.pixel_label.setText(self._status_text(status.pixel, "pixel" in applied))
+        self.rotate_label.setText(self._status_text(status.rotate, "rotate" in applied))
         self._style_status_labels(status, set(enabled))
         self._refresh_decision_panel()
         self.refresh_transfer_targets()
-        self.show_braggvectors_histogram()
+        if show_histogram:
+            self.show_braggvectors_histogram()
 
     def reset_calibration(self) -> None:
         self._run(
@@ -550,7 +580,7 @@ class CalibrationPage(QWidget):
                     },
                 )
         self._show_measurements(result)
-        self.refresh_status()
+        self.refresh_status(show_histogram=False)
         self.workflow_state.mark_completed(self.current_process_step)
 
     def _failed(self, message: str) -> None:
@@ -564,6 +594,7 @@ class CalibrationPage(QWidget):
         self.worker_thread = None
         for button in self.buttons:
             button.setEnabled(True)
+        self.apply_ellipse_button.setEnabled(self.service.pending_ellipse is not None)
 
     def _float_input(
         self,
@@ -647,7 +678,7 @@ class CalibrationPage(QWidget):
     def _required_corrections(self) -> set[str]:
         target = self.analysis_target.currentText()
         if target == "Strain":
-            return {"origin", "ellipse", "pixel", "rotate"}
+            return set()
         if target == "ACOM":
             return {"origin", "pixel"}
         if target == "DPC":
@@ -656,6 +687,8 @@ class CalibrationPage(QWidget):
 
     def _recommended_corrections(self) -> set[str]:
         target = self.analysis_target.currentText()
+        if target == "Strain":
+            return {"origin", "ellipse", "pixel", "rotate"}
         if target == "ACOM":
             return {"ellipse", "rotate"}
         if target == "DPC":
@@ -663,6 +696,11 @@ class CalibrationPage(QWidget):
         if target == "Preview":
             return {"pixel"}
         return set()
+
+    @staticmethod
+    def _status_text(value: str, applied: bool) -> str:
+        state = "applied" if applied else "not applied"
+        return f"{value} [{state}]"
 
     def _set_viewer_tab(
         self,
@@ -680,9 +718,9 @@ class CalibrationPage(QWidget):
         self.figure_results[name] = FigureResult(
             name, image, overlay=overlay, bragg_sampling_provider=provider, key=name
         )
-        self.viewers.set_results(list(self.figure_results.values()))
+        self.viewers.update_result(name, self.figure_results[name])
         for panel in self.viewers.panels:
-            panel.viewer.circle_changed.connect(self._handle_ellipse_circle_changed)
+            self._connect_annulus_signal(panel.viewer)
 
     def _set_comparison_tab(self, result: CalibrationActionResult) -> None:
         pairs = self._comparison_images(result.images)
@@ -692,7 +730,7 @@ class CalibrationPage(QWidget):
             self.figure_results[name] = FigureResult(
                 name, image, overlay=result.overlays.get(name), key=name
             )
-        self.viewers.set_results(list(self.figure_results.values()))
+        self.viewers.append_results([self.figure_results[name] for name, _image in pairs[:2]])
 
     def _comparison_images(self, images: dict[str, object]) -> list[tuple[str, object]]:
         if len(images) < 2:
@@ -779,22 +817,21 @@ class CalibrationPage(QWidget):
         if viewer is None:
             QMessageBox.information(self, "Ellipse Calibration", "Run full BraggVectors first.")
             return
-        radius = max((self.ellipse_inner.value() + self.ellipse_outer.value()) * 0.5, 1.0)
-        viewer.set_interactive_circle(
+        viewer.set_interactive_annulus(
             self.ellipse_center_x.value(),
             self.ellipse_center_y.value(),
-            radius,
+            self.ellipse_inner.value(),
+            self.ellipse_outer.value(),
         )
-        self.status_label.setText("Drag or resize the cyan ring ROI.")
+        self.status_label.setText("Drag the annulus or resize either cyan boundary.")
 
-    def _handle_ellipse_circle_changed(
+    def _handle_ellipse_annulus_changed(
         self,
         x: float,
         y: float,
-        radius: float,
+        inner: float,
+        outer: float,
     ) -> None:
-        inner = max(radius * 0.85, 0.1)
-        outer = max(radius * 1.15, inner + 0.1)
         for spin, value in [
             (self.ellipse_center_x, x),
             (self.ellipse_center_y, y),
@@ -806,8 +843,14 @@ class CalibrationPage(QWidget):
             spin.blockSignals(False)
         self.workflow_state.parameters_updated(WorkflowStep.CALIBRATION_ELLIPSE)
         self.status_label.setText(
-            f"Ellipse fit ring ROI: center=({x:.3g}, {y:.3g}), radius={radius:.3g}"
+            f"Ellipse fit annulus: center=({x:.3g}, {y:.3g}), radii=({inner:.3g}, {outer:.3g})"
         )
+
+    def _connect_annulus_signal(self, viewer: ImageViewer) -> None:
+        if bool(viewer.property("calibrationAnnulusConnected")):
+            return
+        viewer.annulus_changed.connect(self._handle_ellipse_annulus_changed)
+        viewer.setProperty("calibrationAnnulusConnected", True)
 
     def _current_image_viewer(self) -> ImageViewer | None:
         return self.viewers.panels[0].viewer if self.viewers.panels else None

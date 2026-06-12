@@ -266,9 +266,11 @@ class PtychographyPage(QWidget):
             if image is not None:
                 self.workspace.update_result("selected-preview", FigureResult(f"Selected: {default_key}", np.asarray(image)))
 
-        for name, image in result.images.items():
-            if image is not None:
-                self.workspace.append_result(FigureResult(f"Ptychography: {name}", np.asarray(image)))
+        self.workspace.append_results([
+            FigureResult(f"Ptychography: {name}", np.asarray(image))
+            for name, image in result.images.items()
+            if image is not None
+        ])
 
         if self.result_registry is not None:
             for name, image in result.images.items():

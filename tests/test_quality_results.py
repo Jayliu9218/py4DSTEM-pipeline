@@ -106,6 +106,19 @@ class _BraggVectorsForEllipse:
         self.calstate = kwargs
 
 
+class _BraggVectorsForOrigin(_BraggVectorsForEllipse):
+    def measure_origin(self):
+        return np.ones((2, 2)), np.ones((2, 2)) * 2, np.ones((2, 2), dtype=bool)
+
+    def fit_origin(self, **_kwargs):
+        return (
+            np.ones((2, 2)) * 1.5,
+            np.ones((2, 2)) * 2.5,
+            np.ones((2, 2)) * 0.1,
+            np.ones((2, 2)) * 0.2,
+        )
+
+
 class _FakeSlice:
     data = np.ones((1, 1), dtype=bool)
 
@@ -145,6 +158,24 @@ class _FakeStrainMap:
 
 
 class QualityResultTests(unittest.TestCase):
+    def test_calibration_status_formats_scientific_values_and_rotation_degrees(self) -> None:
+        calibration = _Calibration()
+        calibration.set_origin((4, 5))
+        calibration.set_p_ellipse((3, 2, 0.1))
+        calibration.set_Q_pixel_size(0.02)
+        calibration.set_Q_pixel_units("A^-1")
+        calibration.set_QR_rotation_degrees(-83)
+
+        status = BraggStrainService().calibration_status(
+            types.SimpleNamespace(calibration=calibration)
+        )
+
+        self.assertEqual(status.origin, "x=4, y=5")
+        self.assertIn("a=3", status.ellipse)
+        self.assertIn("ellipticity=1.5", status.ellipse)
+        self.assertEqual(status.pixel, "0.02 A^-1")
+        self.assertEqual(status.rotate, "-83 deg")
+
     def test_bragg_quality_maps_from_raw_peak_cells(self) -> None:
         service = BraggStrainService()
 
@@ -163,7 +194,7 @@ class QualityResultTests(unittest.TestCase):
         self.assertEqual(quality.peak_count_map.shape, (3, 4))
         np.testing.assert_array_equal(quality.peak_count_map, np.zeros((3, 4)))
 
-    def test_strain_quality_adds_principal_strain_components(self) -> None:
+    def test_strain_quality_excludes_principal_strain_components(self) -> None:
         service = BraggStrainService()
         components = {
             "exx": np.asarray([[2.0]]),
@@ -173,19 +204,26 @@ class QualityResultTests(unittest.TestCase):
 
         quality = service.strain_quality(None, components)
 
-        self.assertEqual(quality.principal_strain_1[0, 0], 2.0)
-        self.assertEqual(quality.principal_strain_2[0, 0], 0.0)
+        self.assertFalse(hasattr(quality, "principal_strain_1"))
+        self.assertFalse(hasattr(quality, "principal_strain_2"))
 
-    def test_ellipse_fit_can_use_reference_braggvectors_and_transfer_to_target(self) -> None:
+    def test_ellipse_fit_requires_acceptance_before_transfer_to_target(self) -> None:
         service = BraggStrainService()
         target = _BraggVectorsForEllipse()
         reference = _BraggVectorsForEllipse()
 
         result = service.calibrate_ellipse(target, 1, 3, 1, fit_source=reference)
 
+        self.assertIsNone(reference.calibration.p_ellipse)
+        self.assertIsNone(target.calibration.p_ellipse)
+        self.assertIn("Ellipse Reference", result.message)
+        overlay = result.overlays["ellipse fit Bragg vector map"]
+        self.assertEqual((overlay["inner_radius"], overlay["outer_radius"]), (1.0, 3.0))
+        accepted = service.accept_pending_ellipse()
         self.assertEqual(reference.calibration.p_ellipse, (1, 2, 0.1, 4))
         self.assertEqual(target.calibration.p_ellipse, (1, 2, 0.1, 4))
-        self.assertIn("Ellipse Reference", result.message)
+        self.assertTrue(target.calstate["ellipse"])
+        self.assertIn("ellipse-corrected Bragg vector map", accepted.images)
 
     def test_single_calibration_correction_can_transfer_between_braggvectors(self) -> None:
         service = BraggStrainService()
@@ -205,6 +243,24 @@ class QualityResultTests(unittest.TestCase):
         self.assertTrue(target.calstate["pixel"])
         self.assertIn("origin", origin_result.message)
         self.assertIn("Q pixel size", pixel_result.message)
+
+    def test_origin_calibration_exposes_six_process_maps_and_comparison(self) -> None:
+        service = BraggStrainService()
+        source = _BraggVectorsForOrigin()
+        previous = dict(source.calstate)
+
+        process = service.calibrate_origin(source)
+        comparison = service.compare_origin_correction(source)
+
+        self.assertEqual(
+            list(process.images),
+            ["qx measured", "qx fitted", "qx residual", "qy measured", "qy fitted", "qy residual"],
+        )
+        self.assertEqual(
+            list(comparison.images),
+            ["raw Bragg vector map", "origin-centered Bragg vector map"],
+        )
+        self.assertEqual(source.calstate, previous)
 
     def test_strain_map_does_not_block_on_incomplete_calibration(self) -> None:
         service = BraggStrainService()

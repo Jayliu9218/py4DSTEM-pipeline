@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 from PySide6.QtWidgets import QApplication
+from app.widgets.image_viewer import ImageViewer
 
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult, FigurePanel
 
@@ -17,15 +18,13 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
     def test_automatic_capacity_matches_figure_count(self) -> None:
         self.assertEqual([AdaptiveImageWorkspace.automatic_capacity(i) for i in range(1, 7)], [1, 2, 4, 4, 6, 6])
 
-    def test_more_than_six_results_are_paginated(self) -> None:
+    def test_set_results_is_capped_at_six(self) -> None:
         workspace = AdaptiveImageWorkspace()
         workspace.resize(1200, 800)
         workspace.set_results(self.results(8))
         self.assertEqual(workspace.page_capacity(), 6)
-        self.assertEqual(workspace.page_count(), 2)
+        self.assertEqual(workspace.page_count(), 1)
         self.assertEqual(len(workspace.visible_results()), 6)
-        workspace.set_page(1)
-        self.assertEqual(len(workspace.visible_results()), 2)
 
     def test_manual_override_and_minimum_panel_size(self) -> None:
         workspace = AdaptiveImageWorkspace()
@@ -77,6 +76,52 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
         self.assertEqual(other.grid_state(), state)
         workspace.clear_results()
         self.assertEqual(workspace.results, [])
+
+    def test_batch_append_keeps_or_replaces_complete_batch(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        workspace.append_results(self.results(4))
+        workspace.append_results(self.results(2))
+        self.assertEqual(len(workspace.results), 6)
+        replacement = [FigureResult(f"new-{index}", np.ones((2, 2))) for index in range(3)]
+        workspace.append_results(replacement)
+        self.assertEqual([result.title for result in workspace.results], ["new-0", "new-1", "new-2"])
+
+    def test_large_batch_keeps_first_six(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        workspace.append_results(self.results(8))
+        self.assertEqual([result.title for result in workspace.results], [str(index) for index in range(6)])
+
+    def test_new_fixed_slot_obeys_cap_and_existing_slot_does_not_grow(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        workspace.set_results(self.results(6))
+        workspace.update_result("new-live", FigureResult("New Live", np.ones((2, 2))))
+        self.assertEqual(len(workspace.results), 1)
+        workspace.update_result("new-live", FigureResult("Updated Live", np.zeros((2, 2))))
+        self.assertEqual(len(workspace.results), 1)
+
+    def test_reset_grid_clears_images_preserves_layout_and_reusable_viewer(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        viewer = ImageViewer()
+        workspace.set_layout("4")
+        workspace.set_results([FigureResult("Reusable", np.ones((2, 2)), viewer=viewer)])
+        workspace.reset_button.click()
+        QApplication.processEvents()
+        self.assertEqual(workspace.results, [])
+        self.assertEqual(workspace.current_page, 0)
+        self.assertEqual(workspace.layout_choice.currentText(), "4")
+        self.assertIs(viewer.parent(), workspace)
+        workspace.update_result("reused", FigureResult("Reused", np.zeros((2, 2)), viewer=viewer))
+        self.assertIs(workspace.panels[0].viewer, viewer)
+
+    def test_figure_result_applies_scientific_colormap_and_linear_scaling(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        workspace.set_results([
+            FigureResult("strain", np.asarray([[-1.0, 1.0]]), colormap="RdBu_r", scaling="linear")
+        ])
+
+        viewer = workspace.panels[0].viewer
+        self.assertEqual(viewer.colormap, "RdBu_r")
+        self.assertEqual(viewer.scaling, "linear")
 
 
 if __name__ == "__main__":

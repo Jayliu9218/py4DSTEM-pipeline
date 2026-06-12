@@ -136,7 +136,7 @@ class ModuleControlPanel(QWidget):
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
         self.controls_stack = QStackedWidget()
-        self._controls: dict[str, QWidget] = {}
+        self._controls: dict[int, QWidget] = {}
         self._placeholder = QLabel("Select a module to inspect its parameters.")
         self._placeholder.setWordWrap(True)
         self.controls_stack.addWidget(self._placeholder)
@@ -152,10 +152,17 @@ class ModuleControlPanel(QWidget):
         if controls is None:
             self.controls_stack.setCurrentWidget(self._placeholder)
             return
-        if module.key not in self._controls:
-            self._controls[module.key] = controls
-            self.controls_stack.addWidget(controls)
-        self.controls_stack.setCurrentWidget(self._controls[module.key])
+        identity = id(controls)
+        if identity not in self._controls:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setMinimumSize(0, 0)
+            scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+            controls.setMinimumSize(0, 0)
+            scroll.setWidget(controls)
+            self._controls[identity] = scroll
+            self.controls_stack.addWidget(scroll)
+        self.controls_stack.setCurrentWidget(self._controls[identity])
 
 
 class ProjectToolbar(QWidget):
