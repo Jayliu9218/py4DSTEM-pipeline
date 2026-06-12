@@ -6,6 +6,7 @@ from typing import Callable
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -24,6 +25,7 @@ from app.services.bragg_strain_service import (
     BraggDetectionParams,
     BraggStrainService,
     BraggVectorsResult,
+    CBSPreset,
     PeakDetectionResult,
     ProbeKernelResult,
     SelectedPeaksResult,
@@ -168,7 +170,17 @@ class BraggPeaksPage(QWidget):
         self.spacing_spin = self._int_input(1, 10000, 18, unit="px")
         self.edge_spin = self._int_input(0, 10000, 2, unit="px")
         self.max_peaks_spin = self._int_input(1, 10000, 100, unit="peaks")
-        self.sigma_spin = self._float_input(0.5, 1000, 2, unit="px")
+        self.sigma_spin = self._float_input(0, 1000, 0, unit="px")
+        self.sigma_dp_spin = self._float_input(0, 1000, 0, unit="px")
+        self.corr_power_spin = self._float_input(0, 1, 1, decimals=3)
+        self.upsample_spin = self._int_input(1, 1024, 16, unit="x")
+        self.radial_background_check = QCheckBox("Enable")
+        self.gaussian_fallback_check = QCheckBox("Allow with warning")
+        self.selection_mode = QComboBox()
+        self.selection_mode.addItems(["Deterministic notebook positions", "Seeded random positions"])
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("01_CBS Au")
+        self.apply_preset_button = QPushButton("Apply Preset")
         self.subpixel_combo = QComboBox()
         self.subpixel_combo.addItems(["poly", "multicorr", "pixel"])
         self.roi_rx_start = self._int_input(0, 100000, 0, unit="px")
@@ -184,6 +196,8 @@ class BraggPeaksPage(QWidget):
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
         self.count_label = QLabel("Peaks: -")
+        self.quality_label = QLabel("Quality: not calculated")
+        self.quality_label.setWordWrap(True)
         self.viewer = ImageViewer()
         self.roi_viewer = ImageViewer()
         self.workspace = AdaptiveImageWorkspace()
@@ -202,6 +216,7 @@ class BraggPeaksPage(QWidget):
         self.run_current_button.clicked.connect(self.run_current_pattern)
         self.run_selected_button.clicked.connect(self.run_selected_positions)
         self.run_full_button.clicked.connect(self.run_full_braggvectors)
+        self.apply_preset_button.clicked.connect(self.apply_au_preset)
         self._watch_parameters()
         self.workflow_state.changed.connect(self._refresh_stale_status)
         self._build_layout()
@@ -313,14 +328,23 @@ class BraggPeaksPage(QWidget):
             return
         import numpy as np
 
-        rng = np.random.default_rng(0)
-        positions = [
-            (int(rx), int(ry))
-            for rx, ry in zip(
-                rng.integers(shape[0] // 3, max(2 * shape[0] // 3, shape[0] // 3 + 1), size=6),
-                rng.integers(shape[1] // 3, max(2 * shape[1] // 3, shape[1] // 3 + 1), size=6),
-            )
-        ]
+        if self.selection_mode.currentText().startswith("Deterministic"):
+            positions = [
+                (
+                    shape[0] // 3 + (shape[0] // 3) * index // 6,
+                    shape[1] // 3 + (shape[1] // 3) * index // 6,
+                )
+                for index in range(6)
+            ]
+        else:
+            rng = np.random.default_rng(0)
+            positions = [
+                (int(rx), int(ry))
+                for rx, ry in zip(
+                    rng.integers(shape[0] // 3, max(2 * shape[0] // 3, shape[0] // 3 + 1), size=6),
+                    rng.integers(shape[1] // 3, max(2 * shape[1] // 3, shape[1] // 3 + 1), size=6),
+                )
+            ]
         self._start_worker(
             SelectedPeaksWorker(self.service, datacube, positions, self._params()),
             self._handle_selected_result,
@@ -339,18 +363,26 @@ class BraggPeaksPage(QWidget):
 
         params_group = QGroupBox("2 Bragg Detection Parameters")
         params_layout = QFormLayout(params_group)
+        params_layout.addRow("preset", self.preset_combo)
+        params_layout.addRow("", self.apply_preset_button)
         params_layout.addRow("minAbsoluteIntensity", self.min_abs_spin)
         params_layout.addRow("minRelativeIntensity", self.min_rel_spin)
         params_layout.addRow("minPeakSpacing", self.spacing_spin)
         params_layout.addRow("edgeBoundary", self.edge_spin)
         params_layout.addRow("maxNumPeaks", self.max_peaks_spin)
-        params_layout.addRow("template sigma", self.sigma_spin)
+        params_layout.addRow("sigma_cc", self.sigma_spin)
+        params_layout.addRow("sigma_dp", self.sigma_dp_spin)
+        params_layout.addRow("corrPower", self.corr_power_spin)
+        params_layout.addRow("upsample_factor", self.upsample_spin)
+        params_layout.addRow("radial background", self.radial_background_check)
+        params_layout.addRow("Gaussian fallback", self.gaussian_fallback_check)
         params_layout.addRow("subpixel", self.subpixel_combo)
 
         diagnostics_group = QGroupBox("3 Diagnostics")
         diagnostics_layout = QFormLayout(diagnostics_group)
         diagnostics_layout.addRow("rx", self.rx_spin)
         diagnostics_layout.addRow("ry", self.ry_spin)
+        diagnostics_layout.addRow("six-position mode", self.selection_mode)
         diagnostics_layout.addRow("", self.run_current_button)
         diagnostics_layout.addRow("", self.run_selected_button)
 
@@ -365,6 +397,7 @@ class BraggPeaksPage(QWidget):
         left_layout.addWidget(full_group)
         left_layout.addWidget(self.status_label)
         left_layout.addWidget(self.count_label)
+        left_layout.addWidget(self.quality_label)
         left_layout.addWidget(self.table)
         for button in [
             self.prepare_kernel_button,
@@ -411,13 +444,37 @@ class BraggPeaksPage(QWidget):
             min_peak_spacing=self.spacing_spin.value(),
             edge_boundary=self.edge_spin.value(),
             max_num_peaks=self.max_peaks_spin.value(),
-            template_sigma=self.sigma_spin.value(),
+            sigma_cc=self.sigma_spin.value(),
+            sigma_dp=self.sigma_dp_spin.value(),
+            corr_power=self.corr_power_spin.value(),
+            upsample_factor=self.upsample_spin.value(),
+            radial_background_subtraction=self.radial_background_check.isChecked(),
             subpixel=self.subpixel_combo.currentText(),
+            allow_gaussian_fallback=self.gaussian_fallback_check.isChecked(),
             cuda=self.cuda_enabled,
         )
 
     def bragg_detection_params(self) -> BraggDetectionParams:
         return self._params()
+
+    def apply_au_preset(self) -> None:
+        preset = CBSPreset.au_notebook().bragg
+        for control, value in [
+            (self.min_abs_spin, preset.min_absolute_intensity),
+            (self.min_rel_spin, preset.min_relative_intensity),
+            (self.spacing_spin, preset.min_peak_spacing),
+            (self.edge_spin, preset.edge_boundary),
+            (self.max_peaks_spin, preset.max_num_peaks),
+            (self.sigma_spin, preset.sigma_cc),
+            (self.sigma_dp_spin, preset.sigma_dp),
+            (self.corr_power_spin, preset.corr_power),
+            (self.upsample_spin, preset.upsample_factor),
+        ]:
+            control.setValue(value)
+        self.subpixel_combo.setCurrentText(preset.subpixel)
+        self.radial_background_check.setChecked(preset.radial_background_subtraction)
+        self.gaussian_fallback_check.setChecked(False)
+        self.status_label.setText("Applied editable 01_CBS Au Bragg-detection preset.")
 
     def _start_worker(self, worker: QObject, finished_slot, status: str) -> None:
         self.status_label.setText(status)
@@ -433,11 +490,17 @@ class BraggPeaksPage(QWidget):
             ProcessSnapshot(
                 step="Bragg disk detection",
                 parameters={
+                    "minAbsoluteIntensity": params.min_absolute_intensity,
                     "minRelativeIntensity": params.min_relative_intensity,
                     "minPeakSpacing": params.min_peak_spacing,
                     "edgeBoundary": params.edge_boundary,
                     "maxNumPeaks": params.max_num_peaks,
-                    "template": "vacuum probe" if self.service.probe_kernel is not None else "gaussian",
+                    "template": "vacuum probe" if self.service.probe_kernel is not None else "explicit Gaussian fallback",
+                    "corrPower": params.corr_power,
+                    "sigma_dp": params.sigma_dp,
+                    "sigma_cc": params.sigma_cc,
+                    "upsample_factor": params.upsample_factor,
+                    "radial_background_subtraction": params.radial_background_subtraction,
                     "CUDA": params.cuda,
                 },
             )
@@ -481,6 +544,17 @@ class BraggPeaksPage(QWidget):
         count = "unknown" if result.peak_count is None else str(result.peak_count)
         self.status_label.setText(f"BraggVectors done in {result.elapsed_seconds:.2f} s")
         self.count_label.setText(f"BraggVectors peaks: {count}")
+        quality = result.quality
+        zero_fraction = float(getattr(quality, "zero_detection_fraction", np.mean(quality.failure_mask)))
+        edge_clipped = int(getattr(quality, "edge_clipped_peak_count", 0))
+        distribution = np.asarray(getattr(quality, "peak_count_distribution", quality.peak_count_map))
+        warning = " Review parameters before accepting." if zero_fraction else ""
+        self.quality_label.setText(
+            "Quality: "
+            f"zero-detection={zero_fraction:.1%}, "
+            f"edge-clipped peaks={edge_clipped}, "
+            f"median peaks/scan={np.nanmedian(distribution):.3g}.{warning}"
+        )
         self.log_panel.log(f"Full BraggVectors completed: peaks={count}.")
         self.log_panel.process_finished("Bragg calculation", f"full map, peaks={count}")
         self.full_map_viewer.set_image(result.bragg_vector_map)
@@ -494,7 +568,15 @@ class BraggPeaksPage(QWidget):
         self.braggvectors_ready.emit()
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_FULL)
         if self.result_registry is not None:
-            metadata = {"peak_count": result.peak_count, **self.params_snapshot()}
+            kernel = self.service.probe_kernel
+            metadata = {
+                "peak_count": result.peak_count,
+                "zero_detection_fraction": zero_fraction,
+                "edge_clipped_peak_count": edge_clipped,
+                "kernel_shape": tuple(kernel.shape) if kernel is not None else None,
+                "kernel_sum": float(np.sum(kernel)) if kernel is not None else None,
+                **self.params_snapshot(),
+            }
             self.result_registry.register(
                 "bragg vector map",
                 "Bragg disks",
@@ -507,6 +589,8 @@ class BraggPeaksPage(QWidget):
                 ("mean peak intensity map", result.quality.mean_intensity_map),
                 ("max peak intensity map", result.quality.max_intensity_map),
                 ("detection failure mask", result.quality.failure_mask.astype(float)),
+                ("peak count distribution", distribution),
+                ("peak intensity distribution", np.asarray(getattr(result.quality, "intensity_distribution", []))),
             ]:
                 self.result_registry.register(
                     name,
@@ -535,6 +619,7 @@ class BraggPeaksPage(QWidget):
                 "Probe Kernel Line Profiles (L=24, W=1)",
                 result.profile_plot,
                 image_kind="color",
+                flip_x=True,
             ),
         ])
         self.workflow_state.mark_completed(WorkflowStep.PROBE_KERNEL)
@@ -603,11 +688,16 @@ class BraggPeaksPage(QWidget):
             self.edge_spin,
             self.max_peaks_spin,
             self.sigma_spin,
+            self.sigma_dp_spin,
+            self.corr_power_spin,
+            self.upsample_spin,
         ]:
             self.workflow_state.watch(spin, all_detection_steps, "valueChanged")
         self.workflow_state.watch(
             self.subpixel_combo, all_detection_steps, "currentTextChanged"
         )
+        for control in [self.radial_background_check, self.gaussian_fallback_check]:
+            self.workflow_state.watch(control, all_detection_steps, "toggled")
         for spin in [
             self.roi_rx_start,
             self.roi_rx_end,
@@ -712,7 +802,12 @@ class BraggPeaksPage(QWidget):
             "min_peak_spacing": params.min_peak_spacing,
             "edge_boundary": params.edge_boundary,
             "max_num_peaks": params.max_num_peaks,
-            "template_sigma": params.template_sigma,
+            "sigma_cc": params.sigma_cc,
+            "sigma_dp": params.sigma_dp,
+            "corr_power": params.corr_power,
+            "upsample_factor": params.upsample_factor,
+            "radial_background_subtraction": params.radial_background_subtraction,
+            "allow_gaussian_fallback": params.allow_gaussian_fallback,
             "subpixel": params.subpixel,
             "roi_rx_start": self.roi_rx_start.value(),
             "roi_rx_end": self.roi_rx_end.value(),
@@ -728,6 +823,7 @@ class BraggPeaksPage(QWidget):
             "min_peak_spacing": self.spacing_spin,
             "edge_boundary": self.edge_spin,
             "max_num_peaks": self.max_peaks_spin,
+            "upsample_factor": self.upsample_spin,
             "roi_rx_start": self.roi_rx_start,
             "roi_rx_end": self.roi_rx_end,
             "roi_ry_start": self.roi_ry_start,
@@ -736,7 +832,9 @@ class BraggPeaksPage(QWidget):
         float_controls = {
             "min_absolute_intensity": self.min_abs_spin,
             "min_relative_intensity": self.min_rel_spin,
-            "template_sigma": self.sigma_spin,
+            "sigma_cc": self.sigma_spin,
+            "sigma_dp": self.sigma_dp_spin,
+            "corr_power": self.corr_power_spin,
         }
         for key, spin in int_controls.items():
             if key in params:
@@ -746,3 +844,7 @@ class BraggPeaksPage(QWidget):
                 spin.setValue(float(params[key]))
         if "subpixel" in params:
             self.subpixel_combo.setCurrentText(str(params["subpixel"]))
+        if "radial_background_subtraction" in params:
+            self.radial_background_check.setChecked(bool(params["radial_background_subtraction"]))
+        if "allow_gaussian_fallback" in params:
+            self.gaussian_fallback_check.setChecked(bool(params["allow_gaussian_fallback"]))

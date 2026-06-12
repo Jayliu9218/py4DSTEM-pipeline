@@ -29,6 +29,7 @@ class ImageViewer(QWidget):
         self.bragg_sampling = 1
         self.bragg_sampling_provider: Callable[[int], np.ndarray] | None = None
         self.image_view = pg.ImageView()
+        self.image_view.getImageItem().setOpts(axisOrder="row-major")
         self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
         self.image_view.getView().setMenuEnabled(False)
@@ -200,9 +201,10 @@ class ImageViewer(QWidget):
         self.coordinate_label.setText("x: -, y: -, value: -")
 
     def set_points(self, x: np.ndarray, y: np.ndarray, size: int = 9) -> None:
+        display_x, display_y = self._scientific_to_display_arrays(x, y)
         self.scatter_item.setData(
-            x=np.asarray(x),
-            y=np.asarray(y),
+            x=display_x,
+            y=display_y,
             size=size,
             pen=pg.mkPen("r", width=1.5),
             brush=pg.mkBrush(255, 0, 0, 80),
@@ -221,8 +223,8 @@ class ImageViewer(QWidget):
             self.set_interactive_roi_rect(x0, x1, y0, y1)
             return
         self.roi_item.setData(
-            x=[x0, x1, x1, x0, x0],
-            y=[y0, y0, y1, y1, y0],
+            x=[y0, y1, y1, y0, y0],
+            y=[x0, x0, x1, x1, x0],
         )
 
     def clear_roi(self) -> None:
@@ -236,10 +238,13 @@ class ImageViewer(QWidget):
         y0, y1 = sorted((int(y_start), int(y_end)))
         if x0 == x1 or y0 == y1:
             return
+        display_x, display_y = self._scientific_to_display(x0, y0)
+        display_width = y1 - y0
+        display_height = x1 - x0
         if self.interactive_roi_item is None:
             self.interactive_roi_item = pg.RectROI(
-                [x0, y0],
-                [x1 - x0, y1 - y0],
+                [display_x, display_y],
+                [display_width, display_height],
                 pen=pg.mkPen("red", width=2),
                 movable=True,
                 removable=False,
@@ -251,8 +256,8 @@ class ImageViewer(QWidget):
             self.roi_item.clear()
             return
         self._updating_interactive_roi = True
-        self.interactive_roi_item.setPos([x0, y0], update=False)
-        self.interactive_roi_item.setSize([x1 - x0, y1 - y0], update=False)
+        self.interactive_roi_item.setPos([display_x, display_y], update=False)
+        self.interactive_roi_item.setSize([display_width, display_height], update=False)
         self.interactive_roi_item.stateChanged(finish=False)
         self._updating_interactive_roi = False
 
@@ -267,10 +272,10 @@ class ImageViewer(QWidget):
             return None
         pos = self.interactive_roi_item.pos()
         size = self.interactive_roi_item.size()
-        x0 = int(round(float(pos.x())))
-        y0 = int(round(float(pos.y())))
-        x1 = int(round(float(pos.x() + size.x())))
-        y1 = int(round(float(pos.y() + size.y())))
+        x0 = int(round(float(pos.y())))
+        y0 = int(round(float(pos.x())))
+        x1 = int(round(float(pos.y() + size.y())))
+        y1 = int(round(float(pos.x() + size.x())))
         if self.raw_image is not None:
             x0, x1 = self._clamp_pair(x0, x1, self.raw_image.shape[0])
             y0, y1 = self._clamp_pair(y0, y1, self.raw_image.shape[1])
@@ -282,9 +287,10 @@ class ImageViewer(QWidget):
     def set_interactive_circle(self, x: float, y: float, radius: float) -> None:
         if radius <= 0 or not np.all(np.isfinite([x, y, radius])):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         if self.interactive_circle_item is None:
             self.interactive_circle_item = pg.CircleROI(
-                [float(x) - float(radius), float(y) - float(radius)],
+                [display_x - float(radius), display_y - float(radius)],
                 [2 * float(radius), 2 * float(radius)],
                 pen=pg.mkPen("c", width=2),
                 movable=True,
@@ -298,7 +304,7 @@ class ImageViewer(QWidget):
             return
         self._updating_interactive_circle = True
         self.interactive_circle_item.setPos(
-            [float(x) - float(radius), float(y) - float(radius)],
+            [display_x - float(radius), display_y - float(radius)],
             update=False,
         )
         self.interactive_circle_item.setSize([2 * float(radius), 2 * float(radius)], update=False)
@@ -324,9 +330,10 @@ class ImageViewer(QWidget):
             or not np.all(np.isfinite([x, y, inner_radius, outer_radius]))
         ):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         if self.interactive_annulus_outer_item is None:
             self.interactive_annulus_outer_item = pg.CircleROI(
-                [x - outer_radius, y - outer_radius],
+                [display_x - outer_radius, display_y - outer_radius],
                 [2 * outer_radius, 2 * outer_radius],
                 pen=pg.mkPen("c", width=2),
                 movable=True,
@@ -334,7 +341,7 @@ class ImageViewer(QWidget):
                 resizable=True,
             )
             self.interactive_annulus_inner_item = pg.CircleROI(
-                [x - inner_radius, y - inner_radius],
+                [display_x - inner_radius, display_y - inner_radius],
                 [2 * inner_radius, 2 * inner_radius],
                 pen=pg.mkPen("c", width=1, style=Qt.DashLine),
                 movable=True,
@@ -362,21 +369,25 @@ class ImageViewer(QWidget):
     def interactive_annulus(self) -> tuple[float, float, float, float] | None:
         if self.interactive_annulus_inner_item is None or self.interactive_annulus_outer_item is None:
             return None
-        outer_x, outer_y, outer_radius = self._circle_geometry(self.interactive_annulus_outer_item)
+        display_x, display_y, outer_radius = self._circle_geometry(
+            self.interactive_annulus_outer_item
+        )
         _inner_x, _inner_y, inner_radius = self._circle_geometry(self.interactive_annulus_inner_item)
-        return outer_x, outer_y, inner_radius, outer_radius
+        x, y = self._display_to_scientific(display_x, display_y)
+        return x, y, inner_radius, outer_radius
 
     def _set_annulus_geometry(
         self, x: float, y: float, inner_radius: float, outer_radius: float
     ) -> None:
         if self.interactive_annulus_inner_item is None or self.interactive_annulus_outer_item is None:
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         self._updating_interactive_annulus = True
         for item, radius in (
             (self.interactive_annulus_inner_item, inner_radius),
             (self.interactive_annulus_outer_item, outer_radius),
         ):
-            item.setPos([x - radius, y - radius], update=False)
+            item.setPos([display_x - radius, display_y - radius], update=False)
             item.setSize([2 * radius, 2 * radius], update=False)
             item.stateChanged(finish=False)
         self._updating_interactive_annulus = False
@@ -394,8 +405,9 @@ class ImageViewer(QWidget):
         pos = self.interactive_circle_item.pos()
         size = self.interactive_circle_item.size()
         radius = max(float(size.x()), float(size.y())) * 0.5
-        x = float(pos.x()) + radius
-        y = float(pos.y()) + radius
+        display_x = float(pos.x()) + radius
+        display_y = float(pos.y()) + radius
+        x, y = self._display_to_scientific(display_x, display_y)
         return x, y, radius
 
     def set_interactive_ellipse(
@@ -408,11 +420,12 @@ class ImageViewer(QWidget):
     ) -> None:
         if a <= 0 or b <= 0 or not np.all(np.isfinite([x, y, a, b, theta])):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         if self.interactive_ellipse_item is None:
             self.interactive_ellipse_item = pg.EllipseROI(
-                [float(x) - float(a), float(y) - float(b)],
-                [2 * float(a), 2 * float(b)],
-                angle=float(theta),
+                [display_x - float(b), display_y - float(a)],
+                [2 * float(b), 2 * float(a)],
+                angle=-float(theta),
                 pen=pg.mkPen("c", width=2),
                 movable=True,
                 removable=False,
@@ -426,11 +439,11 @@ class ImageViewer(QWidget):
             return
         self._updating_interactive_ellipse = True
         self.interactive_ellipse_item.setPos(
-            [float(x) - float(a), float(y) - float(b)],
+            [display_x - float(b), display_y - float(a)],
             update=False,
         )
-        self.interactive_ellipse_item.setSize([2 * float(a), 2 * float(b)], update=False)
-        self.interactive_ellipse_item.setAngle(float(theta), update=False)
+        self.interactive_ellipse_item.setSize([2 * float(b), 2 * float(a)], update=False)
+        self.interactive_ellipse_item.setAngle(-float(theta), update=False)
         self.interactive_ellipse_item.stateChanged(finish=False)
         self._updating_interactive_ellipse = False
 
@@ -445,11 +458,12 @@ class ImageViewer(QWidget):
             return None
         pos = self.interactive_ellipse_item.pos()
         size = self.interactive_ellipse_item.size()
-        a = float(size.x()) * 0.5
-        b = float(size.y()) * 0.5
-        x = float(pos.x()) + a
-        y = float(pos.y()) + b
-        theta = float(self.interactive_ellipse_item.angle())
+        b = float(size.x()) * 0.5
+        a = float(size.y()) * 0.5
+        display_x = float(pos.x()) + b
+        display_y = float(pos.y()) + a
+        x, y = self._display_to_scientific(display_x, display_y)
+        theta = -float(self.interactive_ellipse_item.angle())
         return x, y, a, b, theta
 
     def set_circle_overlay(
@@ -471,8 +485,9 @@ class ImageViewer(QWidget):
     ) -> None:
         if radius <= 0 or not np.all(np.isfinite([x, y, radius])):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         circle = pg.CircleROI(
-            [float(x) - float(radius), float(y) - float(radius)],
+            [display_x - float(radius), display_y - float(radius)],
             [2 * float(radius), 2 * float(radius)],
             pen=pg.mkPen(color, width=2),
             movable=False,
@@ -507,8 +522,9 @@ class ImageViewer(QWidget):
             return
         if not np.all(np.isfinite([x, y, inner_radius, outer_radius])):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         outer = pg.CircleROI(
-            [float(x) - float(outer_radius), float(y) - float(outer_radius)],
+            [display_x - float(outer_radius), display_y - float(outer_radius)],
             [2 * float(outer_radius), 2 * float(outer_radius)],
             pen=pg.mkPen(color, width=2),
             movable=False,
@@ -516,7 +532,7 @@ class ImageViewer(QWidget):
             resizable=False,
         )
         inner = pg.CircleROI(
-            [float(x) - float(inner_radius), float(y) - float(inner_radius)],
+            [display_x - float(inner_radius), display_y - float(inner_radius)],
             [2 * float(inner_radius), 2 * float(inner_radius)],
             pen=pg.mkPen(color, width=1, style=Qt.DashLine),
             movable=False,
@@ -553,10 +569,11 @@ class ImageViewer(QWidget):
     ) -> None:
         if a <= 0 or b <= 0 or not np.all(np.isfinite([x, y, a, b, theta])):
             return
+        display_x, display_y = self._scientific_to_display(x, y)
         ellipse = pg.EllipseROI(
-            [float(x) - float(a), float(y) - float(b)],
-            [2 * float(a), 2 * float(b)],
-            angle=float(np.degrees(theta)),
+            [display_x - float(b), display_y - float(a)],
+            [2 * float(b), 2 * float(a)],
+            angle=-float(np.degrees(theta)),
             pen=pg.mkPen(color, width=2),
             movable=False,
             removable=False,
@@ -576,13 +593,36 @@ class ImageViewer(QWidget):
         for x, y, dx, dy in np.asarray(vectors, dtype=float):
             if not np.all(np.isfinite([x, y, dx, dy])):
                 continue
+            display_x, display_y = self._scientific_to_display(x, y)
+            display_dx, display_dy = self._scientific_to_display(dx, dy)
             line = pg.PlotDataItem(
-                [float(x), float(x + dx)],
-                [float(y), float(y + dy)],
+                [display_x, display_x + display_dx],
+                [display_y, display_y + display_dy],
                 pen=pg.mkPen(color, width=2),
             )
             self.image_view.getView().addItem(line)
             self.overlay_items.append(line)
+
+    def add_point_labels(self, points: np.ndarray, labels: list[str], color: str = "c") -> None:
+        for point, label in zip(np.asarray(points, dtype=float), labels):
+            if point.size < 2:
+                continue
+            display_x, display_y = self._scientific_to_display(point[0], point[1])
+            item = pg.TextItem(str(label), color=color, anchor=(0, 1))
+            item.setPos(display_x, display_y)
+            self.image_view.getView().addItem(item)
+            self.overlay_items.append(item)
+
+    def add_mask_overlay(self, mask: np.ndarray, color=(255, 0, 0, 90)) -> None:
+        array = np.asarray(mask, dtype=bool)
+        if self.raw_image is None or array.shape != self.raw_image.shape[:2]:
+            return
+        rgba = np.zeros((*array.shape, 4), dtype=np.uint8)
+        rgba[array] = color
+        item = pg.ImageItem(rgba, axisOrder="row-major")
+        item.setAcceptedMouseButtons(Qt.NoButton)
+        self.image_view.getView().addItem(item)
+        self.overlay_items.append(item)
 
     def _safe_levels(
         self,
@@ -605,8 +645,8 @@ class ImageViewer(QWidget):
         return low, high
 
     def _finite_view_range(self, shape: tuple[int, int]) -> None:
-        width = max(int(shape[0]), 1)
-        height = max(int(shape[1]), 1)
+        width = max(int(shape[1]), 1)
+        height = max(int(shape[0]), 1)
         view = self.image_view.getView()
         view.setRange(xRange=(0, width), yRange=(0, height), padding=0)
 
@@ -674,7 +714,8 @@ class ImageViewer(QWidget):
             return
         if self.interactive_annulus_inner_item is None or self.interactive_annulus_outer_item is None:
             return
-        x, y, changed_radius = self._circle_geometry(changed_item)
+        display_x, display_y, changed_radius = self._circle_geometry(changed_item)
+        x, y = self._display_to_scientific(display_x, display_y)
         inner = self._circle_geometry(self.interactive_annulus_inner_item)[2]
         outer = self._circle_geometry(self.interactive_annulus_outer_item)[2]
         if changed_item is self.interactive_annulus_inner_item:
@@ -701,6 +742,18 @@ class ImageViewer(QWidget):
         high = min(max(high, low + 1), max(maximum, 1))
         return low, high
 
+    @staticmethod
+    def _scientific_to_display(x: float, y: float) -> tuple[float, float]:
+        return float(y), float(x)
+
+    @staticmethod
+    def _display_to_scientific(display_x: float, display_y: float) -> tuple[float, float]:
+        return float(display_y), float(display_x)
+
+    @staticmethod
+    def _scientific_to_display_arrays(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return np.asarray(y), np.asarray(x)
+
     def _handle_mouse_clicked(self, event) -> None:
         if event.button() == Qt.RightButton:
             return
@@ -709,8 +762,8 @@ class ImageViewer(QWidget):
             return
 
         pos = image_item.mapFromScene(event.scenePos())
-        x = int(round(pos.x()))
-        y = int(round(pos.y()))
+        x = int(round(pos.y()))
+        y = int(round(pos.x()))
         if x < 0 or y < 0:
             return
         self.image_clicked.emit(x, y)
@@ -721,8 +774,8 @@ class ImageViewer(QWidget):
             self.coordinate_label.setText("x: -, y: -, value: -")
             return
         pos = image_item.mapFromScene(scene_pos)
-        x = int(round(pos.x()))
-        y = int(round(pos.y()))
+        x = int(round(pos.y()))
+        y = int(round(pos.x()))
         if x < 0 or y < 0 or x >= self.raw_image.shape[0] or y >= self.raw_image.shape[1]:
             self.coordinate_label.setText("x: -, y: -, value: -")
             return

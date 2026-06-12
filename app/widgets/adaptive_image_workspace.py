@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.widgets.image_viewer import ImageViewer
+from app.widgets.rgb_image_viewer import RgbImageViewer
 
 
 @dataclass(frozen=True)
@@ -30,11 +31,15 @@ class FigureResult:
     image: Any
     diagnostic: str = ""
     image_kind: str = "intensity"
+    flip_x: bool = False
     levels: tuple[float, float] | None = None
     colormap: str | None = None
     scaling: str | None = None
     points: np.ndarray | None = None
+    point_labels: list[str] | None = None
     vectors: np.ndarray | None = None
+    circles: np.ndarray | None = None
+    mask: np.ndarray | None = None
     overlay: dict[str, float | str] | None = None
     bragg_sampling_provider: Callable[[int], np.ndarray] | None = None
     metadata: dict[str, object] = field(default_factory=dict)
@@ -50,7 +55,7 @@ class FigurePanel(QFrame):
         super().__init__()
         self.result = result
         self.setMinimumSize(self.MINIMUM_WIDTH, self.MINIMUM_HEIGHT)
-        self.viewer = result.viewer or ImageViewer(result.image_kind)
+        self.viewer = result.viewer or self._new_viewer(result)
         self.title_label = QLabel(result.title)
         self.title_label.setObjectName("viewerTitle")
         self.diagnostic_label = QLabel(result.diagnostic)
@@ -61,21 +66,42 @@ class FigurePanel(QFrame):
         header = QHBoxLayout()
         header.addWidget(self.title_label, 1)
         header.addWidget(maximize)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.addLayout(header)
-        layout.addWidget(self.viewer, 1)
-        layout.addWidget(self.diagnostic_label)
+        self.panel_layout = QVBoxLayout(self)
+        self.panel_layout.setContentsMargins(4, 4, 4, 4)
+        self.panel_layout.addLayout(header)
+        self.panel_layout.addWidget(self.viewer, 1)
+        self.panel_layout.addWidget(self.diagnostic_label)
         self.update_result(result)
 
     def update_result(self, result: FigureResult) -> None:
+        if result.viewer is None and not self._viewer_matches(result):
+            old_viewer = self.viewer
+            self.viewer = self._new_viewer(result)
+            self.panel_layout.replaceWidget(old_viewer, self.viewer)
+            old_viewer.deleteLater()
         self.result = result
         self.title_label.setText(result.title)
         self.diagnostic_label.setText(result.diagnostic)
         self.diagnostic_label.setVisible(bool(result.diagnostic))
         self._render(self.viewer)
 
-    def _render(self, viewer: ImageViewer) -> None:
+    @staticmethod
+    def _new_viewer(result: FigureResult) -> QWidget:
+        if result.image_kind in {"color", "rgb"}:
+            return RgbImageViewer()
+        return ImageViewer(result.image_kind)
+
+    def _viewer_matches(self, result: FigureResult) -> bool:
+        if result.image_kind in {"color", "rgb"}:
+            return isinstance(self.viewer, RgbImageViewer)
+        return isinstance(self.viewer, ImageViewer)
+
+    def _render(self, viewer: QWidget) -> None:
+        if isinstance(viewer, RgbImageViewer):
+            viewer.set_image(np.asarray(self.result.image), flip_x=self.result.flip_x)
+            return
+        if not isinstance(viewer, ImageViewer):
+            raise TypeError(f"Unsupported figure viewer: {type(viewer).__name__}")
         viewer.clear_points()
         viewer.clear_overlays()
         if self.result.scaling is not None:
@@ -85,8 +111,15 @@ class FigurePanel(QFrame):
         viewer.set_image(np.asarray(self.result.image), levels=self.result.levels)
         if self.result.points is not None and len(self.result.points):
             viewer.set_points(self.result.points[:, 0], self.result.points[:, 1], size=7)
+            if self.result.point_labels:
+                viewer.add_point_labels(self.result.points, self.result.point_labels)
         if self.result.vectors is not None and len(self.result.vectors):
             viewer.add_vector_overlays(self.result.vectors)
+        if self.result.circles is not None and len(self.result.circles):
+            for x, y, radius in self.result.circles:
+                viewer.add_circle_overlay(float(x), float(y), float(radius), color="r")
+        if self.result.mask is not None:
+            viewer.add_mask_overlay(self.result.mask)
         if self.result.bragg_sampling_provider is not None:
             viewer.set_bragg_sampling_provider(self.result.bragg_sampling_provider)
         overlay = self.result.overlay or {}
@@ -115,12 +148,19 @@ class FigurePanel(QFrame):
                     float(overlay.get("theta", 0)),
                     color="c",
                 )
+        elif overlay.get("kind") == "rect":
+            viewer.set_roi_rect(
+                int(overlay.get("x0", 0)),
+                int(overlay.get("x1", 0)),
+                int(overlay.get("y0", 0)),
+                int(overlay.get("y1", 0)),
+            )
 
     def _show_maximized(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle(self.result.title)
         dialog.resize(1100, 800)
-        viewer = ImageViewer(self.result.image_kind)
+        viewer = self._new_viewer(self.result)
         self._render(viewer)
         layout = QVBoxLayout(dialog)
         layout.addWidget(viewer)

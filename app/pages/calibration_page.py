@@ -6,6 +6,7 @@ from typing import Callable
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -24,6 +25,8 @@ from app.services.bragg_strain_service import (
     BraggStrainService,
     CalibrationActionResult,
     CrystalPixelParams,
+    OriginCalibrationParams,
+    QRComparisonParams,
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
@@ -102,6 +105,18 @@ class CalibrationPage(QWidget):
         self.status_label.setWordWrap(True)
         self.analysis_target = QComboBox()
         self.analysis_target.addItems(["Preview", "ACOM", "Strain", "DPC"])
+        self.origin_center_x = self._float_input(-100000, 100000, 0, unit="px")
+        self.origin_center_y = self._float_input(-100000, 100000, 0, unit="px")
+        self.origin_use_guess = QCheckBox("Use center guess")
+        self.origin_score = QComboBox()
+        self.origin_score.addItems(["automatic", "distance", "intensity", "intensity weighted distance"])
+        self.origin_find_center = QComboBox()
+        self.origin_find_center.addItems(["max", "CoM"])
+        self.origin_fit_function = QComboBox()
+        self.origin_fit_function.addItems(["plane", "parabola", "bezier_two"])
+        self.origin_robust = QCheckBox("Enable robust fit")
+        self.origin_robust_steps = self._int_input(1, 20, 3)
+        self.origin_robust_threshold = self._float_input(0.1, 100, 2)
         self.ellipse_center_x = self._float_input(0, 100000, 0, unit="px")
         self.ellipse_center_y = self._float_input(0, 100000, 0, unit="px")
         self.ellipse_inner = self._float_input(0.1, 100000, 50, unit="px")
@@ -115,6 +130,13 @@ class CalibrationPage(QWidget):
         self.crystal_atomic_number = self._int_input(1, 118, 79)
         self.crystal_k_max = self._float_input(0.000001, 1000, 1.5, decimals=4, unit="A^-1")
         self.rotation_spin = self._float_input(-360, 360, -83, unit="deg")
+        self.rotation_real_direction = self._float_input(-360, 360, 158, unit="deg")
+        self.rotation_real_x = self._float_input(-100000, 100000, 59, unit="px")
+        self.rotation_real_y = self._float_input(-100000, 100000, 16.5, unit="px")
+        self.rotation_q_x = self._float_input(-100000, 100000, 154, unit="px")
+        self.rotation_q_y = self._float_input(-100000, 100000, 205, unit="px")
+        self.rotation_real_length = self._float_input(0.01, 2, 0.4, decimals=3)
+        self.rotation_q_length = self._float_input(0.01, 2, 0.3, decimals=3)
         self.refresh_button = QPushButton("Check Calibration")
         self.origin_button = QPushButton("Measure Origin")
         self.compare_origin_button = QPushButton("Compare Origin Correction")
@@ -162,7 +184,9 @@ class CalibrationPage(QWidget):
         self.refresh_button.clicked.connect(lambda: self.refresh_status())
         self.origin_button.clicked.connect(
             lambda: self._run(
-                lambda: self.service.calibrate_origin(self.braggvectors_provider()),
+                lambda: self.service.calibrate_origin(
+                    self.braggvectors_provider(), self._origin_params()
+                ),
                 "Measure and fit origin",
                 WorkflowStep.CALIBRATION_ORIGIN,
             )
@@ -246,6 +270,7 @@ class CalibrationPage(QWidget):
                         if self.rotation_reference_provider is not None
                         else None
                     ),
+                    comparison=self._qr_comparison_params(),
                 ),
                 "Set QR rotation",
                 WorkflowStep.CALIBRATION_ROTATION,
@@ -306,6 +331,17 @@ class CalibrationPage(QWidget):
         origin_group = QGroupBox("Origin Calibration")
         origin_layout = QVBoxLayout(origin_group)
         origin_layout.addWidget(self.origin_measurement_label)
+        origin_form = QFormLayout()
+        origin_form.addRow("", self.origin_use_guess)
+        origin_form.addRow("center guess x", self.origin_center_x)
+        origin_form.addRow("center guess y", self.origin_center_y)
+        origin_form.addRow("score method", self.origin_score)
+        origin_form.addRow("find center", self.origin_find_center)
+        origin_form.addRow("fit function", self.origin_fit_function)
+        origin_form.addRow("", self.origin_robust)
+        origin_form.addRow("robust steps", self.origin_robust_steps)
+        origin_form.addRow("robust threshold", self.origin_robust_threshold)
+        origin_layout.addLayout(origin_form)
         origin_layout.addWidget(self.origin_button)
         origin_layout.addWidget(self.compare_origin_button)
         origin_layout.addWidget(self.apply_origin_button)
@@ -337,6 +373,13 @@ class CalibrationPage(QWidget):
         rotation_group = QGroupBox("QR Rotation")
         rotation_layout = QFormLayout(rotation_group)
         rotation_layout.addRow("QR rotation (degree)", self.rotation_spin)
+        rotation_layout.addRow("R arrow direction", self.rotation_real_direction)
+        rotation_layout.addRow("R arrow x", self.rotation_real_x)
+        rotation_layout.addRow("R arrow y", self.rotation_real_y)
+        rotation_layout.addRow("Q arrow x", self.rotation_q_x)
+        rotation_layout.addRow("Q arrow y", self.rotation_q_y)
+        rotation_layout.addRow("R arrow length fraction", self.rotation_real_length)
+        rotation_layout.addRow("Q arrow length fraction", self.rotation_q_length)
         rotation_layout.addRow("", self.rotation_button)
         rotation_layout.addRow("", self.apply_rotation_button)
 
@@ -388,6 +431,30 @@ class CalibrationPage(QWidget):
         ]:
             label.setWordWrap(True)
             label.setMinimumWidth(0)
+
+    def _origin_params(self) -> OriginCalibrationParams:
+        use_guess = self.origin_use_guess.isChecked()
+        return OriginCalibrationParams(
+            center_guess_x=self.origin_center_x.value() if use_guess else None,
+            center_guess_y=self.origin_center_y.value() if use_guess else None,
+            score_method=None if self.origin_score.currentText() == "automatic" else self.origin_score.currentText(),
+            find_center=self.origin_find_center.currentText(),
+            fit_function=self.origin_fit_function.currentText(),
+            robust=self.origin_robust.isChecked(),
+            robust_steps=self.origin_robust_steps.value(),
+            robust_threshold=self.origin_robust_threshold.value(),
+        )
+
+    def _qr_comparison_params(self) -> QRComparisonParams:
+        return QRComparisonParams(
+            real_rotation=self.rotation_real_direction.value(),
+            real_position_x=self.rotation_real_x.value(),
+            real_position_y=self.rotation_real_y.value(),
+            reciprocal_position_x=self.rotation_q_x.value(),
+            reciprocal_position_y=self.rotation_q_y.value(),
+            real_length_fraction=self.rotation_real_length.value(),
+            reciprocal_length_fraction=self.rotation_q_length.value(),
+        )
 
     def refresh_status(self, show_histogram: bool = True) -> None:
         braggvectors = self.braggvectors_provider()
@@ -554,7 +621,11 @@ class CalibrationPage(QWidget):
         self.worker_thread.start()
 
     def _finished(self, result: CalibrationActionResult) -> None:
-        self.status_label.setText(f"{result.message} ({result.elapsed_seconds:.2f} s)")
+        quality = ", ".join(f"{key}={value:.4g}" if isinstance(value, float) else f"{key}={value}" for key, value in result.quality.items())
+        self.status_label.setText(
+            f"{result.message} ({result.elapsed_seconds:.2f} s)"
+            + (f" Quality: {quality}" if quality else "")
+        )
         self.log_panel.log(result.message)
         self.log_panel.process_finished(self.current_process_name, result.message)
         self.viewers.clear()
@@ -566,6 +637,8 @@ class CalibrationPage(QWidget):
                 image,
                 make_current=False,
                 overlay=result.overlays.get(name),
+                vectors=result.vectors.get(name),
+                image_kind=result.image_kinds.get(name),
             )
             if self.result_registry is not None:
                 self.result_registry.register(
@@ -708,15 +781,36 @@ class CalibrationPage(QWidget):
         image,
         make_current: bool = False,
         overlay: dict[str, float | str] | None = None,
+        vectors: np.ndarray | None = None,
+        image_kind: str | None = None,
     ) -> None:
         provider = None
+        signed_origin_map = any(
+            token in name.lower()
+            for token in [
+                "qx measured",
+                "qx fitted",
+                "qx residual",
+                "qy measured",
+                "qy fitted",
+                "qy residual",
+            ]
+        )
         if "bragg vector" in name.lower() or "braggvectors" in name.lower():
             mode = "cal" if "calibrated" in name.lower() or "corrected" in name.lower() else "raw"
             provider = lambda sampling, mode=mode: np.asarray(
                     self.braggvectors_provider().histogram(mode=mode, sampling=sampling).data
                 )
         self.figure_results[name] = FigureResult(
-            name, image, overlay=overlay, bragg_sampling_provider=provider, key=name
+            name,
+            image,
+            overlay=overlay,
+            vectors=vectors,
+            image_kind=image_kind or "intensity",
+            bragg_sampling_provider=provider,
+            key=name,
+            colormap="RdBu_r" if signed_origin_map else None,
+            scaling="linear" if signed_origin_map else None,
         )
         self.viewers.update_result(name, self.figure_results[name])
         for panel in self.viewers.panels:
@@ -868,6 +962,15 @@ class CalibrationPage(QWidget):
     def params_snapshot(self) -> dict[str, object]:
         return {
             "analysis_target": self.analysis_target.currentText(),
+            "origin_use_guess": self.origin_use_guess.isChecked(),
+            "origin_center_x": self.origin_center_x.value(),
+            "origin_center_y": self.origin_center_y.value(),
+            "origin_score": self.origin_score.currentText(),
+            "origin_find_center": self.origin_find_center.currentText(),
+            "origin_fit_function": self.origin_fit_function.currentText(),
+            "origin_robust": self.origin_robust.isChecked(),
+            "origin_robust_steps": self.origin_robust_steps.value(),
+            "origin_robust_threshold": self.origin_robust_threshold.value(),
             "ellipse_center_x": self.ellipse_center_x.value(),
             "ellipse_center_y": self.ellipse_center_y.value(),
             "ellipse_inner": self.ellipse_inner.value(),
@@ -875,6 +978,13 @@ class CalibrationPage(QWidget):
             "sampling": self.sampling_spin.value(),
             "q_pixel_size": self.pixel_spin.value(),
             "qr_rotation": self.rotation_spin.value(),
+            "rotation_real_direction": self.rotation_real_direction.value(),
+            "rotation_real_x": self.rotation_real_x.value(),
+            "rotation_real_y": self.rotation_real_y.value(),
+            "rotation_q_x": self.rotation_q_x.value(),
+            "rotation_q_y": self.rotation_q_y.value(),
+            "rotation_real_length": self.rotation_real_length.value(),
+            "rotation_q_length": self.rotation_q_length.value(),
             "crystal_cif_path": self.crystal_cif_path,
             "crystal_lattice_parameter": self.crystal_lattice.value(),
             "crystal_atomic_number": int(self.crystal_atomic_number.value()),
@@ -893,12 +1003,34 @@ class CalibrationPage(QWidget):
             ("ellipse_center_y", self.ellipse_center_y),
             ("q_pixel_size", self.pixel_spin),
             ("qr_rotation", self.rotation_spin),
+            ("origin_center_x", self.origin_center_x),
+            ("origin_center_y", self.origin_center_y),
+            ("origin_robust_steps", self.origin_robust_steps),
+            ("origin_robust_threshold", self.origin_robust_threshold),
+            ("rotation_real_direction", self.rotation_real_direction),
+            ("rotation_real_x", self.rotation_real_x),
+            ("rotation_real_y", self.rotation_real_y),
+            ("rotation_q_x", self.rotation_q_x),
+            ("rotation_q_y", self.rotation_q_y),
+            ("rotation_real_length", self.rotation_real_length),
+            ("rotation_q_length", self.rotation_q_length),
             ("crystal_lattice_parameter", self.crystal_lattice),
             ("crystal_atomic_number", self.crystal_atomic_number),
             ("crystal_k_max", self.crystal_k_max),
         ]:
             if key in params:
                 spin.setValue(float(params[key]))
+        if "origin_use_guess" in params:
+            self.origin_use_guess.setChecked(bool(params["origin_use_guess"]))
+        if "origin_robust" in params:
+            self.origin_robust.setChecked(bool(params["origin_robust"]))
+        for key, combo in [
+            ("origin_score", self.origin_score),
+            ("origin_find_center", self.origin_find_center),
+            ("origin_fit_function", self.origin_fit_function),
+        ]:
+            if key in params:
+                combo.setCurrentText(str(params[key]))
         if "sampling" in params:
             self.sampling_spin.setValue(int(params["sampling"]))
         self.crystal_cif_path = str(params.get("crystal_cif_path", self.crystal_cif_path))

@@ -1342,7 +1342,11 @@ class MainWindow(QMainWindow):
         previous_target = self.workflow_state.dataset_roles.target_datacube
         self.workflow_state.set_dataset_role(role, selected_path)
         if role == "target_datacube" and previous_target != selected_path:
-            self._clear_all_image_workspaces()
+            if previous_target is None:
+                self._clear_all_image_workspaces(exclude_keys={"preprocess"})
+            else:
+                self._clear_all_image_workspaces()
+                self.result_registry.clear()
         self._refresh_role_labels()
         self.log_panel.log(f"Assigned {role}: {selected_path}")
 
@@ -1496,9 +1500,12 @@ class MainWindow(QMainWindow):
     def _grid_states(self) -> dict[str, dict[str, object]]:
         return {key: workspace.grid_state() for key, workspace in self._named_workspaces().items()}
 
-    def _clear_all_image_workspaces(self) -> None:
+    def _clear_all_image_workspaces(self, exclude_keys: set[str] | None = None) -> None:
+        excluded = set(exclude_keys or ())
         cleared: set[int] = set()
-        for page in self.viewer_pages.values():
+        for key, page in self.viewer_pages.items():
+            if key in excluded:
+                continue
             if id(page) in cleared:
                 continue
             cleared.add(id(page))

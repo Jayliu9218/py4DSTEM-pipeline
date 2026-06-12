@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
+from app.widgets.adaptive_image_workspace import FigureResult
 
 
 class FileOpenAndRolesTests(unittest.TestCase):
@@ -42,6 +43,34 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.window._assign_current_role("target_datacube")
 
         self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/target")
+
+    def test_initial_target_assignment_preserves_preprocessing_diagnostics(self) -> None:
+        self.window._open_file_path(str(self.path))
+        target_item = self.window.tree.topLevelItem(0).child(0)
+        self.window.tree.setCurrentItem(target_item)
+        self.window.preprocessing_page.workspace.set_results(
+            [FigureResult("Basic diagnostic", np.ones((2, 2)))]
+        )
+
+        self.window._assign_current_role("target_datacube")
+
+        self.assertEqual(
+            [result.title for result in self.window.preprocessing_page.workspace.results],
+            ["Basic diagnostic"],
+        )
+
+    def test_replacing_target_clears_preprocessing_diagnostics(self) -> None:
+        self.window._open_file_path(str(self.path))
+        target_item = self.window.tree.topLevelItem(0).child(0)
+        self.window.tree.setCurrentItem(target_item)
+        self.window.workflow_state.set_dataset_role("target_datacube", "/old-target")
+        self.window.preprocessing_page.workspace.set_results(
+            [FigureResult("Basic diagnostic", np.ones((2, 2)))]
+        )
+
+        self.window._assign_current_role("target_datacube")
+
+        self.assertEqual(self.window.preprocessing_page.workspace.results, [])
 
     def test_tree_uses_middle_elision_and_full_text_tooltips(self) -> None:
         self.window._open_file_path(str(self.path))

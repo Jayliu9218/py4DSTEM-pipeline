@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.services.bragg_strain_service import BraggStrainService, StrainMapParams, StrainMapResult
+from app.services.bragg_strain_service import (
+    BasisSelectionParams,
+    BraggStrainService,
+    StrainMapParams,
+    StrainMapResult,
+    StrainStageResult,
+)
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
@@ -43,7 +49,10 @@ class StrainMapWorker(QObject):
         try:
             stream = ProgressStream(self.progress.emit)
             with redirect_stdout(stream), redirect_stderr(stream):
-                self.finished.emit(self.service.compute_strain_map(self.braggvectors, self.params))
+                if self.service.strainmap is not None and hasattr(self.service.strainmap, "g1g2_map"):
+                    self.finished.emit(self.service.calculate_strain_from_stages(self.braggvectors, self.params))
+                else:
+                    self.finished.emit(self.service.compute_strain_map(self.braggvectors, self.params))
             stream.flush()
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -79,7 +88,7 @@ class StrainMapPage(QWidget):
         self.reference_mode = QComboBox()
         self.reference_mode.addItems(["auto_valid", "roi_vectors", "roi_mask", "manual_g1g2"])
         self.display_mode = QComboBox()
-        self.display_mode.addItems(["Process", "Final Strain"])
+        self.display_mode.addItems(["Final Strain","Process"])
         self.color_mode = QComboBox()
         self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
         self.color_min_spin = self._float_input(-1e6, 1e6, -1, unit="value")
@@ -92,8 +101,18 @@ class StrainMapPage(QWidget):
         self.manual_g1_y = self._float_input(-100000, 100000, 0)
         self.manual_g2_x = self._float_input(-100000, 100000, 0)
         self.manual_g2_y = self._float_input(-100000, 100000, 1)
+        self.index_origin = self._int_input(-1, 10000, -1)
+        self.index_g1 = self._int_input(-1, 10000, -1)
+        self.index_g2 = self._int_input(-1, 10000, -1)
 
+        self.choose_basis_button = QPushButton("1 Choose Basis Vectors")
+        self.accept_basis_button = QPushButton("2 Accept Basis Selection")
+        self.set_spacing_button = QPushButton("3 Set Peak Spacing")
+        self.fit_basis_button = QPushButton("4 Fit Basis Vectors")
+        self.accept_fit_button = QPushButton("5 Accept Basis Fit")
+        self.accept_reference_button = QPushButton("6 Review && Accept Reference")
         self.run_button = QPushButton("Run Strain Map")
+        self.run_button.setEnabled(False)
         self.pick_roi_button = QPushButton("Pick ROI From Map")
         self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
@@ -105,6 +124,12 @@ class StrainMapPage(QWidget):
         self.workspace = AdaptiveImageWorkspace()
 
         self.run_button.clicked.connect(self.run_strain_map)
+        self.choose_basis_button.clicked.connect(self.choose_basis_vectors)
+        self.accept_basis_button.clicked.connect(lambda: self.accept_stage("basis_selection"))
+        self.set_spacing_button.clicked.connect(self.set_peak_spacing)
+        self.fit_basis_button.clicked.connect(self.fit_basis_vectors)
+        self.accept_fit_button.clicked.connect(lambda: self.accept_stage("basis_fit"))
+        self.accept_reference_button.clicked.connect(self.review_and_accept_reference)
         self.pick_roi_button.clicked.connect(self.start_roi_pick)
         self.export_button.clicked.connect(self.export_result)
         self.color_mode.currentTextChanged.connect(lambda _text: self._display_result())
@@ -171,6 +196,7 @@ class StrainMapPage(QWidget):
 
     def _calibration_warning(self, braggvectors) -> str:
         calstate = getattr(braggvectors, "calstate", {})
+        status = self.service.calibration_status(braggvectors)
         missing = [
             label
             for name, label in [
@@ -183,9 +209,12 @@ class StrainMapPage(QWidget):
         ]
         if not missing:
             return ""
+        rotation_detail = ""
+        if "rotation" in missing and status.rotate != "missing":
+            rotation_detail = " QR rotation metadata exists, but rotation is not applied."
         return (
             "Calibration is incomplete; strain will continue, but accuracy may be lower. "
-            f"Missing/applied-off corrections: {', '.join(missing)}."
+            f"Missing/applied-off corrections: {', '.join(missing)}.{rotation_detail}"
         )
 
     def export_result(self) -> None:
@@ -221,6 +250,9 @@ class StrainMapPage(QWidget):
         form.addRow("minSpacing", self.min_spacing_spin)
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
+        form.addRow("manual origin index (-1 auto)", self.index_origin)
+        form.addRow("manual g1 index (-1 auto)", self.index_g1)
+        form.addRow("manual g2 index (-1 auto)", self.index_g2)
         form.addRow("reference mode", self.reference_mode)
         form.addRow("display", self.display_mode)
         form.addRow("color range", self.color_mode)
@@ -239,6 +271,12 @@ class StrainMapPage(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(controls)
         left_layout.addWidget(self.pick_roi_button)
+        left_layout.addWidget(self.choose_basis_button)
+        left_layout.addWidget(self.accept_basis_button)
+        left_layout.addWidget(self.set_spacing_button)
+        left_layout.addWidget(self.fit_basis_button)
+        left_layout.addWidget(self.accept_fit_button)
+        left_layout.addWidget(self.accept_reference_button)
         left_layout.addWidget(self.run_button)
         left_layout.addWidget(self.export_button)
         left_layout.addWidget(self.status_label)
@@ -246,6 +284,88 @@ class StrainMapPage(QWidget):
         self.controls_panel = left
         layout = QHBoxLayout(self)
         layout.addWidget(self.workspace)
+
+    def _basis_params(self) -> BasisSelectionParams:
+        optional_index = lambda value: None if value < 0 else int(value)
+        return BasisSelectionParams(
+            index_origin=optional_index(self.index_origin.value()),
+            index_g1=optional_index(self.index_g1.value()),
+            index_g2=optional_index(self.index_g2.value()),
+            min_absolute_intensity=self.min_abs_spin.value(),
+            min_relative_intensity=self.min_rel_spin.value(),
+            min_spacing=self.min_spacing_spin.value(),
+            edge_boundary=self.edge_spin.value(),
+            max_num_peaks=self.max_peaks_spin.value(),
+        )
+
+    def choose_basis_vectors(self) -> None:
+        try:
+            result = self.service.choose_strain_basis(
+                self.braggvectors_provider(), self._basis_params()
+            )
+            self._display_stage(result)
+        except Exception as exc:
+            self._handle_failed(str(exc))
+
+    def set_peak_spacing(self) -> None:
+        try:
+            self._display_stage(self.service.set_strain_peak_spacing(self.max_spacing_spin.value()))
+        except Exception as exc:
+            self._handle_failed(str(exc))
+
+    def fit_basis_vectors(self) -> None:
+        try:
+            self._display_stage(self.service.fit_strain_basis())
+        except Exception as exc:
+            self._handle_failed(str(exc))
+
+    def _display_stage(self, result: StrainStageResult) -> None:
+        quality = ", ".join(f"{key}={value}" for key, value in result.quality.items())
+        self.status_label.setText(f"{result.message} {quality}".strip())
+        self.log_panel.log(f"Strain stage {result.stage}: {result.message} {quality}".strip())
+        self.workspace.set_results([
+            FigureResult(
+                name,
+                image,
+                vectors=result.vectors.get(name),
+                circles=result.circles.get(name),
+                diagnostic=quality,
+                scaling="linear",
+            )
+            for name, image in result.images.items()
+        ])
+
+    def accept_stage(self, stage: str) -> None:
+        try:
+            state = self.service.accept_strain_stage(stage)
+        except Exception as exc:
+            self._handle_failed(str(exc))
+            return
+        if not {"basis_selection", "basis_fit", "reference"}.issubset(
+            self.service.accepted_strain_stages
+        ):
+            QMessageBox.information(
+                self,
+                "Strain Map",
+                "Choose, review, and explicitly accept the basis selection, basis fit, and reference first.",
+            )
+            return
+        self.status_label.setText(
+            "Accepted stages: "
+            f"basis selection={state.basis_selection}, basis fit={state.basis_fit}, "
+            f"reference={state.reference}."
+        )
+        self.run_button.setEnabled(state.reference)
+
+    def review_and_accept_reference(self) -> None:
+        try:
+            result = self.service.preview_strain_reference(
+                self.braggvectors_provider(), self._params()
+            )
+            self._display_stage(result)
+            self.accept_stage("reference")
+        except Exception as exc:
+            self._handle_failed(str(exc))
 
     def _float_input(
         self,
@@ -457,6 +577,9 @@ class StrainMapPage(QWidget):
             "min_spacing": params.min_spacing,
             "edge_boundary": params.edge_boundary,
             "max_num_peaks": params.max_num_peaks,
+            "index_origin": self.index_origin.value(),
+            "index_g1": self.index_g1.value(),
+            "index_g2": self.index_g2.value(),
             "reference_mode": params.reference_mode,
             "display_mode": self.display_mode.currentText(),
             "roi_rx_start": params.roi_rx_start,
@@ -489,6 +612,9 @@ class StrainMapPage(QWidget):
         int_controls = {
             "edge_boundary": self.edge_spin,
             "max_num_peaks": self.max_peaks_spin,
+            "index_origin": self.index_origin,
+            "index_g1": self.index_g1,
+            "index_g2": self.index_g2,
             "roi_rx_start": self.roi_rx_start,
             "roi_rx_end": self.roi_rx_end,
             "roi_ry_start": self.roi_ry_start,
