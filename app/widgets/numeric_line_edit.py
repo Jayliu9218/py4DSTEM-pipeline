@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget
 
 
 class NumericLineEdit(QWidget):
@@ -25,6 +25,8 @@ class NumericLineEdit(QWidget):
         self._value = 0.0
 
         self.line_edit = QLineEdit()
+        self.line_edit.setMinimumWidth(0)
+        self.line_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.line_edit.setAlignment(Qt.AlignRight)
         self.line_edit.setValidator(self._validator())
         self.line_edit.editingFinished.connect(self._commit_text)
@@ -32,12 +34,15 @@ class NumericLineEdit(QWidget):
 
         self.unit_label = QLabel(unit)
         self.unit_label.setMinimumWidth(34 if unit else 0)
+        self.unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(self.line_edit, 1)
         layout.addWidget(self.unit_label)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setValue(value)
 
     def value(self):

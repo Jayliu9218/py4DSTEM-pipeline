@@ -71,6 +71,45 @@ class WorkflowStateTests(unittest.TestCase):
 
         self.assertIsNone(state.dataset_roles.vacuum_probe)
 
+    def test_bf_df_is_recommended_but_does_not_invalidate_dpc(self) -> None:
+        state = WorkflowState()
+        state.mark_completed(WorkflowStep.DPC)
+
+        state.parameters_updated(WorkflowStep.BF_DF_PREVIEW)
+
+        self.assertFalse(state.is_stale(WorkflowStep.DPC))
+
+    def test_target_data_change_invalidates_dpc_chain(self) -> None:
+        state = WorkflowState()
+        state.mark_completed(WorkflowStep.DPC)
+        state.mark_completed(WorkflowStep.PARALLAX)
+
+        state.set_dataset_role("target_datacube", "/new-datacube")
+
+        self.assertTrue(state.is_stale(WorkflowStep.DPC))
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX))
+
+    def test_dpc_stage_dependencies_follow_scientific_gates(self) -> None:
+        state = WorkflowState()
+        for step in (
+            WorkflowStep.DPC_SEGMENTED,
+            WorkflowStep.DPC_PREPROCESS,
+            WorkflowStep.DPC_REVIEW,
+            WorkflowStep.DPC,
+        ):
+            state.mark_completed(step)
+
+        state.parameters_updated(WorkflowStep.DPC_SEGMENTED)
+        self.assertTrue(state.is_stale(WorkflowStep.DPC_SEGMENTED))
+        self.assertFalse(state.is_stale(WorkflowStep.DPC_PREPROCESS))
+        self.assertFalse(state.is_stale(WorkflowStep.DPC_REVIEW))
+        self.assertFalse(state.is_stale(WorkflowStep.DPC))
+
+        state.parameters_updated(WorkflowStep.DPC_PREPROCESS)
+        self.assertTrue(state.is_stale(WorkflowStep.DPC_PREPROCESS))
+        self.assertTrue(state.is_stale(WorkflowStep.DPC_REVIEW))
+        self.assertTrue(state.is_stale(WorkflowStep.DPC))
+
 
 if __name__ == "__main__":
     unittest.main()

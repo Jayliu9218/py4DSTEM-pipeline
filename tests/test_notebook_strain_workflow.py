@@ -122,17 +122,78 @@ class NotebookStrainWorkflowTests(unittest.TestCase):
         self.assertEqual(result.real_space_preview.shape, (5, 7))
         self.assertEqual(result.real_space_overlay["kind"], "circle")
 
-    def test_manual_g1g2_reference(self) -> None:
-        params = StrainMapParams(
-            reference_mode="manual_g1g2",
-            manual_g1_x=2,
-            manual_g1_y=3,
-            manual_g2_x=4,
-            manual_g2_y=5,
+    def test_global_reference_passes_none_after_valid_basis_fit(self) -> None:
+        strainmap = types.SimpleNamespace(
+            g1g2_map=types.SimpleNamespace(
+                get_slice=lambda _name: types.SimpleNamespace(data=np.ones((2, 3), dtype=bool))
+            )
         )
-        reference = BraggStrainService()._strain_reference(object(), params, object())
-        np.testing.assert_array_equal(reference[0], [2, 3])
-        np.testing.assert_array_equal(reference[1], [4, 5])
+        reference = BraggStrainService()._strain_reference(
+            strainmap, StrainMapParams(reference_mode="global_none"), object()
+        )
+        self.assertIsNone(reference)
+
+    def test_roi_reference_uses_get_reference_g1g2(self) -> None:
+        expected_g1 = np.asarray([2.0, 3.0])
+        expected_g2 = np.asarray([4.0, 5.0])
+        captured = {}
+
+        def get_reference_g1g2(roi):
+            captured["roi"] = roi
+            return expected_g1, expected_g2
+
+        strainmap = types.SimpleNamespace(get_reference_g1g2=get_reference_g1g2)
+        braggvectors = types.SimpleNamespace(raw=types.SimpleNamespace(shape=(4, 6)))
+        params = StrainMapParams(
+            reference_mode="roi_g1g2",
+            roi_rx_start=1,
+            roi_rx_end=3,
+            roi_ry_start=2,
+            roi_ry_end=5,
+        )
+        reference = BraggStrainService()._strain_reference(strainmap, params, braggvectors)
+        np.testing.assert_array_equal(reference[0], expected_g1)
+        np.testing.assert_array_equal(reference[1], expected_g2)
+        self.assertEqual(int(captured["roi"].sum()), 6)
+
+    def test_final_strain_receives_only_none_or_roi_derived_vectors(self) -> None:
+        class StrainMap:
+            data = [np.zeros((2, 3)) for _ in range(4)]
+            bvm = types.SimpleNamespace(data=np.ones((5, 7)))
+            g1g2_map = types.SimpleNamespace(
+                get_slice=lambda _name: types.SimpleNamespace(data=np.ones((2, 3), dtype=bool))
+            )
+
+            def __init__(self):
+                self.received_gvects = "unset"
+
+            def get_reference_g1g2(self, _roi):
+                return np.asarray([2.0, 3.0]), np.asarray([4.0, 5.0])
+
+            def get_strain(self, **kwargs):
+                self.received_gvects = kwargs["gvects"]
+
+        braggvectors = types.SimpleNamespace(raw=types.SimpleNamespace(shape=(2, 3)))
+        service = BraggStrainService()
+        global_map = StrainMap()
+        service._finish_strain_map(global_map, braggvectors, StrainMapParams())
+        self.assertIsNone(global_map.received_gvects)
+
+        roi_map = StrainMap()
+        service._finish_strain_map(
+            roi_map,
+            braggvectors,
+            StrainMapParams(
+                reference_mode="roi_g1g2",
+                roi_rx_start=0,
+                roi_rx_end=1,
+                roi_ry_start=0,
+                roi_ry_end=2,
+            ),
+        )
+        self.assertIsInstance(roi_map.received_gvects, tuple)
+        np.testing.assert_array_equal(roi_map.received_gvects[0], [2.0, 3.0])
+        np.testing.assert_array_equal(roi_map.received_gvects[1], [4.0, 5.0])
 
     def test_preprocessing_invalidates_completed_strain(self) -> None:
         state = WorkflowState()

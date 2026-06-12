@@ -32,6 +32,9 @@ class WorkflowStep:
     STRUCTURAL_PHASE = "structural_phase"
     PHASE_CONTRAST = "phase_contrast"
     BF_DF_PREVIEW = "bf_df_preview"
+    DPC_SEGMENTED = "dpc_segmented"
+    DPC_PREPROCESS = "dpc_preprocess"
+    DPC_REVIEW = "dpc_review"
     DPC = "dpc"
     PARALLAX = "parallax"
     PTYCHOGRAPHY = "ptychography"
@@ -83,6 +86,13 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
             WorkflowStep.BF_DF_PREVIEW,
+            WorkflowStep.DPC_SEGMENTED,
+            WorkflowStep.DPC_PREPROCESS,
+            WorkflowStep.DPC_REVIEW,
+            WorkflowStep.DPC,
+            WorkflowStep.PARALLAX,
+            WorkflowStep.PTYCHOGRAPHY,
+            WorkflowStep.METHOD_COMPARISON,
         },
         WorkflowStep.PREPROCESS_APPLY: {
             WorkflowStep.VIRTUAL_DETECTOR,
@@ -97,6 +107,13 @@ class WorkflowState(QObject):
             WorkflowStep.CALIBRATION_ROTATION,
             WorkflowStep.CALIBRATION_APPLY,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.DPC_SEGMENTED,
+            WorkflowStep.DPC_PREPROCESS,
+            WorkflowStep.DPC_REVIEW,
+            WorkflowStep.DPC,
+            WorkflowStep.PARALLAX,
+            WorkflowStep.PTYCHOGRAPHY,
+            WorkflowStep.METHOD_COMPARISON,
         },
         WorkflowStep.PROBE_KERNEL: {
             WorkflowStep.BRAGG_SINGLE,
@@ -126,7 +143,8 @@ class WorkflowState(QObject):
             WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.ORIENTATION_PLAN: {WorkflowStep.ORIENTATION_MATCH},
-        WorkflowStep.BF_DF_PREVIEW: {WorkflowStep.DPC},
+        WorkflowStep.DPC_PREPROCESS: {WorkflowStep.DPC_REVIEW},
+        WorkflowStep.DPC_REVIEW: {WorkflowStep.DPC},
         WorkflowStep.DPC: {WorkflowStep.PARALLAX},
         WorkflowStep.PARALLAX: {WorkflowStep.PTYCHOGRAPHY},
     }

@@ -2,10 +2,20 @@ import unittest
 import types
 
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
-from PySide6.QtWidgets import QGroupBox, QPushButton, QTabWidget
+from PySide6.QtWidgets import (
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+)
 
 from app.main_window import MainWindow
+from app.services.phase_contrast_service import DPCStageResult, PhaseContrastResult
+from app.services.workflow_state import WorkflowStep
 
 
 class PipelineShellTests(unittest.TestCase):
@@ -53,7 +63,107 @@ class PipelineShellTests(unittest.TestCase):
         titles = [module.title for module in self.window.route_modules]
         self.assertEqual(
             titles,
+            [
+                "Data Setup",
+                "BF / DF Preview",
+                "Segmented DPC",
+                "CoM Preprocessing",
+                "CoM Review & Accept",
+                "Integrated Reconstruction",
+                "Export",
+            ],
+        )
+        segmented = next(module for module in self.window.route_modules if module.key == "dpc_segmented")
+        preprocess = next(module for module in self.window.route_modules if module.key == "dpc_preprocess")
+        review = next(module for module in self.window.route_modules if module.key == "dpc_review")
+        dpc = next(module for module in self.window.route_modules if module.key == "dpc")
+        self.assertEqual(segmented.prerequisite, "data_setup")
+        self.assertEqual(preprocess.prerequisite, "data_setup")
+        self.assertEqual(review.prerequisite, "dpc_preprocess")
+        self.assertEqual(dpc.prerequisite, "dpc_review")
+
+    def test_dpc_stages_have_independent_workspaces(self) -> None:
+        pages = [
+            self.window.dpc_segmented_page,
+            self.window.dpc_preprocess_page,
+            self.window.dpc_review_page,
+            self.window.dpc_reconstruction_page,
+        ]
+
+        self.assertEqual(len({id(page.workspace) for page in pages}), 4)
+        self.assertEqual(len({id(page.service) for page in pages}), 1)
+
+    def test_dpc_pages_complete_their_own_workflow_steps(self) -> None:
+        segmented = self.window.dpc_segmented_page
+        segmented.pending_operation = "Segmented DPC"
+        segmented._handle_finished(
+            DPCStageResult(
+                stage="segmented",
+                images={"Mean diffraction pattern": np.ones((2, 2))},
+                masks=tuple(np.ones((2, 2)) for _ in range(4)),
+            )
+        )
+        preprocess = self.window.dpc_preprocess_page
+        preprocess.pending_operation = "DPC CoM preprocessing"
+        preprocess._handle_finished(PhaseContrastResult(method="DPC"))
+
+        self.assertTrue(self.window.workflow_state.is_completed(WorkflowStep.DPC_SEGMENTED))
+        self.assertTrue(self.window.workflow_state.is_completed(WorkflowStep.DPC_PREPROCESS))
+
+    def test_project_state_persists_staged_and_legacy_dpc_parameters(self) -> None:
+        state = self.window._project_state()
+
+        self.assertIn("dpc", state.page_params)
+        self.assertIn("dpc_segmented", state.page_params)
+        self.assertIn("dpc_preprocess", state.page_params)
+        self.assertIn("dpc_review", state.page_params)
+        self.assertIn("dpc_reconstruction", state.page_params)
+        self.assertIn("dpc_legacy", state.page_params)
+        self.assertIn("segment_outer_radius_mrad", state.page_params["dpc"])
+
+    def test_com_review_controls_exist_only_in_review_stage(self) -> None:
+        preprocess = self.window.dpc_preprocess_page
+        review = self.window.dpc_review_page
+
+        self.assertTrue(preprocess.accept_button.isHidden())
+        self.assertTrue(preprocess.preprocess_view.isHidden())
+        self.assertFalse(review.accept_button.isHidden())
+        self.assertFalse(review.preprocess_view.isHidden())
+
+    def test_preprocess_hands_result_to_review_without_duplicate_display(self) -> None:
+        preprocess = self.window.dpc_preprocess_page
+        review = self.window.dpc_review_page
+        result = PhaseContrastResult(
+            method="DPC",
+            images={
+                "Measured CoM X": np.ones((2, 2)),
+                "Measured CoM Y": np.ones((2, 2)),
+            },
+        )
+        preprocess.workspace.clear_results()
+        preprocess.pending_operation = "DPC CoM preprocessing"
+
+        preprocess._handle_finished(result)
+        review.refresh_stage()
+
+        self.assertEqual(preprocess.workspace.results, [])
+        self.assertIs(review.result, result)
+        self.assertGreater(len(review.workspace.results), 0)
+        self.assertIn("Continue to CoM Review & Accept", preprocess.status_label.text())
+
+    def test_other_phase_retrieval_goal_keeps_existing_route(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.goal.setCurrentText("Parallax")
+
+        self.assertEqual(
+            [module.title for module in self.window.route_modules],
             ["Data Setup", "BF / DF Preview", "DPC / CoM", "Parallax", "Ptychography", "Method Comparison", "Export"],
+        )
+        dpc = next(module for module in self.window.route_modules if module.key == "dpc")
+        self.assertEqual(dpc.page_key, "dpc_legacy")
+        self.assertIs(
+            self.window._controls_for_route("dpc"),
+            self.window.dpc_legacy_page.controls_panel,
         )
 
     def test_route_module_selection_works(self) -> None:
@@ -66,7 +176,14 @@ class PipelineShellTests(unittest.TestCase):
         self.app.processEvents()
         expected_log_height = self.window.log_panel.height()
         expected_splitter_sizes = self.window.main_splitter.sizes()
-        for route in ("bragg_detection", "crystal_analysis", "bragg_detection", "crystal_analysis"):
+        for route in (
+            "bragg_detection",
+            "calibration",
+            "crystal_analysis",
+            "bragg_detection",
+            "calibration",
+            "crystal_analysis",
+        ):
             self.window._select_route_module(route)
             self.app.processEvents()
             self.assertEqual(self.window.log_panel.height(), expected_log_height)
@@ -84,6 +201,81 @@ class PipelineShellTests(unittest.TestCase):
             self.window.calibration_page.reset_button.text(),
             "Reset Applied Calibration",
         )
+
+    def test_only_existing_calibration_form_wraps(self) -> None:
+        page = self.window.calibration_page
+        expected = {
+            "Existing Calibration": QFormLayout.WrapAllRows,
+            "Origin Calibration": QFormLayout.DontWrapRows,
+            "Ellipse Calibration": QFormLayout.DontWrapRows,
+            "Q Pixel Size": QFormLayout.DontWrapRows,
+            "QR Rotation": QFormLayout.DontWrapRows,
+            "Transfer": QFormLayout.DontWrapRows,
+        }
+        for title, policy in expected.items():
+            form = page.calibration_forms[title]
+            self.assertEqual(form.rowWrapPolicy(), policy)
+
+    def test_calibration_uses_one_width_following_scroll_area(self) -> None:
+        self.window.resize(1366, 768)
+        self.window.show()
+        self.window._select_route_module("calibration")
+        self.app.processEvents()
+
+        page = self.window.calibration_page
+        self.assertNotIsInstance(page.controls_panel, QScrollArea)
+        module_scrolls = self.window.module_panel.controls_stack.findChildren(QScrollArea)
+        active_scroll = self.window.module_panel.controls_stack.currentWidget()
+        self.assertIsInstance(active_scroll, QScrollArea)
+        self.assertEqual(active_scroll.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
+        self.assertEqual(active_scroll.frameShape(), QFrame.NoFrame)
+        self.assertEqual(len(page.controls_panel.findChildren(QScrollArea)), 0)
+        self.assertLessEqual(page.controls_panel.minimumWidth(), active_scroll.viewport().width())
+        self.assertEqual(active_scroll.horizontalScrollBar().maximum(), 0)
+        self.assertEqual(page.controls_panel.width(), active_scroll.viewport().width())
+
+    def test_calibration_fields_expand_equally_within_each_group(self) -> None:
+        self.window.resize(1366, 768)
+        self.window.show()
+        self.window._select_route_module("calibration")
+        self.app.processEvents()
+
+        page = self.window.calibration_page
+        for controls in [
+            [page.origin_center_x, page.origin_center_y, page.origin_robust_steps],
+            [page.ellipse_center_x, page.ellipse_inner, page.sampling_spin],
+            [page.rotation_spin, page.rotation_real_x, page.rotation_q_length],
+        ]:
+            widths = [control.width() for control in controls]
+            self.assertLessEqual(max(widths) - min(widths), 1)
+
+    def test_shell_boundaries_use_plain_black_lines(self) -> None:
+        self.assertEqual(self.window.tree.frameShape(), QFrame.NoFrame)
+        self.assertIn("border: 1px solid black", self.window.tree.styleSheet())
+        self.assertIn("border-left: 1px solid black", self.window.module_panel.styleSheet())
+        self.assertEqual(self.window.workflow_divider.height(), 1)
+        self.assertIn("background: black", self.window.workflow_divider.styleSheet())
+        self.assertEqual(self.window.log_divider.height(), self.window.workflow_divider.height())
+        self.assertEqual(self.window.log_divider.width(), self.window.workflow_divider.width())
+        self.assertEqual(self.window.log_divider.frameShape(), QFrame.NoFrame)
+        self.assertEqual(self.window.workflow_divider.frameShape(), QFrame.NoFrame)
+
+    def test_strain_reference_modes_are_notebook_aligned_and_migrate_legacy_values(self) -> None:
+        page = self.window.strain_map_page
+        self.assertEqual(
+            [page.reference_mode.itemData(index) for index in range(page.reference_mode.count())],
+            ["global_none", "roi_g1g2"],
+        )
+        self.assertFalse(hasattr(page, "manual_g1_x"))
+        expected = {
+            "auto_valid": "global_none",
+            "roi_mask": "global_none",
+            "manual_g1g2": "global_none",
+            "roi_vectors": "roi_g1g2",
+        }
+        for legacy, migrated in expected.items():
+            page.apply_params_snapshot({"reference_mode": legacy})
+            self.assertEqual(page.reference_mode.currentData(), migrated)
 
     def test_existing_calibration_shows_values_and_applied_state(self) -> None:
         calibration = types.SimpleNamespace(

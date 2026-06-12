@@ -133,6 +133,10 @@ class MultiViewWorkspace(QWidget):
 class ModuleControlPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("moduleControlPanel")
+        self.setStyleSheet(
+            "QWidget#moduleControlPanel { border-left: 1px solid black; }"
+        )
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
         self.controls_stack = QStackedWidget()
@@ -154,12 +158,19 @@ class ModuleControlPanel(QWidget):
             return
         identity = id(controls)
         if identity not in self._controls:
-            scroll = QScrollArea()
+            if isinstance(controls, QScrollArea):
+                scroll = controls
+            else:
+                scroll = QScrollArea()
+                controls.setMinimumSize(0, 0)
+                controls.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                scroll.setWidget(controls)
             scroll.setWidgetResizable(True)
             scroll.setMinimumSize(0, 0)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-            controls.setMinimumSize(0, 0)
-            scroll.setWidget(controls)
             self._controls[identity] = scroll
             self.controls_stack.addWidget(scroll)
         self.controls_stack.setCurrentWidget(self._controls[identity])

@@ -177,7 +177,7 @@ class BraggPeaksPage(QWidget):
         self.radial_background_check = QCheckBox("Enable")
         self.gaussian_fallback_check = QCheckBox("Allow with warning")
         self.selection_mode = QComboBox()
-        self.selection_mode.addItems(["Deterministic notebook positions", "Seeded random positions"])
+        self.selection_mode.addItems(["Deterministic positions", "Seeded random"])
         self.preset_combo = QComboBox()
         self.preset_combo.addItem("01_CBS Au")
         self.apply_preset_button = QPushButton("Apply Preset")
@@ -382,7 +382,7 @@ class BraggPeaksPage(QWidget):
         diagnostics_layout = QFormLayout(diagnostics_group)
         diagnostics_layout.addRow("rx", self.rx_spin)
         diagnostics_layout.addRow("ry", self.ry_spin)
-        diagnostics_layout.addRow("six-position mode", self.selection_mode)
+        diagnostics_layout.addRow("six-points", self.selection_mode)
         diagnostics_layout.addRow("", self.run_current_button)
         diagnostics_layout.addRow("", self.run_selected_button)
 
