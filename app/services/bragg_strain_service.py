@@ -124,15 +124,11 @@ class StrainMapParams:
     min_spacing: float = 0
     edge_boundary: int = 1
     max_num_peaks: int = 10
-    reference_mode: str = "auto_valid"
+    reference_mode: str = "global_none"
     roi_rx_start: int = 0
     roi_rx_end: int = 1
     roi_ry_start: int = 0
     roi_ry_end: int = 1
-    manual_g1_x: float = 1.0
-    manual_g1_y: float = 0.0
-    manual_g2_x: float = 0.0
-    manual_g2_y: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -190,6 +186,10 @@ class StrainStageResult:
     circles: dict[str, np.ndarray] = field(default_factory=dict)
     quality: dict[str, float | str | bool] = field(default_factory=dict)
     message: str = ""
+    reference_mode: str | None = None
+    reference_roi: np.ndarray | None = None
+    reference_g1: np.ndarray | None = None
+    reference_g2: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -975,11 +975,19 @@ class BraggStrainService:
             for name, image in images.items()
             if name in {"reference mask", "reference directions", "basis fit valid mask"}
         }
+        reference_roi = None
+        reference_g1 = None
+        reference_g2 = None
+        if params.reference_mode == "roi_g1g2":
+            reference_roi = self._strain_reference_roi(params, braggvectors)
+            selected["reference ROI"] = reference_roi.astype(float)
+            reference_g1, reference_g2 = gvects
         valid = self._strain_valid_mask(self.strainmap)
-        reference_fraction = (
-            float(np.mean(np.asarray(gvects, dtype=bool)))
-            if isinstance(gvects, np.ndarray) and gvects.ndim == 2
-            else float("nan")
+        reference_fraction = float(np.mean(reference_roi)) if reference_roi is not None else float("nan")
+        message = (
+            "Global reference prepared; py4DSTEM will derive g1/g2 from valid local basis vectors."
+            if params.reference_mode == "global_none"
+            else "ROI-derived g1/g2 prepared; review the ROI and reference directions before accepting."
         )
         return StrainStageResult(
             "reference",
@@ -990,7 +998,11 @@ class BraggStrainService:
                 "reference_fraction": reference_fraction,
                 "valid_fraction": float(np.mean(valid)) if valid is not None else 0,
             },
-            message="Reference prepared; review before accepting.",
+            message=message,
+            reference_mode=params.reference_mode,
+            reference_roi=reference_roi,
+            reference_g1=reference_g1,
+            reference_g2=reference_g2,
         )
 
     def accept_strain_stage(self, stage: str) -> CBSAcceptanceState:
@@ -1082,6 +1094,10 @@ class BraggStrainService:
         process_images, process_vectors = self._strain_process_diagnostics(
             strainmap, basis_calc, gvects, braggvectors
         )
+        if params.reference_mode == "roi_g1g2":
+            process_images["reference ROI"] = self._strain_reference_roi(
+                params, braggvectors
+            ).astype(float)
         if quality.fit_residual is not None:
             process_images["basis fit residual"] = quality.fit_residual
         elif quality.valid_mask is not None:
@@ -1141,18 +1157,31 @@ class BraggStrainService:
         )
 
     def _strain_reference(self, strainmap: Any, params: StrainMapParams, braggvectors: Any) -> Any:
-        if params.reference_mode == "auto_valid":
+        if params.reference_mode == "global_none":
             valid = np.asarray(strainmap.g1g2_map.get_slice("mask").data, dtype=bool)
             if not valid.any():
                 raise BraggStrainServiceError("No valid fitted g1/g2 points are available.")
-            return valid
-        if params.reference_mode == "manual_g1g2":
+            return None
+        if params.reference_mode == "roi_g1g2":
+            roi = self._strain_reference_roi(params, braggvectors)
+            reference = strainmap.get_reference_g1g2(roi)
+            if hasattr(reference, "data"):
+                reference = reference.data
+            try:
+                g1_ref, g2_ref = reference
+            except (TypeError, ValueError) as exc:
+                raise BraggStrainServiceError(
+                    "ROI reference did not return g1_ref and g2_ref."
+                ) from exc
             return (
-                np.asarray([params.manual_g1_x, params.manual_g1_y], dtype=float),
-                np.asarray([params.manual_g2_x, params.manual_g2_y], dtype=float),
+                np.asarray(g1_ref, dtype=float),
+                np.asarray(g2_ref, dtype=float),
             )
+        raise BraggStrainServiceError(f"Unsupported strain reference mode: {params.reference_mode}")
 
-        scan_shape = self._scan_shape(braggvectors.raw, braggvectors)
+    def _strain_reference_roi(self, params: StrainMapParams, braggvectors: Any) -> np.ndarray:
+        raw = getattr(braggvectors, "raw", braggvectors)
+        scan_shape = self._scan_shape(raw, braggvectors)
         if not (
             0 <= params.roi_rx_start < params.roi_rx_end <= scan_shape[0]
             and 0 <= params.roi_ry_start < params.roi_ry_end <= scan_shape[1]
@@ -1160,14 +1189,7 @@ class BraggStrainService:
             raise BraggStrainServiceError(f"Reference ROI must fit inside scan shape {scan_shape}.")
         roi = np.zeros(scan_shape, dtype=bool)
         roi[params.roi_rx_start : params.roi_rx_end, params.roi_ry_start : params.roi_ry_end] = True
-        if params.reference_mode == "roi_mask":
-            return roi
-        if params.reference_mode == "roi_vectors":
-            reference = strainmap.get_reference_g1g2(roi)
-            if hasattr(reference, "data"):
-                return reference
-            return np.asarray(reference)
-        raise BraggStrainServiceError(f"Unsupported strain reference mode: {params.reference_mode}")
+        return roi
 
     def _strain_process_diagnostics(
         self, strainmap: Any, basis_calc: Any, gvects: Any, braggvectors: Any

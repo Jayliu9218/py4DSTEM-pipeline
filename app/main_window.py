@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -48,7 +49,7 @@ from app.pages.radial_profile_page import RadialProfilePage
 from app.pages.rdf_page import RDFPage
 from app.pages.fem_page import FEMPage
 from app.pages.amorphous_strain_page import AmorphousStrainPage
-from app.services.phase_contrast_service import PhaseContrastResult
+from app.services.phase_contrast_service import PhaseContrastResult, PhaseContrastService
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
@@ -166,12 +167,48 @@ class MainWindow(QMainWindow):
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
         )
-        self.dpc_page = DPCPage(
+        self.dpc_service = PhaseContrastService()
+        self.dpc_segmented_page = DPCPage(
             source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
+            service=self.dpc_service,
+            stage_mode="segmented",
         )
+        self.dpc_preprocess_page = DPCPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.dpc_service,
+            stage_mode="preprocess",
+        )
+        self.dpc_review_page = DPCPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.dpc_service,
+            stage_mode="review",
+        )
+        self.dpc_reconstruction_page = DPCPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.dpc_service,
+            stage_mode="reconstruct",
+        )
+        self.dpc_legacy_page = DPCPage(
+            source_provider=self._get_py4dstem_datacube,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            service=self.dpc_service,
+            stage_mode="all",
+        )
+        self.dpc_page = self.dpc_reconstruction_page
         self.parallax_page = ParallaxPage(
             source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
@@ -236,7 +273,8 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
         self.log_panel.log("Application started.")
-        self.dpc_page.dpc_result_ready.connect(self._store_dpc_result)
+        self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
+        self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
         self.parallax_page.parallax_result_ready.connect(self._store_parallax_result)
         self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
         self.log_panel.log("Application started.")
@@ -342,6 +380,8 @@ class MainWindow(QMainWindow):
         data_title.setObjectName("sectionTitle")
         data_browser_layout.addWidget(data_title)
         data_browser_layout.addWidget(self.tree, 1)
+        self.tree.setFrameShape(QFrame.NoFrame)
+        self.tree.setStyleSheet("QTreeWidget { border: 1px solid black; }")
         data_browser.setMinimumWidth(220)
         data_browser.setMaximumWidth(500)
         data_browser.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -359,7 +399,11 @@ class MainWindow(QMainWindow):
             "structural_phase": self.structural_phase_page,
             "phase_contrast": self.phase_contrast_page,
             "bf_df": self.bf_df_preview_page,
-            "dpc": self.dpc_page,
+            "dpc_segmented": self.dpc_segmented_page,
+            "dpc_preprocess": self.dpc_preprocess_page,
+            "dpc_review": self.dpc_review_page,
+            "dpc": self.dpc_reconstruction_page,
+            "dpc_legacy": self.dpc_legacy_page,
             "parallax": self.parallax_page,
             "ptychography": self.ptychography_page,
             "method_comparison": self.method_comparison_page,
@@ -383,6 +427,8 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(2, 0)
         self.main_splitter.setCollapsible(0, False)
         self.main_splitter.setCollapsible(2, False)
+        self.main_splitter.setHandleWidth(1)
+        self.main_splitter.setStyleSheet("QSplitter::handle { background: black; }")
         self.main_splitter.setSizes([300, 900, 350])
 
         log_panel_widget = self.log_panel
@@ -412,7 +458,14 @@ class MainWindow(QMainWindow):
         central_layout.setSpacing(0)
         central_layout.addWidget(self.project_toolbar)
         central_layout.addWidget(self.route_bar)
+
+        self.workflow_divider = self._horizontal_divider("workflowDivider")
+        central_layout.addWidget(self.workflow_divider)
         central_layout.addWidget(self.main_splitter, 1)
+
+        self.log_divider = self._horizontal_divider("logDivider")
+        central_layout.addWidget(self.log_divider)
+
         central_layout.addWidget(log_panel_widget, 0)
         self.setCentralWidget(central)
 
@@ -420,6 +473,22 @@ class MainWindow(QMainWindow):
         self._compact_input_controls()
         self._bold_section_titles()
         self._set_preview_empty()
+
+    def _horizontal_divider(self, object_name: str) -> QFrame:
+        divider = QFrame()
+        divider.setObjectName(object_name)
+        divider.setFrameShape(QFrame.NoFrame)
+        divider.setFixedHeight(1)
+        divider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        divider.setStyleSheet("""
+            QFrame {
+                background: black;
+                border: 0px;
+                min-height: 1px;
+                max-height: 1px;
+            }
+        """)
+        return divider
 
     def _bold_section_titles(self) -> None:
         for group in self.findChildren(QGroupBox):
@@ -564,45 +633,86 @@ class MainWindow(QMainWindow):
                 "Ptychography": WorkflowStep.PTYCHOGRAPHY,
                 "Method Comparison": WorkflowStep.METHOD_COMPARISON,
             }.get(goal)
-            modules = [
-                common_data,
-                RouteModule(
-                    "bf_df_preview", "BF / DF Preview", "bf_df",
-                    "Target DataCube for bright-field / dark-field virtual imaging.",
-                    "BF and DF virtual images for phase retrieval workflow entry.",
-                    WorkflowStep.BF_DF_PREVIEW, "data_setup",
-                ),
-                RouteModule(
-                    "dpc", "DPC / CoM", "dpc",
-                    "Target DataCube; BF/DF preview recommended for mask calibration.",
-                    "Center-of-mass maps, rotation estimate, and DPC phase reconstruction.",
-                    WorkflowStep.DPC, "bf_df_preview",
-                ),
-                RouteModule(
-                    "parallax", "Parallax", "parallax",
-                    "Target DataCube; DPC recommended for rotation and defocus estimates.",
-                    "Aligned bright-field image, shift maps, and aberration estimates.",
-                    WorkflowStep.PARALLAX, "dpc",
-                ),
-                RouteModule(
-                    "ptychography", "Ptychography", "ptychography",
-                    "Target DataCube and optional vacuum probe; Parallax recommended for initialization.",
-                    "Phase and amplitude reconstruction from iterative ptychography.",
-                    WorkflowStep.PTYCHOGRAPHY, "parallax",
-                ),
-                RouteModule(
-                    "method_comparison", "Method Comparison", "method_comparison",
-                    "At least one phase retrieval result (DPC, Parallax, or Ptychography).",
-                    "Side-by-side comparison of phase retrieval method outputs.",
-                    WorkflowStep.METHOD_COMPARISON, "ptychography",
-                ),
-                RouteModule(
-                    "export", "Export", "overview",
-                    "At least one registered result.",
-                    "Result arrays, images, project state, or scientific report.",
-                    prerequisite="method_comparison",
-                ),
-            ]
+            if goal == "DPC / CoM":
+                modules = [
+                    common_data,
+                    RouteModule(
+                        "bf_df_preview", "BF / DF Preview", "bf_df",
+                        "Target DataCube for bright-field / dark-field virtual imaging.",
+                        "BF and DF virtual images for phase retrieval workflow entry.",
+                        WorkflowStep.BF_DF_PREVIEW, "data_setup",
+                    ),
+                    RouteModule(
+                        "dpc_segmented", "Segmented DPC", "dpc_segmented",
+                        "Target DataCube; BF/DF preview recommended for mask calibration.",
+                        "Four masks, segment intensities, opposing DPC, and weighted CoM.",
+                        WorkflowStep.DPC_SEGMENTED, "data_setup",
+                    ),
+                    RouteModule(
+                        "dpc_preprocess", "CoM Preprocessing", "dpc_preprocess",
+                        "Target DataCube; segmented DPC is an optional demonstration.",
+                        "Measured, fitted, normalized, and corrected pixelated CoM.",
+                        WorkflowStep.DPC_PREPROCESS, "data_setup",
+                    ),
+                    RouteModule(
+                        "dpc_review", "CoM Review & Accept", "dpc_review",
+                        "Completed pixelated CoM preprocessing.",
+                        "Reviewed rotation, transpose, corrected CoM, and explicit acceptance.",
+                        WorkflowStep.DPC_REVIEW, "dpc_preprocess",
+                    ),
+                    RouteModule(
+                        "dpc", "Integrated Reconstruction", "dpc",
+                        "Accepted CoM preprocessing review.",
+                        "Integrated DPC potential, convergence, and stored iterations.",
+                        WorkflowStep.DPC, "dpc_review",
+                    ),
+                    RouteModule(
+                        "export", "Export", "overview",
+                        "At least one registered result.",
+                        "Intermediate and final DPC results, project state, and report.",
+                        prerequisite="dpc",
+                    ),
+                ]
+            else:
+                modules = [
+                    common_data,
+                    RouteModule(
+                        "bf_df_preview", "BF / DF Preview", "bf_df",
+                        "Target DataCube for bright-field / dark-field virtual imaging.",
+                        "BF and DF virtual images for phase retrieval workflow entry.",
+                        WorkflowStep.BF_DF_PREVIEW, "data_setup",
+                    ),
+                    RouteModule(
+                        "dpc", "DPC / CoM", "dpc_legacy",
+                        "Target DataCube; DPC recommended for downstream initialization.",
+                        "Integrated DPC result when available.",
+                        WorkflowStep.DPC, "data_setup",
+                    ),
+                    RouteModule(
+                        "parallax", "Parallax", "parallax",
+                        "Target DataCube; DPC recommended for rotation and defocus estimates.",
+                        "Aligned bright-field image, shift maps, and aberration estimates.",
+                        WorkflowStep.PARALLAX, "dpc",
+                    ),
+                    RouteModule(
+                        "ptychography", "Ptychography", "ptychography",
+                        "Target DataCube and optional vacuum probe; Parallax recommended for initialization.",
+                        "Phase and amplitude reconstruction from iterative ptychography.",
+                        WorkflowStep.PTYCHOGRAPHY, "parallax",
+                    ),
+                    RouteModule(
+                        "method_comparison", "Method Comparison", "method_comparison",
+                        "At least one phase retrieval result (DPC, Parallax, or Ptychography).",
+                        "Side-by-side comparison of phase retrieval method outputs.",
+                        WorkflowStep.METHOD_COMPARISON, "ptychography",
+                    ),
+                    RouteModule(
+                        "export", "Export", "overview",
+                        "At least one registered result.",
+                        "Result arrays, images, project state, or scientific report.",
+                        prerequisite="method_comparison",
+                    ),
+                ]
         else:
             modules = [common_data]
         self.route_modules = modules
@@ -636,7 +746,11 @@ class MainWindow(QMainWindow):
         states = self._route_states()
         self.route_bar.update_states(states, self.current_route_key)
         module = next(item for item in self.route_modules if item.key == self.current_route_key)
-        self.viewer_stack.setCurrentWidget(self.viewer_pages[module.page_key])
+        page = self.viewer_pages[module.page_key]
+        refresh_stage = getattr(page, "refresh_stage", None)
+        if callable(refresh_stage):
+            refresh_stage()
+        self.viewer_stack.setCurrentWidget(page)
         controls = self._controls_for_route(module.key)
         self.module_panel.set_module(module, controls)
         workspace = self._workspace_for_page(self.viewer_pages[module.page_key])
@@ -661,7 +775,14 @@ class MainWindow(QMainWindow):
                 else None
             ),
             "bf_df_preview": self.bf_df_preview_page.controls_panel,
-            "dpc": self.dpc_page.controls_panel,
+            "dpc_segmented": self.dpc_segmented_page.controls_panel,
+            "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
+            "dpc_review": self.dpc_review_page.controls_panel,
+            "dpc": (
+                self.dpc_reconstruction_page.controls_panel
+                if goal == "DPC / CoM"
+                else self.dpc_legacy_page.controls_panel
+            ),
             "parallax": self.parallax_page.controls_panel,
             "ptychography": self.ptychography_page.controls_panel,
             "method_comparison": self.method_comparison_page.controls_panel,
@@ -760,7 +881,7 @@ class MainWindow(QMainWindow):
     def _compact_input_controls(self) -> None:
         for widget_type in (NumericLineEdit, QComboBox):
             for widget in self.findChildren(widget_type):
-                widget.setMinimumWidth(125)
+                widget.setMinimumWidth(0)
                 widget.setMaximumWidth(320)
 
     def open_file(self) -> None:
@@ -791,6 +912,7 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strainmap = None
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
+            self.dpc_service.reset_dpc_workflow()
             self.workflow_state.data_source_updated()
             self.py4dstem_service.defer_open_file(file_path)
             self.log_panel.log(f"Opened file: {file_path}")
@@ -1342,6 +1464,7 @@ class MainWindow(QMainWindow):
         previous_target = self.workflow_state.dataset_roles.target_datacube
         self.workflow_state.set_dataset_role(role, selected_path)
         if role == "target_datacube" and previous_target != selected_path:
+            self.dpc_service.reset_dpc_workflow()
             if previous_target is None:
                 self._clear_all_image_workspaces(exclude_keys={"preprocess"})
             else:
@@ -1421,7 +1544,12 @@ class MainWindow(QMainWindow):
                 "strain_map": self.strain_map_page.params_snapshot(),
                 "phase_contrast": self.phase_contrast_page.params_snapshot(),
                 "bf_df_preview": self.bf_df_preview_page.params_snapshot(),
-                "dpc": self.dpc_page.params_snapshot(),
+                "dpc": self._dpc_params_snapshot(),
+                "dpc_segmented": self.dpc_segmented_page.params_snapshot(),
+                "dpc_preprocess": self.dpc_preprocess_page.params_snapshot(),
+                "dpc_review": self.dpc_review_page.params_snapshot(),
+                "dpc_reconstruction": self.dpc_reconstruction_page.params_snapshot(),
+                "dpc_legacy": self.dpc_legacy_page.params_snapshot(),
                 "parallax": self.parallax_page.params_snapshot(),
                 "ptychography": self.ptychography_page.params_snapshot(),
                 "method_comparison": self.method_comparison_page.params_snapshot(),
@@ -1465,13 +1593,35 @@ class MainWindow(QMainWindow):
             ("orientation", self.orientation_page),
             ("strain_map", self.strain_map_page),
             ("bf_df_preview", self.bf_df_preview_page),
-            ("dpc", self.dpc_page),
             ("parallax", self.parallax_page),
             ("ptychography", self.ptychography_page),
         ]:
             params = page_params.get(key)
             if params:
                 page.apply_params_snapshot(params)
+        legacy_dpc = page_params.get("dpc", {})
+        for key, page in [
+            ("dpc_segmented", self.dpc_segmented_page),
+            ("dpc_preprocess", self.dpc_preprocess_page),
+            ("dpc_review", self.dpc_review_page),
+            ("dpc_reconstruction", self.dpc_reconstruction_page),
+            ("dpc_legacy", self.dpc_legacy_page),
+        ]:
+            params = page_params.get(key) or legacy_dpc
+            if params:
+                page.apply_params_snapshot(params)
+
+    def _dpc_params_snapshot(self) -> dict[str, object]:
+        snapshot: dict[str, object] = {}
+        for page in (
+            self.dpc_segmented_page,
+            self.dpc_preprocess_page,
+            self.dpc_review_page,
+            self.dpc_reconstruction_page,
+            self.dpc_legacy_page,
+        ):
+            snapshot.update(page.params_snapshot())
+        return snapshot
 
     def _default_output_dir(self) -> Path:
         if self.recent_export_dir is not None:

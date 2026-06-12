@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QMessageBox,
     QPushButton,
-    QScrollArea,
-    QSplitter,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -360,11 +360,11 @@ class CalibrationPage(QWidget):
 
         pixel_group = QGroupBox("Q Pixel Size")
         pixel_layout = QFormLayout(pixel_group)
-        pixel_layout.addRow("Q pixel size (A^-1)", self.pixel_spin)
+        pixel_layout.addRow("Q pixel size", self.pixel_spin)
         pixel_layout.addRow("", self.pixel_button)
         pixel_layout.addRow("crystal source", self.crystal_path_label)
         pixel_layout.addRow("", self.load_cif_button)
-        pixel_layout.addRow("manual FCC lattice a", self.crystal_lattice)
+        pixel_layout.addRow("FCC lattice a", self.crystal_lattice)
         pixel_layout.addRow("atomic number", self.crystal_atomic_number)
         pixel_layout.addRow("k max", self.crystal_k_max)
         pixel_layout.addRow("", self.fit_pixel_button)
@@ -372,14 +372,14 @@ class CalibrationPage(QWidget):
 
         rotation_group = QGroupBox("QR Rotation")
         rotation_layout = QFormLayout(rotation_group)
-        rotation_layout.addRow("QR rotation (degree)", self.rotation_spin)
-        rotation_layout.addRow("R arrow direction", self.rotation_real_direction)
-        rotation_layout.addRow("R arrow x", self.rotation_real_x)
-        rotation_layout.addRow("R arrow y", self.rotation_real_y)
-        rotation_layout.addRow("Q arrow x", self.rotation_q_x)
-        rotation_layout.addRow("Q arrow y", self.rotation_q_y)
-        rotation_layout.addRow("R arrow length fraction", self.rotation_real_length)
-        rotation_layout.addRow("Q arrow length fraction", self.rotation_q_length)
+        rotation_layout.addRow("QR rotation", self.rotation_spin)
+        rotation_layout.addRow("R direction", self.rotation_real_direction)
+        rotation_layout.addRow("R x", self.rotation_real_x)
+        rotation_layout.addRow("R y", self.rotation_real_y)
+        rotation_layout.addRow("Q x", self.rotation_q_x)
+        rotation_layout.addRow("Q y", self.rotation_q_y)
+        rotation_layout.addRow("R length", self.rotation_real_length)
+        rotation_layout.addRow("Q length", self.rotation_q_length)
         rotation_layout.addRow("", self.rotation_button)
         rotation_layout.addRow("", self.apply_rotation_button)
 
@@ -388,6 +388,14 @@ class CalibrationPage(QWidget):
         transfer_layout.addRow("correction", self.transfer_correction)
         transfer_layout.addRow("target DataCube", self.transfer_target)
         transfer_layout.addRow("", self.transfer_button)
+        self.calibration_forms = {
+            "Existing Calibration": status_form,
+            "Origin Calibration": origin_form,
+            "Ellipse Calibration": ellipse_layout,
+            "Q Pixel Size": pixel_layout,
+            "QR Rotation": rotation_layout,
+            "Transfer": transfer_layout,
+        }
 
         validate_group = QGroupBox("Validate")
         validate_layout = QVBoxLayout(validate_group)
@@ -395,6 +403,7 @@ class CalibrationPage(QWidget):
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
+        left_layout.setSizeConstraint(QLayout.SetNoConstraint)
         for button in self.buttons:
             button.setMinimumHeight(30)
         for group in [
@@ -409,16 +418,29 @@ class CalibrationPage(QWidget):
             left_layout.addWidget(group)
         left_layout.addWidget(self.status_label)
         left_layout.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidget(left)
-        self.controls_panel = scroll
+        left.setMinimumSize(0, 0)
+        left.setMaximumWidth(16777215)
+        left.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.controls_panel = left
         layout = QHBoxLayout(self)
         layout.addWidget(self.viewers)
-        for form in left.findChildren(QFormLayout):
-            form.setRowWrapPolicy(QFormLayout.WrapAllRows)
+        status_form.setRowWrapPolicy(QFormLayout.WrapAllRows)
+        status_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        for name, form in self.calibration_forms.items():
+            if name == "Existing Calibration":
+                continue
+            form.setRowWrapPolicy(QFormLayout.DontWrapRows)
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        for control in [
+            *left.findChildren(NumericLineEdit),
+            *left.findChildren(QComboBox),
+        ]:
+            control.setMinimumWidth(0)
+            control.setMaximumWidth(16777215)
+            control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        for control in left.findChildren(QComboBox):
+            control.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            control.setMinimumContentsLength(0)
         for label in [
             self.source_label,
             self.origin_label,

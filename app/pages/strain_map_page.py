@@ -86,21 +86,18 @@ class StrainMapPage(QWidget):
         self.edge_spin = self._int_input(0, 10000, 1, unit="px")
         self.max_peaks_spin = self._int_input(1, 10000, 150, unit="peaks")
         self.reference_mode = QComboBox()
-        self.reference_mode.addItems(["auto_valid", "roi_vectors", "roi_mask", "manual_g1g2"])
+        self.reference_mode.addItem("Global mean", "global_none")
+        self.reference_mode.addItem("ROI-derived g1/g2", "roi_g1g2")
         self.display_mode = QComboBox()
         self.display_mode.addItems(["Final Strain","Process"])
         self.color_mode = QComboBox()
-        self.color_mode.addItems(["auto symmetric", "percentile 1-99", "manual min/max"])
+        self.color_mode.addItems(["auto", "percentile 1-99", "manual min/max"])
         self.color_min_spin = self._float_input(-1e6, 1e6, -1, unit="value")
         self.color_max_spin = self._float_input(-1e6, 1e6, 1, unit="value")
         self.roi_rx_start = self._int_input(0, 100000, 34, unit="px")
         self.roi_rx_end = self._int_input(0, 100000, 42, unit="px")
         self.roi_ry_start = self._int_input(0, 100000, 8, unit="px")
         self.roi_ry_end = self._int_input(0, 100000, 16, unit="px")
-        self.manual_g1_x = self._float_input(-100000, 100000, 1)
-        self.manual_g1_y = self._float_input(-100000, 100000, 0)
-        self.manual_g2_x = self._float_input(-100000, 100000, 0)
-        self.manual_g2_y = self._float_input(-100000, 100000, 1)
         self.index_origin = self._int_input(-1, 10000, -1)
         self.index_g1 = self._int_input(-1, 10000, -1)
         self.index_g2 = self._int_input(-1, 10000, -1)
@@ -118,7 +115,7 @@ class StrainMapPage(QWidget):
         self.export_button.setEnabled(False)
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
-        self.applied_qr_rotation_label = QLabel("missing / not applied")
+        self.applied_qr_rotation_label = QLabel("not applied")
         self.applied_qr_rotation_label.setWordWrap(True)
 
         self.workspace = AdaptiveImageWorkspace()
@@ -161,13 +158,13 @@ class StrainMapPage(QWidget):
         self.log_panel.log("Strain map calculation running...")
         self.log_panel.process_started(
             "StrainMap",
-            f"reference={self.reference_mode.currentText()}, rotation={self.rotation_spin.value():g}",
+            f"reference={self._reference_mode()}, rotation={self.rotation_spin.value():g}",
         )
         self.log_panel.process_snapshot(
             ProcessSnapshot(
                 step="Strain map",
                 parameters={
-                    "reference": self.reference_mode.currentText(),
+                    "reference": self._reference_mode(),
                     "roi": (
                         self.roi_rx_start.value(),
                         self.roi_rx_end.value(),
@@ -250,22 +247,18 @@ class StrainMapPage(QWidget):
         form.addRow("minSpacing", self.min_spacing_spin)
         form.addRow("edgeBoundary", self.edge_spin)
         form.addRow("maxNumPeaks", self.max_peaks_spin)
-        form.addRow("manual origin index (-1 auto)", self.index_origin)
-        form.addRow("manual g1 index (-1 auto)", self.index_g1)
-        form.addRow("manual g2 index (-1 auto)", self.index_g2)
-        form.addRow("reference mode", self.reference_mode)
+        form.addRow("origin (-1 auto)", self.index_origin)
+        form.addRow("g1 (-1 auto)", self.index_g1)
+        form.addRow("g2 (-1 auto)", self.index_g2)
+        form.addRow("reference", self.reference_mode)
         form.addRow("display", self.display_mode)
         form.addRow("color range", self.color_mode)
-        form.addRow("manual color min", self.color_min_spin)
-        form.addRow("manual color max", self.color_max_spin)
+        form.addRow("color min", self.color_min_spin)
+        form.addRow("color max", self.color_max_spin)
         form.addRow("reference ROI rx start", self.roi_rx_start)
         form.addRow("reference ROI rx end", self.roi_rx_end)
         form.addRow("reference ROI ry start", self.roi_ry_start)
         form.addRow("reference ROI ry end", self.roi_ry_end)
-        form.addRow("manual g1 x", self.manual_g1_x)
-        form.addRow("manual g1 y", self.manual_g1_y)
-        form.addRow("manual g2 x", self.manual_g2_x)
-        form.addRow("manual g2 y", self.manual_g2_y)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -341,21 +334,14 @@ class StrainMapPage(QWidget):
         except Exception as exc:
             self._handle_failed(str(exc))
             return
-        if not {"basis_selection", "basis_fit", "reference"}.issubset(
-            self.service.accepted_strain_stages
-        ):
-            QMessageBox.information(
-                self,
-                "Strain Map",
-                "Choose, review, and explicitly accept the basis selection, basis fit, and reference first.",
-            )
-            return
         self.status_label.setText(
             "Accepted stages: "
             f"basis selection={state.basis_selection}, basis fit={state.basis_fit}, "
             f"reference={state.reference}."
         )
-        self.run_button.setEnabled(state.reference)
+        self.run_button.setEnabled(
+            state.basis_selection and state.basis_fit and state.reference
+        )
 
     def review_and_accept_reference(self) -> None:
         try:
@@ -398,16 +384,15 @@ class StrainMapPage(QWidget):
             min_spacing=self.min_spacing_spin.value(),
             edge_boundary=self.edge_spin.value(),
             max_num_peaks=self.max_peaks_spin.value(),
-            reference_mode=self.reference_mode.currentText(),
+            reference_mode=self._reference_mode(),
             roi_rx_start=self.roi_rx_start.value(),
             roi_rx_end=self.roi_rx_end.value(),
             roi_ry_start=self.roi_ry_start.value(),
             roi_ry_end=self.roi_ry_end.value(),
-            manual_g1_x=self.manual_g1_x.value(),
-            manual_g1_y=self.manual_g1_y.value(),
-            manual_g2_x=self.manual_g2_x.value(),
-            manual_g2_y=self.manual_g2_y.value(),
         )
+
+    def _reference_mode(self) -> str:
+        return str(self.reference_mode.currentData())
 
     def _handle_finished(self, result: StrainMapResult) -> None:
         self.result = result
@@ -552,10 +537,6 @@ class StrainMapPage(QWidget):
             self.roi_rx_end,
             self.roi_ry_start,
             self.roi_ry_end,
-            self.manual_g1_x,
-            self.manual_g1_y,
-            self.manual_g2_x,
-            self.manual_g2_y,
         ]:
             self.workflow_state.watch(spin, WorkflowStep.STRAIN_MAP, "valueChanged")
         self.workflow_state.watch(
@@ -586,10 +567,6 @@ class StrainMapPage(QWidget):
             "roi_rx_end": params.roi_rx_end,
             "roi_ry_start": params.roi_ry_start,
             "roi_ry_end": params.roi_ry_end,
-            "manual_g1_x": params.manual_g1_x,
-            "manual_g1_y": params.manual_g1_y,
-            "manual_g2_x": params.manual_g2_x,
-            "manual_g2_y": params.manual_g2_y,
             "color_mode": self.color_mode.currentText(),
             "color_min": self.color_min_spin.value(),
             "color_max": self.color_max_spin.value(),
@@ -604,10 +581,6 @@ class StrainMapPage(QWidget):
             "min_spacing": self.min_spacing_spin,
             "color_min": self.color_min_spin,
             "color_max": self.color_max_spin,
-            "manual_g1_x": self.manual_g1_x,
-            "manual_g1_y": self.manual_g1_y,
-            "manual_g2_x": self.manual_g2_x,
-            "manual_g2_y": self.manual_g2_y,
         }
         int_controls = {
             "edge_boundary": self.edge_spin,
@@ -627,7 +600,20 @@ class StrainMapPage(QWidget):
             if key in params:
                 spin.setValue(int(params[key]))
         if "reference_mode" in params:
-            self.reference_mode.setCurrentText(str(params["reference_mode"]))
+            legacy_mode = str(params["reference_mode"])
+            migrated_mode = {
+                "roi_vectors": "roi_g1g2",
+                "auto_valid": "global_none",
+                "roi_mask": "global_none",
+                "manual_g1g2": "global_none",
+            }.get(legacy_mode, legacy_mode)
+            index = self.reference_mode.findData(migrated_mode)
+            if index >= 0:
+                self.reference_mode.setCurrentIndex(index)
+            if migrated_mode != legacy_mode:
+                self.log_panel.log(
+                    f"Migrated legacy strain reference mode {legacy_mode} to {migrated_mode}."
+                )
         if "display_mode" in params:
             self.display_mode.setCurrentText(str(params["display_mode"]))
         if "color_mode" in params:

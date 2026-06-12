@@ -50,6 +50,68 @@ class DPCParams:
 
 
 @dataclass(frozen=True)
+class DPCSegmentedParams:
+    energy: float = 200e3
+    sampling_x: float = 0.246570625
+    sampling_y: float = 0.246570625
+    rotation_offset_degrees: float = 60.0
+    inner_radius_mrad: float = 10.0
+    outer_radius_mrad: float = 25.0
+    center_x: float | None = None
+    center_y: float | None = None
+
+
+@dataclass(frozen=True)
+class DPCPreprocessParams:
+    energy: float = 200e3
+    padding_factor: float = 2.0
+    rotation_start_degrees: float = -90.0
+    rotation_end_degrees: float = 90.0
+    rotation_step_degrees: float = 1.0
+    maximize_divergence: bool = False
+    fit_function: str = "plane"
+    force_com_rotation: float | None = None
+    force_com_transpose: bool | None = None
+    force_com_shift_x: float | None = None
+    force_com_shift_y: float | None = None
+    vectorized_com_calculation: bool = False
+    use_dp_mask: bool = False
+    mask_inner_mrad: float = 0.0
+    mask_outer_mrad: float = 25.0
+
+
+@dataclass(frozen=True)
+class DPCReconstructionParams:
+    reset: bool = True
+    max_iter: int = 64
+    step_size: float | None = None
+    stopping_criterion: float = 1e-6
+    backtrack: bool = True
+    gaussian_filter: bool = True
+    gaussian_filter_sigma: float | None = None
+    butterworth_filter: bool = True
+    q_lowpass: float | None = None
+    q_highpass: float | None = None
+    butterworth_order: float = 2.0
+    store_iterations: bool = False
+
+
+@dataclass(frozen=True)
+class DPCStageResult:
+    stage: str
+    images: dict[str, np.ndarray] = field(default_factory=dict)
+    complex_images: dict[str, np.ndarray] = field(default_factory=dict)
+    masks: tuple[np.ndarray, ...] = ()
+    metadata: dict[str, object] = field(default_factory=dict)
+    elapsed_seconds: float = 0.0
+
+
+@dataclass(frozen=True)
+class DPCAcceptanceState:
+    preprocessing: bool = False
+
+
+@dataclass(frozen=True)
 class PhaseContrastResult:
     method: str
     images: dict[str, np.ndarray] = field(default_factory=dict)
@@ -65,14 +127,234 @@ class PhaseContrastResult:
     reconstructed_potential: np.ndarray | None = None
     com_measured_x: np.ndarray | None = None
     com_measured_y: np.ndarray | None = None
+    com_fitted_x: np.ndarray | None = None
+    com_fitted_y: np.ndarray | None = None
     com_normalized_x: np.ndarray | None = None
     com_normalized_y: np.ndarray | None = None
+    rotation_angles_degrees: np.ndarray | None = None
+    rotation_metric: np.ndarray | None = None
+    rotation_metric_transpose: np.ndarray | None = None
+    transpose: bool | None = None
+    error_iterations: np.ndarray | None = None
+    object_iterations: tuple[np.ndarray, ...] = ()
 
 
 class PhaseContrastService:
     PTYCHOGRAPHY = "Ptychography"
     PARALLAX = "Parallax"
     DPC = "DPC"
+
+    def __init__(self) -> None:
+        self.dpc: Any | None = None
+        self.dpc_preprocess_result: PhaseContrastResult | None = None
+        self.dpc_acceptance = DPCAcceptanceState()
+
+    def reset_dpc_workflow(self) -> None:
+        self.dpc = None
+        self.dpc_preprocess_result = None
+        self.dpc_acceptance = DPCAcceptanceState()
+
+    @staticmethod
+    def dpc_sto_preset() -> DPCSegmentedParams:
+        return DPCSegmentedParams()
+
+    def generate_segmented_dpc(
+        self,
+        datacube: Any,
+        params: DPCSegmentedParams,
+    ) -> DPCStageResult:
+        start = perf_counter()
+        data = np.asarray(getattr(datacube, "data", datacube))
+        if data.ndim != 4:
+            raise PhaseContrastServiceError(
+                f"Segmented DPC requires 4D data, got shape {data.shape}."
+            )
+        masks = self._annular_segment_masks(data.shape[-2:], params)
+        intensities = tuple(np.sum(data * mask, axis=(-2, -1)) for mask in masks)
+        segmented_x = intensities[0] - intensities[2]
+        segmented_y = intensities[1] - intensities[3]
+        qx, qy = np.indices(data.shape[-2:], dtype=float)
+        center = np.asarray(
+            [
+                params.center_x if params.center_x is not None else data.shape[-2] / 2,
+                params.center_y if params.center_y is not None else data.shape[-1] / 2,
+            ]
+        )
+        monolithic_x = np.zeros(data.shape[:2], dtype=float)
+        monolithic_y = np.zeros(data.shape[:2], dtype=float)
+        for mask in masks:
+            selected = mask.astype(bool)
+            if not selected.any():
+                continue
+            weight_x = float(np.mean(qx[selected]) - center[0])
+            weight_y = float(np.mean(qy[selected]) - center[1])
+            segment = np.sum(data * mask, axis=(-2, -1))
+            monolithic_x += segment * weight_x
+            monolithic_y += segment * weight_y
+        mean_dp = np.mean(data, axis=(0, 1))
+        images = {"Mean diffraction pattern": mean_dp}
+        images.update({f"Segment {index + 1} mask": mask for index, mask in enumerate(masks)})
+        images.update(
+            {f"Segment {index + 1} intensity": image for index, image in enumerate(intensities)}
+        )
+        images.update(
+            {
+                "Segmented CoM X": segmented_x,
+                "Segmented CoM Y": segmented_y,
+                "Weighted CoM X": monolithic_x,
+                "Weighted CoM Y": monolithic_y,
+            }
+        )
+        return DPCStageResult(
+            stage="segmented",
+            images=images,
+            complex_images={
+                "Segmented complex CoM": segmented_x + 1j * segmented_y,
+                "Weighted complex CoM": monolithic_x + 1j * monolithic_y,
+            },
+            masks=masks,
+            metadata={
+                "energy": params.energy,
+                "rotation_offset_degrees": params.rotation_offset_degrees,
+                "inner_radius_mrad": params.inner_radius_mrad,
+                "outer_radius_mrad": params.outer_radius_mrad,
+                "sampling": (params.sampling_x, params.sampling_y),
+                "center": (
+                    params.center_x if params.center_x is not None else data.shape[-2] / 2,
+                    params.center_y if params.center_y is not None else data.shape[-1] / 2,
+                ),
+            },
+            elapsed_seconds=perf_counter() - start,
+        )
+
+    def preprocess_dpc(
+        self,
+        datacube: Any,
+        params: DPCPreprocessParams,
+    ) -> PhaseContrastResult:
+        py4DSTEM = self._py4dstem()
+        start = perf_counter()
+        step = max(float(params.rotation_step_degrees), 1e-9)
+        rotation_angles = np.arange(
+            params.rotation_start_degrees,
+            params.rotation_end_degrees + step * 0.5,
+            step,
+        )
+        kwargs: dict[str, Any] = {
+            "padding_factor": params.padding_factor,
+            "rotation_angles_deg": rotation_angles,
+            "maximize_divergence": params.maximize_divergence,
+            "fit_function": params.fit_function,
+            "vectorized_com_calculation": params.vectorized_com_calculation,
+            "plot_center_of_mass": False,
+            "plot_rotation": False,
+        }
+        if params.force_com_rotation is not None:
+            kwargs["force_com_rotation"] = params.force_com_rotation
+        if params.force_com_transpose is not None:
+            kwargs["force_com_transpose"] = params.force_com_transpose
+        if params.force_com_shift_x is not None and params.force_com_shift_y is not None:
+            kwargs["force_com_shifts"] = (params.force_com_shift_x, params.force_com_shift_y)
+        if params.use_dp_mask:
+            shape = tuple(np.asarray(getattr(datacube, "data", datacube)).shape[-2:])
+            sampling_x, sampling_y = self._datacube_sampling(datacube)
+            segmented = DPCSegmentedParams(
+                energy=params.energy,
+                sampling_x=sampling_x,
+                sampling_y=sampling_y,
+                inner_radius_mrad=params.mask_inner_mrad,
+                outer_radius_mrad=params.mask_outer_mrad,
+            )
+            kwargs["dp_mask"] = np.sum(self._annular_segment_masks(shape, segmented), axis=0) > 0
+        try:
+            self.dpc = py4DSTEM.process.phase.DPC(
+                energy=params.energy,
+                datacube=datacube,
+            ).preprocess(**kwargs)
+        except Exception as exc:
+            raise PhaseContrastServiceError(f"DPC preprocessing failed: {exc}") from exc
+        self.dpc_acceptance = DPCAcceptanceState(False)
+        result = self._extract_dpc(self.dpc, perf_counter() - start)
+        self.dpc_preprocess_result = result
+        return result
+
+    def accept_dpc_preprocessing(self) -> DPCAcceptanceState:
+        if self.dpc is None or self.dpc_preprocess_result is None:
+            raise PhaseContrastServiceError("Run DPC preprocessing before accepting it.")
+        self.dpc_acceptance = DPCAcceptanceState(True)
+        return self.dpc_acceptance
+
+    def reconstruct_dpc(self, params: DPCReconstructionParams) -> PhaseContrastResult:
+        if self.dpc is None or not self.dpc_acceptance.preprocessing:
+            raise PhaseContrastServiceError(
+                "Review and accept pixelated CoM preprocessing before reconstruction."
+            )
+        start = perf_counter()
+        try:
+            reconstructed = self.dpc.reconstruct(
+                reset=params.reset,
+                max_iter=params.max_iter,
+                step_size=params.step_size,
+                stopping_criterion=params.stopping_criterion,
+                backtrack=params.backtrack,
+                progress_bar=True,
+                gaussian_filter=params.gaussian_filter,
+                gaussian_filter_sigma=params.gaussian_filter_sigma,
+                butterworth_filter=params.butterworth_filter,
+                q_lowpass=params.q_lowpass,
+                q_highpass=params.q_highpass,
+                butterworth_order=params.butterworth_order,
+                store_iterations=params.store_iterations,
+            )
+            if reconstructed is not None:
+                self.dpc = reconstructed
+        except Exception as exc:
+            raise PhaseContrastServiceError(f"DPC reconstruction failed: {exc}") from exc
+        return self._extract_dpc(self.dpc, perf_counter() - start)
+
+    def _annular_segment_masks(
+        self,
+        shape: tuple[int, int],
+        params: DPCSegmentedParams,
+    ) -> tuple[np.ndarray, ...]:
+        py4DSTEM = self._py4dstem()
+        wavelength = py4DSTEM.process.utils.electron_wavelength_angstrom(params.energy)
+        alpha_x = np.fft.fftfreq(shape[0], params.sampling_x) * wavelength
+        alpha_y = np.fft.fftfreq(shape[1], params.sampling_y) * wavelength
+        alpha = np.sqrt(alpha_x[:, None] ** 2 + alpha_y[None, :] ** 2)
+        radial = (params.inner_radius_mrad * 1e-3 <= alpha) & (
+            alpha < params.outer_radius_mrad * 1e-3
+        )
+        theta = (
+            np.arctan2(alpha_y[None, :], alpha_x[:, None])
+            + np.deg2rad(params.rotation_offset_degrees)
+        ) % (2 * np.pi)
+        bins = np.floor(4 * theta / (2 * np.pi)).astype(int)
+        masks = [np.fft.fftshift(((bins == index) & radial).astype(float)) for index in range(4)]
+        default_center = np.asarray(shape, dtype=float) / 2
+        target_center = np.asarray(
+            [
+                params.center_x if params.center_x is not None else default_center[0],
+                params.center_y if params.center_y is not None else default_center[1],
+            ]
+        )
+        shift = np.rint(target_center - default_center).astype(int)
+        return tuple(np.roll(mask, tuple(shift), axis=(0, 1)) for mask in masks)
+
+    @staticmethod
+    def _datacube_sampling(datacube: Any) -> tuple[float, float]:
+        calibration = getattr(datacube, "calibration", None)
+        try:
+            sampling = calibration.get_R_pixel_size()
+            if np.isscalar(sampling):
+                value = float(sampling)
+                return value, value
+            values = tuple(float(item) for item in sampling)
+            if len(values) >= 2:
+                return values[:2]
+        except Exception:
+            pass
+        return DPCSegmentedParams().sampling_x, DPCSegmentedParams().sampling_y
 
     def compute_bf_df(
         self,
@@ -209,33 +491,16 @@ class PhaseContrastService:
         params: DPCParams,
         progress_callback: Any | None = None,
     ) -> PhaseContrastResult:
-        py4DSTEM = self._py4dstem()
-        start = perf_counter()
-
-        plot_com = params.plot_center_of_mass == "all"
-        preprocess_kwargs: dict[str, Any] = {"plot_center_of_mass": plot_com}
-        if params.force_com_rotation is not None:
-            preprocess_kwargs["force_com_rotation"] = params.force_com_rotation
-        if params.force_com_transpose:
-            preprocess_kwargs["force_com_transpose"] = True
-
-        try:
-            dpc = py4DSTEM.process.phase.DPC(
+        self.preprocess_dpc(
+            datacube,
+            DPCPreprocessParams(
                 energy=params.energy,
-                datacube=datacube,
-            ).preprocess(
-                **preprocess_kwargs,
-            ).reconstruct(
-                reset=True,
-            ).visualize()
-        except Exception as exc:
-            raise PhaseContrastServiceError(
-                f"DPC reconstruction failed: {exc}"
-            ) from exc
-
-        elapsed = perf_counter() - start
-        result = self._extract_dpc(dpc, elapsed)
-        return result
+                force_com_rotation=params.force_com_rotation,
+                force_com_transpose=True if params.force_com_transpose else None,
+            ),
+        )
+        self.accept_dpc_preprocessing()
+        return self.reconstruct_dpc(DPCReconstructionParams())
 
     def _extract_ptychography(self, ptycho: Any, elapsed: float) -> PhaseContrastResult:
         images: dict[str, np.ndarray] = {}
@@ -342,10 +607,18 @@ class PhaseContrastService:
         com_y = None
         com_measured_x = None
         com_measured_y = None
+        com_fitted_x = None
+        com_fitted_y = None
         com_normalized_x = None
         com_normalized_y = None
         complex_com = None
         reconstructed_potential = None
+        rotation_angles = None
+        rotation_metric = None
+        rotation_metric_transpose = None
+        transpose = None
+        error_iterations = None
+        object_iterations: tuple[np.ndarray, ...] = ()
 
         try:
             rotation = float(np.rad2deg(getattr(dpc, "_rotation_best_rad", 0.0)))
@@ -375,6 +648,8 @@ class PhaseContrastService:
         for attr, key in [
             ("_com_measured_x", "Measured CoM X"),
             ("_com_measured_y", "Measured CoM Y"),
+            ("_com_fitted_x", "Fitted CoM X"),
+            ("_com_fitted_y", "Fitted CoM Y"),
             ("_com_normalized_x", "Normalized CoM X"),
             ("_com_normalized_y", "Normalized CoM Y"),
         ]:
@@ -385,6 +660,10 @@ class PhaseContrastService:
                     com_measured_x = value
                 elif attr == "_com_measured_y":
                     com_measured_y = value
+                elif attr == "_com_fitted_x":
+                    com_fitted_x = value
+                elif attr == "_com_fitted_y":
+                    com_fitted_y = value
                 elif attr == "_com_normalized_x":
                     com_normalized_x = value
                 elif attr == "_com_normalized_y":
@@ -393,10 +672,42 @@ class PhaseContrastService:
                 logger.debug("Could not extract DPC diagnostic field %s", attr, exc_info=True)
 
         try:
-            reconstructed_potential = np.asarray(dpc.object_cropped)
+            potential = getattr(dpc, "object_phase", None)
+            if potential is None:
+                potential = getattr(dpc, "object_cropped")
+            reconstructed_potential = np.asarray(potential)
             images["Potential"] = reconstructed_potential
         except Exception:
             logger.debug("Could not extract DPC reconstructed potential", exc_info=True)
+
+        try:
+            rotation_angles = np.asarray(dpc._rotation_angles_deg)
+            metric_name = "_rotation_div" if hasattr(dpc, "_rotation_div") else "_rotation_curl"
+            transpose_name = metric_name + "_transpose"
+            rotation_metric = np.asarray(getattr(dpc, metric_name))
+            rotation_metric_transpose = np.asarray(getattr(dpc, transpose_name))
+        except Exception:
+            logger.debug("Could not extract DPC rotation-search diagnostics", exc_info=True)
+        try:
+            transpose = bool(dpc._rotation_best_transpose)
+        except Exception:
+            pass
+        try:
+            error_iterations = np.asarray(dpc.error_iterations, dtype=float)
+            if error_iterations.size:
+                images["Convergence error"] = error_iterations[None, :]
+        except Exception:
+            logger.debug("Could not extract DPC convergence history", exc_info=True)
+        try:
+            object_iterations = tuple(np.asarray(item) for item in dpc.object_phase_iterations)
+            if object_iterations:
+                indices = np.linspace(
+                    0, len(object_iterations) - 1, min(4, len(object_iterations)), dtype=int
+                )
+                for index in indices:
+                    images[f"Iteration {index}"] = object_iterations[index]
+        except Exception:
+            logger.debug("Could not extract DPC stored iterations", exc_info=True)
 
         return PhaseContrastResult(
             method=self.DPC,
@@ -410,8 +721,16 @@ class PhaseContrastService:
             reconstructed_potential=reconstructed_potential,
             com_measured_x=com_measured_x,
             com_measured_y=com_measured_y,
+            com_fitted_x=com_fitted_x,
+            com_fitted_y=com_fitted_y,
             com_normalized_x=com_normalized_x,
             com_normalized_y=com_normalized_y,
+            rotation_angles_degrees=rotation_angles,
+            rotation_metric=rotation_metric,
+            rotation_metric_transpose=rotation_metric_transpose,
+            transpose=transpose,
+            error_iterations=error_iterations,
+            object_iterations=object_iterations,
         )
 
     def _py4dstem(self):
