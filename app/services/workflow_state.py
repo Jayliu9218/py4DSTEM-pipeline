@@ -36,6 +36,11 @@ class WorkflowStep:
     DPC_PREPROCESS = "dpc_preprocess"
     DPC_REVIEW = "dpc_review"
     DPC = "dpc"
+    PARALLAX_BF = "parallax_bf"
+    PARALLAX_BF_ACCEPT = "parallax_bf_accept"
+    PARALLAX_ALIGNMENT = "parallax_alignment"
+    PARALLAX_REVIEW = "parallax_review"
+    PARALLAX_ADVANCED = "parallax_advanced"
     PARALLAX = "parallax"
     PTYCHOGRAPHY = "ptychography"
     METHOD_COMPARISON = "method_comparison"
@@ -91,6 +96,11 @@ class WorkflowState(QObject):
             WorkflowStep.DPC_REVIEW,
             WorkflowStep.DPC,
             WorkflowStep.PARALLAX,
+            WorkflowStep.PARALLAX_BF,
+            WorkflowStep.PARALLAX_BF_ACCEPT,
+            WorkflowStep.PARALLAX_ALIGNMENT,
+            WorkflowStep.PARALLAX_REVIEW,
+            WorkflowStep.PARALLAX_ADVANCED,
             WorkflowStep.PTYCHOGRAPHY,
             WorkflowStep.METHOD_COMPARISON,
         },
@@ -112,6 +122,11 @@ class WorkflowState(QObject):
             WorkflowStep.DPC_REVIEW,
             WorkflowStep.DPC,
             WorkflowStep.PARALLAX,
+            WorkflowStep.PARALLAX_BF,
+            WorkflowStep.PARALLAX_BF_ACCEPT,
+            WorkflowStep.PARALLAX_ALIGNMENT,
+            WorkflowStep.PARALLAX_REVIEW,
+            WorkflowStep.PARALLAX_ADVANCED,
             WorkflowStep.PTYCHOGRAPHY,
             WorkflowStep.METHOD_COMPARISON,
         },
@@ -145,7 +160,10 @@ class WorkflowState(QObject):
         WorkflowStep.ORIENTATION_PLAN: {WorkflowStep.ORIENTATION_MATCH},
         WorkflowStep.DPC_PREPROCESS: {WorkflowStep.DPC_REVIEW},
         WorkflowStep.DPC_REVIEW: {WorkflowStep.DPC},
-        WorkflowStep.DPC: {WorkflowStep.PARALLAX},
+        WorkflowStep.PARALLAX_BF: {WorkflowStep.PARALLAX_BF_ACCEPT},
+        WorkflowStep.PARALLAX_BF_ACCEPT: {WorkflowStep.PARALLAX_ALIGNMENT},
+        WorkflowStep.PARALLAX_ALIGNMENT: {WorkflowStep.PARALLAX_REVIEW},
+        WorkflowStep.PARALLAX_REVIEW: {WorkflowStep.PARALLAX_ADVANCED, WorkflowStep.PARALLAX},
         WorkflowStep.PARALLAX: {WorkflowStep.PTYCHOGRAPHY},
     }
 

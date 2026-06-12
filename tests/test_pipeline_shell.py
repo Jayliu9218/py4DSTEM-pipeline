@@ -151,20 +151,30 @@ class PipelineShellTests(unittest.TestCase):
         self.assertGreater(len(review.workspace.results), 0)
         self.assertIn("Continue to CoM Review & Accept", preprocess.status_label.text())
 
-    def test_other_phase_retrieval_goal_keeps_existing_route(self) -> None:
+    def test_parallax_goal_uses_focused_six_module_route(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
         self.window.project_toolbar.goal.setCurrentText("Parallax")
 
         self.assertEqual(
             [module.title for module in self.window.route_modules],
-            ["Data Setup", "BF / DF Preview", "DPC / CoM", "Parallax", "Ptychography", "Method Comparison", "Export"],
+            [
+                "Data Setup", "BF Disk & Virtual BF", "Parallax Alignment",
+                "Alignment Review", "Advanced Reconstruction", "Export",
+            ],
         )
-        dpc = next(module for module in self.window.route_modules if module.key == "dpc")
-        self.assertEqual(dpc.page_key, "dpc_legacy")
+        alignment = next(
+            module for module in self.window.route_modules if module.key == "parallax_alignment"
+        )
+        self.assertEqual(alignment.page_key, "parallax_alignment")
         self.assertIs(
-            self.window._controls_for_route("dpc"),
-            self.window.dpc_legacy_page.controls_panel,
+            self.window._controls_for_route("parallax_alignment"),
+            self.window.parallax_alignment_page.controls_panel,
         )
+        self.assertTrue(self.window.parallax_advanced_page.subpixel.isChecked())
+        self.assertFalse(self.window.parallax_advanced_page.aberration_fit.isChecked())
+        self.assertFalse(self.window.parallax_advanced_page.aberration_correction.isChecked())
+        self.assertFalse(self.window.parallax_advanced_page.high_order.isChecked())
+        self.assertFalse(self.window.parallax_advanced_page.ctf_fit.isChecked())
 
     def test_route_module_selection_works(self) -> None:
         self.window._select_route_module("bragg_detection")

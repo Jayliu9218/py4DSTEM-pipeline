@@ -110,6 +110,26 @@ class WorkflowStateTests(unittest.TestCase):
         self.assertTrue(state.is_stale(WorkflowStep.DPC_REVIEW))
         self.assertTrue(state.is_stale(WorkflowStep.DPC))
 
+    def test_parallax_stage_dependencies_follow_acceptance_gates(self) -> None:
+        state = WorkflowState()
+        for step in (
+            WorkflowStep.PARALLAX_BF,
+            WorkflowStep.PARALLAX_BF_ACCEPT,
+            WorkflowStep.PARALLAX_ALIGNMENT,
+            WorkflowStep.PARALLAX_REVIEW,
+            WorkflowStep.PARALLAX_ADVANCED,
+            WorkflowStep.PARALLAX,
+        ):
+            state.mark_completed(step)
+
+        state.parameters_updated(WorkflowStep.PARALLAX_BF)
+
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX_BF_ACCEPT))
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX_ALIGNMENT))
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX_REVIEW))
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX_ADVANCED))
+        self.assertTrue(state.is_stale(WorkflowStep.PARALLAX))
+
 
 if __name__ == "__main__":
     unittest.main()

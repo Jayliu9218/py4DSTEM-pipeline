@@ -457,33 +457,34 @@ class PhaseContrastService:
         params: ParallaxParams,
         progress_callback: Any | None = None,
     ) -> PhaseContrastResult:
-        py4DSTEM = self._py4dstem()
-        start = perf_counter()
+        # Legacy aggregate-page compatibility. All py4DSTEM Parallax API calls
+        # still pass through the version-aware adapter.
+        from app.services.parallax_service import (
+            BFMaskParams,
+            ParallaxAlignmentParams,
+            ParallaxService,
+        )
 
+        service = ParallaxService()
         try:
-            parallax = py4DSTEM.process.phase.Parallax(
-                datacube=datacube,
-                energy=params.energy,
-                device=params.device,
-                object_padding_px=params.object_padding_px,
-            ).preprocess(
-                edge_blend=params.edge_blend,
-                plot_average_bf=False,
-                normalize_images=params.normalize_images,
-                threshold_intensity=params.threshold_intensity,
-            ).reconstruct(
-                alignment_bin_values=list(params.alignment_bin_values),
-                regularize_shifts=params.regularize_shifts,
-                progress_bar=False,
+            service.prepare_bf(datacube, BFMaskParams(threshold=params.threshold_intensity))
+            service.accept_bf_mask()
+            return service.align(
+                datacube,
+                ParallaxAlignmentParams(
+                    energy=params.energy,
+                    device=params.device,
+                    object_padding_px=params.object_padding_px,
+                    edge_blend=params.edge_blend,
+                    alignment_bin_values=params.alignment_bin_values,
+                    regularize_shifts=params.regularize_shifts,
+                    normalize_images=params.normalize_images,
+                    threshold_intensity=params.threshold_intensity,
+                ),
+                progress_callback,
             )
         except Exception as exc:
-            raise PhaseContrastServiceError(
-                f"Parallax reconstruction failed: {exc}"
-            ) from exc
-
-        elapsed = perf_counter() - start
-        result = self._extract_parallax(parallax, elapsed)
-        return result
+            raise PhaseContrastServiceError(f"Parallax reconstruction failed: {exc}") from exc
 
     def run_dpc(
         self,
