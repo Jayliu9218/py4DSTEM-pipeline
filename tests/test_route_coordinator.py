@@ -20,6 +20,7 @@ class RouteDefinitionTests(unittest.TestCase):
     def test_focused_routes_keep_expected_stage_order(self) -> None:
         dpc = build_route_modules("Phase Retrieval / Ptychography", "DPC / CoM")
         parallax = build_route_modules("Phase Retrieval / Ptychography", "Parallax")
+        ptychography = build_route_modules("Phase Retrieval / Ptychography", "Ptychography")
 
         self.assertEqual(
             [module.key for module in dpc],
@@ -34,6 +35,14 @@ class RouteDefinitionTests(unittest.TestCase):
                 "parallax_review",
                 "parallax_advanced",
                 "export",
+            ],
+        )
+        self.assertEqual(
+            [module.key for module in ptychography],
+            [
+                "data_setup", "ptychography_data", "ptychography_geometry", "ptychography_preprocess",
+                "ptychography_quick", "ptychography_review", "ptychography_optimization",
+                "ptychography_advanced", "export",
             ],
         )
 

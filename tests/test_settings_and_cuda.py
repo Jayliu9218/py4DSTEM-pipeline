@@ -72,6 +72,24 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertNotIn("Setting", file_actions)
         self.assertFalse(hasattr(window, "setting_menu"))
 
+    def test_help_menu_actions_are_descriptive_and_have_complete_content(self) -> None:
+        window = MainWindow()
+        actions = [action.text().replace("&", "") for action in window.help_menu.actions()]
+
+        self.assertEqual(actions, ["About", "License", "Workflow Tutorials"])
+        self.assertIn("current capabilities", window.about_action.statusTip())
+        self.assertIn("GNU GPLv3", window.license_action.statusTip())
+        self.assertIn("each analysis workflow", window.tutorials_action.statusTip())
+        self.assertIn("Current situation", window.ABOUT_HTML)
+        self.assertIn("Current improvements", window.ABOUT_HTML)
+        self.assertIn("GNU General Public License version 3", window.LICENSE_HTML)
+        for workflow in (
+            "Orientation Mapping", "Strain Mapping", "Structural Phase Mapping",
+            "DPC / CoM", "Parallax", "Ptychography", "Method Comparison",
+            "RDF", "FEM", "Amorphous Strain",
+        ):
+            self.assertIn(workflow, window.TUTORIAL_HTML)
+
     def test_cuda_setting_updates_pages_without_file_state(self) -> None:
         window = MainWindow()
 

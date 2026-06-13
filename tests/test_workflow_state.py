@@ -141,6 +141,32 @@ class WorkflowStateTests(unittest.TestCase):
         self.assertTrue(state.is_stale(WorkflowStep.PARALLAX_ADVANCED))
         self.assertTrue(state.is_stale(WorkflowStep.PARALLAX))
 
+    def test_ptychography_eight_stage_invalidation_and_optional_optimization(self) -> None:
+        state = WorkflowState()
+        stages = (
+            WorkflowStep.PTYCHOGRAPHY_DATA,
+            WorkflowStep.PTYCHOGRAPHY_GEOMETRY,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_QUICK,
+            WorkflowStep.PTYCHOGRAPHY_QC,
+            WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_ADVANCED,
+            WorkflowStep.PTYCHOGRAPHY_EXPORT,
+        )
+        state.mark_completed_many(stages)
+
+        state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_GEOMETRY)
+
+        self.assertFalse(state.is_stale(WorkflowStep.PTYCHOGRAPHY_DATA))
+        for step in stages[1:]:
+            self.assertTrue(state.is_stale(step))
+
+        state = WorkflowState()
+        state.mark_completed_many({WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT, WorkflowStep.PTYCHOGRAPHY_ADVANCED})
+        state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION)
+        self.assertFalse(state.is_stale(WorkflowStep.PTYCHOGRAPHY_ADVANCED))
+
 
 if __name__ == "__main__":
     unittest.main()

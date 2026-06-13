@@ -21,6 +21,7 @@ from app.pages.structural_phase_page import StructuralPhasePage
 from app.pages.virtual_detector_page import VirtualDetectorPage
 from app.services.parallax_service import ParallaxService
 from app.services.phase_contrast_service import PhaseContrastService
+from app.services.ptychography_service import PtychographyService
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
 
 
@@ -135,11 +136,27 @@ class ApplicationPages:
                 **common,
             )
         pages["parallax_page"] = pages["parallax_alignment_page"]
-        pages["ptychography_page"] = PtychographyPage(
-            source_provider=providers["datacube"],
-            dpc_result_provider=lambda: phase_retrieval_results.get("DPC"),
-            **common,
-        )
+        ptychography_service = PtychographyService()
+        for name, stage in (
+            ("ptychography_data_page", "data"),
+            ("ptychography_geometry_page", "geometry"),
+            ("ptychography_preprocess_page", "preprocess"),
+            ("ptychography_quick_page", "quick"),
+            ("ptychography_review_page", "review"),
+            ("ptychography_optimization_page", "optimization"),
+            ("ptychography_advanced_page", "advanced"),
+            ("ptychography_export_page", "export"),
+        ):
+            pages[name] = PtychographyPage(
+                source_provider=providers["datacube"],
+                vacuum_probe_provider=providers.get("vacuum_probe_path"),
+                service=ptychography_service,
+                stage_mode=stage,
+                **common,
+            )
+        pages["ptychography_page"] = pages["ptychography_advanced_page"]
+        pages["ptychography_setup_page"] = pages["ptychography_data_page"]
+        pages["ptychography_reconstruction_page"] = pages["ptychography_advanced_page"]
         pages["method_comparison_page"] = MethodComparisonPage(
             dpc_result_provider=lambda: phase_retrieval_results.get("DPC"),
             ptychography_result_provider=lambda: phase_retrieval_results.get("Ptychography"),
