@@ -6,6 +6,8 @@ from typing import Any
 import h5py
 import numpy as np
 
+from app.services.array_reduction import scan_sum
+
 
 class Hdf5Service:
     def open_file(self, file_path: str | Path) -> h5py.File:
@@ -58,7 +60,7 @@ class Hdf5Service:
         if dataset.ndim != 4:
             raise ValueError(f"Expected a 4D dataset, got shape {dataset.shape}.")
         self._ensure_numeric(dataset)
-        return np.asarray(dataset[...]).sum(axis=(2, 3))
+        return scan_sum(dataset)
 
     def _ensure_numeric(self, dataset: h5py.Dataset) -> None:
         if not np.issubdtype(dataset.dtype, np.number):
