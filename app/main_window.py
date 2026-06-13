@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +58,73 @@ from app.widgets.pipeline_shell import (
 
 
 class MainWindow(QMainWindow):
+    ABOUT_HTML = """
+    <h2>py4DSTEM Pipeline</h2>
+    <p>A desktop workflow application for browsing, processing, reconstructing,
+    reviewing, and exporting 4D-STEM data with py4DSTEM.</p>
+    <h3>Current situation</h3>
+    <p>The application provides guided crystalline and phase-retrieval workflows,
+    shared calculation progress, project-state persistence, scientific diagnostics,
+    and result export. The amorphous-analysis routes are visible but remain under
+    development.</p>
+    <h3>Current improvements</h3>
+    <ul>
+      <li>Staged workflows with explicit review and acceptance gates.</li>
+      <li>CPU/GPU execution choices and clearer CUDA or memory failure guidance.</li>
+      <li>Thread-safe background calculations with live progress reporting.</li>
+      <li>Reusable Ptychography profiles, Quick Reconstruction, QC, and Advanced Reconstruction.</li>
+    </ul>
+    <p>Results should always be reviewed using appropriate experimental knowledge;
+    automated diagnostics support scientific judgment but do not replace it.</p>
+    """
+
+    LICENSE_HTML = """
+    <h2>License</h2>
+    <p>This project is intended for distribution under the
+    <b>GNU General Public License version 3 (GPLv3)</b>.</p>
+    <p>py4DSTEM is open source software distributed under a GPLv3 license. It is
+    free to use, alter, or build on, provided that any work derived from py4DSTEM
+    is also kept free and open under a GPLv3 license.</p>
+    <p>Reference:
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPLv3 license</a><br>
+    py4DSTEM:
+    <a href="https://github.com/py4dstem/py4DSTEM">github.com/py4dstem/py4DSTEM</a></p>
+    """
+
+    TUTORIAL_HTML = """
+    <h2>Workflow Tutorial</h2>
+    <p>Start by opening an HDF5/EMD file, assigning the Target DataCube and any
+    optional reference roles, then choose a structure type and analysis goal.</p>
+    <h3>Shared Data Setup</h3>
+    <p>Inspect the DataCube, assign dataset roles, preview preprocessing, and apply
+    corrections explicitly before downstream analysis.</p>
+    <h3>Crystalline / Bragg-based</h3>
+    <p><b>Orientation Mapping:</b> detect Bragg peaks, calibrate reciprocal space,
+    load a crystal structure, create an orientation plan, and match orientations.</p>
+    <p><b>Strain Mapping:</b> generate virtual images, prepare a probe kernel,
+    calculate BraggVectors, apply calibration, select a reference, and calculate
+    strain and quality maps.</p>
+    <p><b>Structural Phase Mapping:</b> uses calibrated Bragg information for
+    phase-specific analysis; this route is still being expanded.</p>
+    <h3>Phase Retrieval / Ptychography</h3>
+    <p><b>DPC / CoM:</b> preview BF/DF contrast, inspect segmented DPC, preprocess
+    and accept CoM fields, then run integrated reconstruction.</p>
+    <p><b>Parallax:</b> accept a bright-field disk, align virtual BF images, review
+    shifts, and optionally run subpixel or aberration processing.</p>
+    <p><b>Ptychography:</b> inspect data and probe, accept geometry and preprocessing,
+    run a Quick Reconstruction, review QC, optionally optimize parameters, then run
+    Advanced Reconstruction and export the retained results.</p>
+    <p><b>Method Comparison:</b> compare retained DPC and Ptychography results when
+    both are available.</p>
+    <h3>Amorphous / Diffuse-scattering</h3>
+    <p>Radial Profile, RDF, FEM, and Amorphous Strain routes are planned workflows
+    and are not yet production-ready.</p>
+    <h3>Reading Workflow Status</h3>
+    <p>Completed stages are retained. Changing upstream parameters marks affected
+    downstream results as stale. Re-run and re-accept stale stages before relying
+    on later results.</p>
+    """
+
     current_file = property(
         lambda self: self.session.current_file,
         lambda self, value: setattr(self.session, "current_file", value),
@@ -132,6 +200,7 @@ class MainWindow(QMainWindow):
                 "probe_geometry": self._get_probe_geometry,
                 "selected_source": self._get_selected_display_source,
                 "datacube": self._get_py4dstem_datacube,
+                "vacuum_probe_path": self._get_vacuum_probe_source,
                 "virtual_image": self._get_virtual_detector_image,
                 "braggvectors": self._get_braggvectors,
                 "ellipse_braggvectors": self._get_ellipse_reference_braggvectors,
@@ -187,6 +256,13 @@ class MainWindow(QMainWindow):
                 "parallax_advanced": self.parallax_advanced_page.controls_panel,
                 "parallax": self.parallax_alignment_page.controls_panel,
                 "ptychography": self.ptychography_page.controls_panel,
+                "ptychography_data": self.ptychography_data_page.controls_panel,
+                "ptychography_geometry": self.ptychography_geometry_page.controls_panel,
+                "ptychography_preprocess": self.ptychography_preprocess_page.controls_panel,
+                "ptychography_quick": self.ptychography_quick_page.controls_panel,
+                "ptychography_review": self.ptychography_review_page.controls_panel,
+                "ptychography_optimization": self.ptychography_optimization_page.controls_panel,
+                "ptychography_advanced": self.ptychography_advanced_page.controls_panel,
                 "method_comparison": self.method_comparison_page.controls_panel,
                 "radial_profile": self.radial_profile_page.controls_panel,
             },
@@ -206,6 +282,7 @@ class MainWindow(QMainWindow):
             },
             export_controls={
                 "Parallax": self.parallax_export_page.controls_panel,
+                "Ptychography": self.ptychography_export_page.controls_panel,
                 "default": self.export_controls,
             },
         )
@@ -222,6 +299,14 @@ class MainWindow(QMainWindow):
                 "phase_contrast": self.phase_contrast_page,
                 "bf_df_preview": self.bf_df_preview_page,
                 "ptychography": self.ptychography_page,
+                "ptychography_data": self.ptychography_data_page,
+                "ptychography_geometry": self.ptychography_geometry_page,
+                "ptychography_preprocess": self.ptychography_preprocess_page,
+                "ptychography_quick": self.ptychography_quick_page,
+                "ptychography_review": self.ptychography_review_page,
+                "ptychography_optimization": self.ptychography_optimization_page,
+                "ptychography_advanced": self.ptychography_advanced_page,
+                "ptychography_export": self.ptychography_export_page,
                 "method_comparison": self.method_comparison_page,
             },
             dpc_pages=(
@@ -269,7 +354,7 @@ class MainWindow(QMainWindow):
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
         self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
-        self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
+        self.ptychography_advanced_page.ptychography_result_ready.connect(self._store_ptychography_result)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
         self._apply_image_colormap(self.image_cmap)
@@ -312,9 +397,38 @@ class MainWindow(QMainWindow):
         self.setting_action.triggered.connect(self.open_settings)
 
         self.help_menu = self.menuBar().addMenu("&Help")
-        self.help_menu.addAction("About")
-        self.help_menu.addAction("License")
-        self.help_menu.addAction("Tutorials")
+        self.about_action = self.help_menu.addAction("&About")
+        self.about_action.setStatusTip("Overview, current capabilities, and improvements")
+        self.about_action.triggered.connect(self.show_about)
+        self.license_action = self.help_menu.addAction("&License")
+        self.license_action.setStatusTip("GNU GPLv3 and py4DSTEM licensing information")
+        self.license_action.triggered.connect(self.show_license)
+        self.tutorials_action = self.help_menu.addAction("&Workflow Tutorials")
+        self.tutorials_action.setStatusTip("Brief introduction to each analysis workflow")
+        self.tutorials_action.triggered.connect(self.show_tutorials)
+
+    def show_about(self) -> None:
+        self._show_help_dialog("About py4DSTEM Pipeline", self.ABOUT_HTML)
+
+    def show_license(self) -> None:
+        self._show_help_dialog("License", self.LICENSE_HTML)
+
+    def show_tutorials(self) -> None:
+        self._show_help_dialog("Workflow Tutorials", self.TUTORIAL_HTML)
+
+    def _show_help_dialog(self, title: str, html: str) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(720, 620)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(html)
+        layout.addWidget(browser, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def open_settings(self) -> None:
         dialog = QDialog(self)
@@ -370,6 +484,14 @@ class MainWindow(QMainWindow):
             self.parallax_review_page,
             self.parallax_advanced_page,
             self.parallax_export_page,
+            self.ptychography_data_page,
+            self.ptychography_geometry_page,
+            self.ptychography_preprocess_page,
+            self.ptychography_quick_page,
+            self.ptychography_review_page,
+            self.ptychography_optimization_page,
+            self.ptychography_advanced_page,
+            self.ptychography_export_page,
         ):
             page.set_cuda_enabled(enabled)
 
@@ -411,6 +533,14 @@ class MainWindow(QMainWindow):
             "parallax_export": self.parallax_export_page,
             "parallax": self.parallax_alignment_page,
             "ptychography": self.ptychography_page,
+            "ptychography_data": self.ptychography_data_page,
+            "ptychography_geometry": self.ptychography_geometry_page,
+            "ptychography_preprocess": self.ptychography_preprocess_page,
+            "ptychography_quick": self.ptychography_quick_page,
+            "ptychography_review": self.ptychography_review_page,
+            "ptychography_optimization": self.ptychography_optimization_page,
+            "ptychography_advanced": self.ptychography_advanced_page,
+            "ptychography_export": self.ptychography_export_page,
             "method_comparison": self.method_comparison_page,
             "radial_profile": self.radial_profile_page,
             "rdf": self.rdf_page,
@@ -962,6 +1092,19 @@ class MainWindow(QMainWindow):
     def _get_py4dstem_datacube(self):
         return self.session.py4dstem_datacube()
 
+    def _get_vacuum_probe_source(self):
+        role_path = self.workflow_state.dataset_roles.vacuum_probe
+        if not role_path:
+            return None
+        if self.current_file is not None:
+            try:
+                node = self.current_file[role_path]
+                if isinstance(node, h5py.Dataset):
+                    return np.asarray(node[...])
+            except Exception:
+                pass
+        return self.py4dstem_service.read_datapath(role_path)
+
     def _get_selected_display_source(self):
         path = self._current_tree_selection_path()
         target_path = self.workflow_state.dataset_roles.target_datacube
@@ -1084,6 +1227,7 @@ class MainWindow(QMainWindow):
             clear_workspaces=self._clear_all_image_workspaces,
             result_registry=self.result_registry,
         )
+        self.ptychography_page.service.reset()
         self._refresh_role_labels()
         self.log_panel.log(f"Assigned {role}: {selected_path}")
 

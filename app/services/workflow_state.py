@@ -43,6 +43,19 @@ class WorkflowStep:
     PARALLAX_ADVANCED = "parallax_advanced"
     PARALLAX = "parallax"
     PTYCHOGRAPHY = "ptychography"
+    PTYCHOGRAPHY_DATA = "ptychography_data"
+    PTYCHOGRAPHY_GEOMETRY = "ptychography_geometry"
+    PTYCHOGRAPHY_PREPROCESS = "ptychography_preprocess"
+    PTYCHOGRAPHY_PREPROCESS_ACCEPT = "ptychography_preprocess_accept"
+    PTYCHOGRAPHY_QUICK = "ptychography_quick"
+    PTYCHOGRAPHY_QC = "ptychography_qc"
+    PTYCHOGRAPHY_QC_ACCEPT = "ptychography_qc_accept"
+    PTYCHOGRAPHY_OPTIMIZATION = "ptychography_optimization"
+    PTYCHOGRAPHY_ADVANCED = "ptychography_advanced"
+    PTYCHOGRAPHY_EXPORT = "ptychography_export"
+    PTYCHOGRAPHY_SETUP = PTYCHOGRAPHY_DATA
+    PTYCHOGRAPHY_RECONSTRUCTION = PTYCHOGRAPHY_ADVANCED
+    PTYCHOGRAPHY_REVIEW = PTYCHOGRAPHY_QC
     METHOD_COMPARISON = "method_comparison"
     RADIAL_PROFILE = "radial_profile"
     RDF = "rdf"
@@ -102,6 +115,16 @@ class WorkflowState(QObject):
             WorkflowStep.PARALLAX_REVIEW,
             WorkflowStep.PARALLAX_ADVANCED,
             WorkflowStep.PTYCHOGRAPHY,
+            WorkflowStep.PTYCHOGRAPHY_DATA,
+            WorkflowStep.PTYCHOGRAPHY_GEOMETRY,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_QUICK,
+            WorkflowStep.PTYCHOGRAPHY_QC,
+            WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION,
+            WorkflowStep.PTYCHOGRAPHY_ADVANCED,
+            WorkflowStep.PTYCHOGRAPHY_EXPORT,
             WorkflowStep.METHOD_COMPARISON,
         },
         WorkflowStep.PREPROCESS_APPLY: {
@@ -128,6 +151,16 @@ class WorkflowState(QObject):
             WorkflowStep.PARALLAX_REVIEW,
             WorkflowStep.PARALLAX_ADVANCED,
             WorkflowStep.PTYCHOGRAPHY,
+            WorkflowStep.PTYCHOGRAPHY_DATA,
+            WorkflowStep.PTYCHOGRAPHY_GEOMETRY,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS,
+            WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_QUICK,
+            WorkflowStep.PTYCHOGRAPHY_QC,
+            WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT,
+            WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION,
+            WorkflowStep.PTYCHOGRAPHY_ADVANCED,
+            WorkflowStep.PTYCHOGRAPHY_EXPORT,
             WorkflowStep.METHOD_COMPARISON,
         },
         WorkflowStep.PROBE_KERNEL: {
@@ -165,6 +198,20 @@ class WorkflowState(QObject):
         WorkflowStep.PARALLAX_ALIGNMENT: {WorkflowStep.PARALLAX_REVIEW},
         WorkflowStep.PARALLAX_REVIEW: {WorkflowStep.PARALLAX_ADVANCED, WorkflowStep.PARALLAX},
         WorkflowStep.PARALLAX: {WorkflowStep.PTYCHOGRAPHY},
+        WorkflowStep.PTYCHOGRAPHY_DATA: {WorkflowStep.PTYCHOGRAPHY_GEOMETRY},
+        WorkflowStep.PTYCHOGRAPHY_GEOMETRY: {WorkflowStep.PTYCHOGRAPHY_PREPROCESS},
+        WorkflowStep.PTYCHOGRAPHY_PREPROCESS: {WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT},
+        WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT: {
+            WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION,
+            WorkflowStep.PTYCHOGRAPHY_QUICK,
+        },
+        WorkflowStep.PTYCHOGRAPHY_QUICK: {WorkflowStep.PTYCHOGRAPHY_QC},
+        WorkflowStep.PTYCHOGRAPHY_QC: {WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT},
+        WorkflowStep.PTYCHOGRAPHY_QC_ACCEPT: {WorkflowStep.PTYCHOGRAPHY_ADVANCED},
+        WorkflowStep.PTYCHOGRAPHY_ADVANCED: {
+            WorkflowStep.PTYCHOGRAPHY,
+            WorkflowStep.PTYCHOGRAPHY_EXPORT,
+        },
     }
 
     def __init__(self) -> None:

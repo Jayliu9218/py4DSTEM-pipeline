@@ -77,7 +77,7 @@ class LogPanel(QWidget):
             value = min(max(float(match.group(1)), 0), 100)
             self.progress.setRange(0, 100)
             self.progress.setValue(int(value))
-            self.progress.setFormat(f"Doing... {int(value)}%")
+            self.progress.setFormat(f"Doing... {message}")
 
     def process_snapshot(self, snapshot: ProcessSnapshot) -> None:
         self.process(f"STEP  {snapshot.step}")
