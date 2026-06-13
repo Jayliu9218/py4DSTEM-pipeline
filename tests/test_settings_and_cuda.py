@@ -80,6 +80,7 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertTrue(window.cuda_enabled)
         self.assertTrue(window.bragg_peaks_page.cuda_enabled)
         self.assertTrue(window.orientation_page.cuda_enabled)
+        self.assertEqual(window.parallax_alignment_page._alignment_params().device, "gpu")
 
     def test_project_state_restores_settings_roles_and_page_params(self) -> None:
         window = MainWindow()

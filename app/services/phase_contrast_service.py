@@ -35,7 +35,7 @@ class ParallaxParams:
     device: str = "cpu"
     object_padding_px: tuple[int, int] = (16, 16)
     edge_blend: int = 8
-    alignment_bin_values: tuple[int, ...] = (32, 32, 32, 32, 32, 32, 16, 16, 16, 16, 8, 8)
+    alignment_bin_values: tuple[int, ...] = (32, 32, 16, 16, 8, 8)
     regularize_shifts: bool = False
     normalize_images: bool = False
     threshold_intensity: float = 0.6
@@ -115,6 +115,7 @@ class DPCAcceptanceState:
 class PhaseContrastResult:
     method: str
     images: dict[str, np.ndarray] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     rotation_degrees: float | None = None
     object_phase: np.ndarray | None = None

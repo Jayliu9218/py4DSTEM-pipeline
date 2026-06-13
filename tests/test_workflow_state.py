@@ -4,6 +4,17 @@ from app.services.workflow_state import WorkflowState, WorkflowStep
 
 
 class WorkflowStateTests(unittest.TestCase):
+    def test_mark_completed_many_emits_one_change(self) -> None:
+        state = WorkflowState()
+        changes = []
+        state.changed.connect(lambda: changes.append(True))
+
+        state.mark_completed_many({WorkflowStep.PARALLAX_REVIEW, WorkflowStep.PARALLAX})
+
+        self.assertEqual(changes, [True])
+        self.assertTrue(state.is_completed(WorkflowStep.PARALLAX_REVIEW))
+        self.assertTrue(state.is_completed(WorkflowStep.PARALLAX))
+
     def test_bragg_parameter_change_marks_completed_downstream_results_stale(self) -> None:
         state = WorkflowState()
         state.mark_completed(WorkflowStep.BRAGG_FULL)

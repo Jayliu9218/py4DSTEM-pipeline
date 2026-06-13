@@ -589,19 +589,36 @@ class ImageViewer(QWidget):
             view.removeItem(item)
         self.overlay_items = []
 
-    def add_vector_overlays(self, vectors: np.ndarray, color: str = "c") -> None:
-        for x, y, dx, dy in np.asarray(vectors, dtype=float):
-            if not np.all(np.isfinite([x, y, dx, dy])):
-                continue
-            display_x, display_y = self._scientific_to_display(x, y)
-            display_dx, display_dy = self._scientific_to_display(dx, dy)
-            line = pg.PlotDataItem(
-                [display_x, display_x + display_dx],
-                [display_y, display_y + display_dy],
-                pen=pg.mkPen(color, width=2),
-            )
-            self.image_view.getView().addItem(line)
-            self.overlay_items.append(line)
+    def add_vector_overlays(
+        self,
+        vectors: np.ndarray,
+        color: str = "c",
+        stride: int = 1,
+        scale: float = 1.0,
+    ) -> None:
+        array = np.asarray(vectors, dtype=float)[::max(int(stride), 1)]
+        array = array[np.all(np.isfinite(array), axis=1)]
+        if not len(array):
+            return
+        x, y, dx, dy = array.T
+        display_x, display_y = self._scientific_to_display_arrays(x, y)
+        display_dx, display_dy = self._scientific_to_display_arrays(dx, dy)
+        count = len(array)
+        line_x = np.empty(count * 3, dtype=float)
+        line_y = np.empty(count * 3, dtype=float)
+        line_x[0::3], line_x[1::3], line_x[2::3] = (
+            display_x,
+            display_x + display_dx * float(scale),
+            np.nan,
+        )
+        line_y[0::3], line_y[1::3], line_y[2::3] = (
+            display_y,
+            display_y + display_dy * float(scale),
+            np.nan,
+        )
+        line = pg.PlotDataItem(line_x, line_y, pen=pg.mkPen(color, width=2), connect="finite")
+        self.image_view.getView().addItem(line)
+        self.overlay_items.append(line)
 
     def add_point_labels(self, points: np.ndarray, labels: list[str], color: str = "c") -> None:
         for point, label in zip(np.asarray(points, dtype=float), labels):

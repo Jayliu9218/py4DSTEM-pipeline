@@ -254,7 +254,7 @@ class DPCPage(QWidget):
         self.reconstruct_group.setVisible("reconstruct" in visible)
         self.accept_button.setVisible(False)
         self.preprocess_view.setVisible(False)
-        if self.stage_mode in {"review", "all"}:
+        if self.stage_mode in {"preprocess", "review", "all"}:
             self.accept_button.setText("Accept CoM Preprocessing")
             self.accept_button.setVisible(True)
             self.preprocess_view.setVisible(True)
@@ -262,14 +262,13 @@ class DPCPage(QWidget):
             form = QFormLayout(review_controls)
             form.addRow("Review", self.preprocess_view)
             form.addRow(self.accept_button)
-            if self.stage_mode == "review":
-                self.controls_panel.layout().insertWidget(0, review_controls)
-            else:
-                self.controls_panel.layout().insertWidget(3, review_controls)
+
+            self.controls_panel.layout().insertWidget(3, review_controls)
+
         self.refresh_stage()
 
     def refresh_stage(self) -> None:
-        if self.stage_mode == "review":
+        if self.stage_mode in {"preprocess", "review"}:
             self.result = self.service.dpc_preprocess_result
             self.accept_button.setEnabled(self.result is not None)
             if self.result is not None:
@@ -363,7 +362,7 @@ class DPCPage(QWidget):
         elif isinstance(result, PhaseContrastResult):
             self.result = result
             is_reconstruction = self.pending_operation == "DPC reconstruction"
-            if is_reconstruction or self.stage_mode != "preprocess":
+            if is_reconstruction or self.stage_mode != "review":
                 figures = self._result_figures(result, final=is_reconstruction)
                 self.workspace.set_results(figures)
             self._register_result(result)
@@ -378,7 +377,7 @@ class DPCPage(QWidget):
         if self.stage_mode == "preprocess" and isinstance(result, PhaseContrastResult):
             self.status_label.setText(
                 f"{self.pending_operation} complete in {elapsed:.2f} s. "
-                "Continue to CoM Review & Accept."
+                "Review the diagnostics below and explicitly accept preprocessing."
             )
         else:
             self.status_label.setText(f"{self.pending_operation} complete in {elapsed:.2f} s")

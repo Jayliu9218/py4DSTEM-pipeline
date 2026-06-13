@@ -7,6 +7,9 @@ import numpy as np
 
 from app.services.parallax_service import (
     BFMaskParams,
+    FAST_ALIGNMENT_BINS,
+    FiniteDoseParams,
+    NOTEBOOK_ALIGNMENT_BINS,
     ParallaxAdvancedParams,
     ParallaxAlignmentParams,
     ParallaxService,
@@ -25,6 +28,10 @@ class _FakeParallax:
         self.object_cropped = np.ones((3, 4))
         self._shifts = np.ones((2, 3, 2))
         self._xy_shifts = np.ones((80, 2))
+        self.recon_BF = np.ones((6, 7))
+        self.recon_BF_subpixel_aligned = np.ones((12, 14))
+        self._scan_sampling = (1.0, 1.0)
+        self._kde_upsample_factor = 2
 
     def preprocess(self, dp_mask=None, edge_blend=0, normalize_images=False, **kwargs):
         self.preprocess_kwargs = {
@@ -73,7 +80,9 @@ class ParallaxWorkflowTests(unittest.TestCase):
         self.saved_h5_paths = []
         module.save = lambda filepath, _data: self.saved_h5_paths.append(Path(filepath))
         self.service = ParallaxService(Py4DSTEMParallaxAdapter(module))
-        self.datacube = types.SimpleNamespace(data=np.ones((2, 3, 8, 10)))
+        data = np.zeros((2, 3, 8, 10))
+        data[..., 2:6, 3:8] = 1
+        self.datacube = types.SimpleNamespace(data=data)
 
     def test_accepted_bf_mask_is_copied_and_forwarded_as_dp_mask(self):
         self.service.prepare_bf(self.datacube, BFMaskParams(threshold=0.5))
@@ -100,14 +109,29 @@ class ParallaxWorkflowTests(unittest.TestCase):
         self.assertFalse(instance.reconstruct_kwargs["progress_bar"])
         self.assertIn("Shift Magnitude", self.service.context.alignment_result.images)
 
-    def test_advanced_defaults_enable_only_subpixel(self):
+    def test_fast_alignment_defaults_and_notebook_quality_schedule(self):
+        alignment = ParallaxAlignmentParams()
         params = ParallaxAdvancedParams()
 
-        self.assertTrue(params.run_subpixel)
-        self.assertFalse(params.run_aberration_fit)
-        self.assertFalse(params.run_aberration_correction)
-        self.assertFalse(params.run_high_order_fit)
-        self.assertFalse(params.run_ctf_fit)
+        self.assertEqual(alignment.alignment_bin_values, FAST_ALIGNMENT_BINS)
+        self.assertEqual(alignment.cross_correlation_upsample_factor, 4)
+        self.assertEqual(NOTEBOOK_ALIGNMENT_BINS, (32, 32, 32, 32, 32, 32, 16, 16, 16, 16, 8, 8))
+        self.assertEqual(len(FAST_ALIGNMENT_BINS), len(NOTEBOOK_ALIGNMENT_BINS) // 2)
+        self.assertFalse(params.high_order_fit)
+
+    def test_prepare_bf_prefers_datacube_mean_diffraction_api(self):
+        calls = []
+        datacube = types.SimpleNamespace(
+            data=self.datacube.data,
+            get_dp_mean=lambda: calls.append(True) or types.SimpleNamespace(
+                data=self.datacube.data.mean(axis=(0, 1))
+            ),
+        )
+
+        result = self.service.prepare_bf(datacube, BFMaskParams())
+
+        self.assertEqual(calls, [True])
+        self.assertIn("Incoherent BF", result.images)
 
     def test_progress_is_stage_based(self):
         self.service.prepare_bf(self.datacube, BFMaskParams())
@@ -133,6 +157,70 @@ class ParallaxWorkflowTests(unittest.TestCase):
 
         self.assertIn(Path.cwd() / "parallax_reconstruction.h5", saved)
         self.assertIn(Path.cwd() / "parallax_pipeline_metadata.json", saved)
+
+    def test_representative_virtual_bf_selection_and_crop(self):
+        data = np.zeros((60, 70, 8, 10))
+        data[..., 2:6, 3:8] = 1
+        result = self.service.prepare_bf(
+            types.SimpleNamespace(data=data),
+            BFMaskParams(threshold=0.5, virtual_bf_count=5, virtual_bf_crop=48),
+        )
+
+        self.assertEqual(result.metadata["selected_points"].shape[1], 2)
+        self.assertEqual(len([name for name in result.images if name.startswith("Tilted virtual BF")]), 5)
+        self.assertEqual(result.images["Tilted virtual BF 1"].shape, (48, 48))
+
+    def test_excessive_bf_mask_cannot_be_accepted(self):
+        result = self.service.prepare_bf(self.datacube, BFMaskParams(threshold=-1))
+
+        self.assertFalse(result.metadata["mask_acceptable"])
+        with self.assertRaisesRegex(Exception, "more than 75%"):
+            self.service.accept_bf_mask()
+
+    def test_advanced_actions_are_separate_and_dependent(self):
+        self.service.prepare_bf(self.datacube, BFMaskParams())
+        self.service.accept_bf_mask()
+        self.service.align(self.datacube, ParallaxAlignmentParams())
+        self.service.accept_alignment()
+
+        subpixel = self.service.run_subpixel(ParallaxAdvancedParams())
+        fit = self.service.fit_aberrations(ParallaxAdvancedParams())
+        correction = self.service.apply_aberration_correction()
+
+        self.assertIs(self.service.context.subpixel_result, subpixel)
+        self.assertIs(self.service.context.aberration_result, fit)
+        self.assertIs(self.service.context.correction_result, correction)
+        self.assertFalse(self.service.adapter.capabilities().ctf_thon_ring_fit)
+        self.assertIn("Original Aligned BF FFT", subpixel.images)
+        self.assertIn("Subpixel Aligned BF FFT", subpixel.images)
+        self.assertIn("radial_cone_values", subpixel.metadata)
+
+    def test_finite_dose_includes_safe_three_pattern_montages(self):
+        class Calibration:
+            @staticmethod
+            def get_R_pixel_size():
+                return 1.0
+
+        data = np.zeros((2, 3, 8, 10))
+        data[..., 2:6, 3:8] = 1
+        datacube = types.SimpleNamespace(
+            data=data,
+            calibration=Calibration(),
+            copy=lambda: types.SimpleNamespace(
+                data=data.copy(),
+                calibration=Calibration(),
+            ),
+        )
+        self.service.prepare_bf(datacube, BFMaskParams())
+        self.service.accept_bf_mask()
+
+        result = self.service.run_finite_dose_comparison(
+            datacube,
+            ParallaxAlignmentParams(),
+            FiniteDoseParams(doses=(10,), seed=1),
+        )
+
+        self.assertEqual(result.images["Diffraction montage 10 e/A2"].shape, (8, 30))
 
 
 if __name__ == "__main__":
