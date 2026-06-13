@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-import h5py
 import numpy as np
+
+from app.services.array_reduction import (
+    detector_sum,
+    masked_scan_mean,
+    mean_diffraction,
+    scan_sum,
+)
 
 
 class VirtualDetectorServiceError(Exception):
@@ -93,13 +99,7 @@ class VirtualDetectorService:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         if getattr(data, "ndim", None) != 4:
             raise VirtualDetectorServiceError("A 4D DataCube is required for detector preview.")
-        if isinstance(data, h5py.Dataset):
-            preview = np.zeros(tuple(int(dim) for dim in data.shape[2:]), dtype=float)
-            for rx in range(int(data.shape[0])):
-                for ry in range(int(data.shape[1])):
-                    preview += np.asarray(data[rx, ry], dtype=float)
-            return preview / max(int(data.shape[0]) * int(data.shape[1]), 1)
-        return np.asarray(data).mean(axis=(0, 1))
+        return mean_diffraction(data)
 
     def _detector_overlay(self, params: VirtualDetectorParams) -> dict[str, float | str]:
         if params.mode in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD}:
@@ -165,26 +165,14 @@ class VirtualDetectorService:
         if hasattr(source, "get_virtual_diffraction"):
             result = source.get_virtual_diffraction(method="mean", mask=mask, returncalc=True)
             return np.asarray(getattr(result, "data", result))
-        if isinstance(data, h5py.Dataset):
-            positions = np.argwhere(mask)
-            accumulator = np.zeros(shape[2:], dtype=float)
-            for rx, ry in positions:
-                accumulator += np.asarray(data[int(rx), int(ry)], dtype=float)
-            return accumulator / len(positions)
-        return np.asarray(data)[mask].mean(axis=0)
+        return masked_scan_mean(data, mask)
 
     def _real_space_preview(self, source: Any) -> np.ndarray:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         if hasattr(source, "get_virtual_image"):
             result = source.get_virtual_image(mode="all", returncalc=True)
             return np.asarray(getattr(result, "data", result))
-        if isinstance(data, h5py.Dataset):
-            preview = np.zeros(data.shape[:2], dtype=float)
-            for rx in range(data.shape[0]):
-                for ry in range(data.shape[1]):
-                    preview[rx, ry] = np.asarray(data[rx, ry], dtype=float).sum()
-            return preview
-        return np.asarray(data).sum(axis=(2, 3))
+        return scan_sum(data, dtype=np.float64)
 
     def _compute_with_array(self, source: Any, params: VirtualDetectorParams) -> np.ndarray:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
@@ -193,17 +181,7 @@ class VirtualDetectorService:
             raise VirtualDetectorServiceError("A 4D DataCube or 4D HDF5 dataset is required.")
 
         mask = self._build_detector_mask(tuple(int(dim) for dim in shape), params)
-        scan_shape = (int(shape[0]), int(shape[1]))
-        image = np.zeros(scan_shape, dtype=np.float64)
-
-        if isinstance(data, h5py.Dataset):
-            for rx in range(scan_shape[0]):
-                for ry in range(scan_shape[1]):
-                    image[rx, ry] = np.asarray(data[rx, ry, :, :])[mask].sum()
-            return image
-
-        array = np.asarray(data)
-        return array[:, :, mask].sum(axis=2)
+        return detector_sum(data, mask, dtype=np.float64)
 
     def _build_detector_mask(
         self,
@@ -212,11 +190,13 @@ class VirtualDetectorService:
     ) -> np.ndarray:
         qx_size, qy_size = shape[2], shape[3]
         x, y = np.ogrid[:qx_size, :qy_size]
-        radius = np.sqrt((x - params.center_x) ** 2 + (y - params.center_y) ** 2)
+        radius_squared = (x - params.center_x) ** 2 + (y - params.center_y) ** 2
 
         if params.mode in {self.BRIGHT_FIELD, self.OFF_AXIS_DARK_FIELD}:
-            return radius <= params.outer_radius
-        return (radius >= params.inner_radius) & (radius <= params.outer_radius)
+            return radius_squared <= params.outer_radius**2
+        return (radius_squared >= params.inner_radius**2) & (
+            radius_squared <= params.outer_radius**2
+        )
 
     def _validate_params(self, params: VirtualDetectorParams) -> None:
         if params.mode not in {

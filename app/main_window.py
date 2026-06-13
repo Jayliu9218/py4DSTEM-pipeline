@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from dataclasses import replace
 
 import h5py
 import numpy as np
@@ -16,7 +15,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -32,31 +30,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.pages.virtual_detector_page import VirtualDetectorPage
-from app.pages.preprocessing_page import PreprocessingPage
-from app.pages.bragg_peaks_page import BraggPeaksPage
-from app.pages.calibration_page import CalibrationPage
-from app.pages.orientation_page import OrientationPage
-from app.pages.strain_map_page import StrainMapPage
-from app.pages.phase_contrast_page import PhaseContrastPage
-from app.pages.bf_df_preview_page import BFDFPreviewPage
-from app.pages.dpc_page import DPCPage
-from app.pages.parallax_page import ParallaxPage
-from app.pages.ptychography_page import PtychographyPage
-from app.pages.method_comparison_page import MethodComparisonPage
-from app.pages.structural_phase_page import StructuralPhasePage
-from app.pages.radial_profile_page import RadialProfilePage
-from app.pages.rdf_page import RDFPage
-from app.pages.fem_page import FEMPage
-from app.pages.amorphous_strain_page import AmorphousStrainPage
-from app.services.phase_contrast_service import PhaseContrastResult, PhaseContrastService
-from app.services.parallax_service import ParallaxService
+from app.controllers.route_coordinator import RouteCoordinator
+from app.controllers.application_pages import ApplicationPages
+from app.controllers.project_coordinator import ProjectCoordinator
+from app.controllers.data_session_controller import DataSessionController
+from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
 from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
 from app.services.report_service import ReportService
-from app.services.result_registry import ResultRegistry, ResultRegistryError
+from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.hdf5_tree_widget import Hdf5TreeWidget
 from app.widgets.image_viewer import ImageViewer
@@ -73,6 +57,49 @@ from app.widgets.pipeline_shell import (
 
 
 class MainWindow(QMainWindow):
+    current_file = property(
+        lambda self: self.session.current_file,
+        lambda self, value: setattr(self.session, "current_file", value),
+    )
+    current_file_path = property(
+        lambda self: self.session.current_file_path,
+        lambda self, value: setattr(self.session, "current_file_path", value),
+    )
+    current_dataset_path = property(
+        lambda self: self.session.current_dataset_path,
+        lambda self, value: setattr(self.session, "current_dataset_path", value),
+    )
+    current_dataset_shape = property(
+        lambda self: self.session.current_dataset_shape,
+        lambda self, value: setattr(self.session, "current_dataset_shape", value),
+    )
+    current_4d_source = property(
+        lambda self: self.session.current_4d_source,
+        lambda self, value: setattr(self.session, "current_4d_source", value),
+    )
+    selected_hdf5_path = property(
+        lambda self: self.session.selected_hdf5_path,
+        lambda self, value: setattr(self.session, "selected_hdf5_path", value),
+    )
+    selected_node_kind = property(
+        lambda self: self.session.selected_node_kind,
+        lambda self, value: setattr(self.session, "selected_node_kind", value),
+    )
+    current_attrs = property(
+        lambda self: self.session.current_attrs,
+        lambda self, value: setattr(self.session, "current_attrs", value),
+    )
+    raw_scan_image_cache_path = property(
+        lambda self: self.session.raw_scan_image_cache_path,
+        lambda self, value: setattr(self.session, "raw_scan_image_cache_path", value),
+    )
+    raw_scan_image_cache = property(
+        lambda self: self.session.raw_scan_image_cache,
+        lambda self, value: setattr(self.session, "raw_scan_image_cache", value),
+    )
+    braggvectors_by_datacube = property(lambda self: self.session.braggvectors_by_datacube)
+    reference_braggvectors_cache = property(lambda self: self.session.reference_braggvectors_cache)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("py4DSTEM Pipeline")
@@ -80,25 +107,16 @@ class MainWindow(QMainWindow):
 
         self.hdf5_service = Hdf5Service()
         self.py4dstem_service = Py4DSTEMService()
+        self.session = DataSessionController(self.hdf5_service, self.py4dstem_service)
         self.bragg_strain_service = BraggStrainService()
         self.workflow_state = WorkflowState()
         self.project_state_service = ProjectStateService()
         self.result_registry = ResultRegistry()
         self.report_service = ReportService()
-        self.current_file: h5py.File | None = None
-        self.current_file_path: Path | None = None
-        self.current_dataset_path: str | None = None
-        self.current_dataset_shape: tuple[int, ...] | None = None
-        self.current_4d_source: str | None = None
-        self.selected_hdf5_path: str | None = None
-        self.selected_node_kind: str | None = None
-        self.current_attrs: dict[str, object] = {}
         self.image_scaling = ImageViewer.DEFAULT_SCALING
         self.image_cmap = ImageViewer.DEFAULT_CMAP
         self.cuda_enabled = False
         self.recent_export_dir: Path | None = None
-        self.braggvectors_by_datacube: dict[str, object] = {}
-        self.reference_braggvectors_cache: dict[str, object] = {}
         self.current_route_key = "data_setup"
         self.route_modules: list[RouteModule] = []
 
@@ -106,165 +124,28 @@ class MainWindow(QMainWindow):
         self.scan_viewer = ImageViewer()
         self.diffraction_viewer = ImageViewer()
         self.log_panel = LogPanel()
-        self.virtual_detector_page = VirtualDetectorPage(
-            source_provider=self._get_virtual_detector_source,
-            shape_provider=self._get_current_4d_shape,
-            probe_geometry_provider=self._get_probe_geometry,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.preprocessing_page = PreprocessingPage(
-            source_provider=self._get_py4dstem_datacube,
-            selected_source_provider=self._get_selected_display_source,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.bragg_peaks_page = BraggPeaksPage(
-            datacube_provider=self._get_py4dstem_datacube,
-            shape_provider=self._get_current_4d_shape,
-            virtual_image_provider=self._get_virtual_detector_image,
-            service=self.bragg_strain_service,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.calibration_page = CalibrationPage(
-            datacube_provider=self._get_py4dstem_datacube,
-            braggvectors_provider=self._get_braggvectors,
-            ellipse_braggvectors_provider=self._get_ellipse_reference_braggvectors,
-            transfer_targets_provider=self._get_calibration_transfer_targets,
-            rotation_reference_provider=self._get_rotation_reference_image,
-            service=self.bragg_strain_service,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.strain_map_page = StrainMapPage(
-            braggvectors_provider=self._get_braggvectors,
-            service=self.bragg_strain_service,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.orientation_page = OrientationPage(
-            braggvectors_provider=self._get_braggvectors,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.phase_contrast_page = PhaseContrastPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.bf_df_preview_page = BFDFPreviewPage(
-            source_provider=self._get_py4dstem_datacube,
-            shape_provider=self._get_current_4d_shape,
-            probe_geometry_provider=self._get_probe_geometry,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-        )
-        self.dpc_service = PhaseContrastService()
-        self.dpc_segmented_page = DPCPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.dpc_service,
-            stage_mode="segmented",
-        )
-        self.dpc_preprocess_page = DPCPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.dpc_service,
-            stage_mode="preprocess",
-        )
-        # Compatibility alias for project files created before review was merged.
-        self.dpc_review_page = self.dpc_preprocess_page
-        self.dpc_reconstruction_page = DPCPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.dpc_service,
-            stage_mode="reconstruct",
-        )
-        self.dpc_legacy_page = DPCPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.dpc_service,
-            stage_mode="all",
-        )
-        self.dpc_page = self.dpc_reconstruction_page
-        self.parallax_service = ParallaxService()
-        self.parallax_bf_page = ParallaxPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.parallax_service,
-            stage_mode="bf",
-        )
-        self.parallax_alignment_page = ParallaxPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.parallax_service,
-            stage_mode="alignment",
-        )
-        self.parallax_review_page = ParallaxPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.parallax_service,
-            stage_mode="review",
-        )
-        self.parallax_advanced_page = ParallaxPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.parallax_service,
-            stage_mode="advanced",
-        )
-        self.parallax_export_page = ParallaxPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.parallax_service,
-            stage_mode="export",
-        )
-        self.parallax_page = self.parallax_alignment_page
-        self.ptychography_page = PtychographyPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
-        )
-        self.method_comparison_page = MethodComparisonPage(
-            dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
-            ptychography_result_provider=lambda: self.phase_retrieval_results.get("Ptychography"),
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-        )
-        self.structural_phase_page = StructuralPhasePage()
-        self.radial_profile_page = RadialProfilePage()
-        self.rdf_page = RDFPage()
-        self.fem_page = FEMPage()
-        self.amorphous_strain_page = AmorphousStrainPage()
         self.phase_retrieval_results: dict[str, PhaseContrastResult] = {}
+        page_objects, self.dpc_service, self.parallax_service = ApplicationPages.build_page_objects(
+            providers={
+                "virtual_source": self._get_virtual_detector_source,
+                "shape": self._get_current_4d_shape,
+                "probe_geometry": self._get_probe_geometry,
+                "selected_source": self._get_selected_display_source,
+                "datacube": self._get_py4dstem_datacube,
+                "virtual_image": self._get_virtual_detector_image,
+                "braggvectors": self._get_braggvectors,
+                "ellipse_braggvectors": self._get_ellipse_reference_braggvectors,
+                "transfer_targets": self._get_calibration_transfer_targets,
+                "rotation_reference": self._get_rotation_reference_image,
+            },
+            bragg_strain_service=self.bragg_strain_service,
+            log_panel=self.log_panel,
+            workflow_state=self.workflow_state,
+            result_registry=self.result_registry,
+            phase_retrieval_results=self.phase_retrieval_results,
+        )
+        for name, page in page_objects.items():
+            setattr(self, name, page)
 
         self.datacube_name_label = QLabel("-")
         self.scan_shape_label = QLabel("-")
@@ -290,6 +171,91 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_layout()
+        self.pages = ApplicationPages(
+            viewer_pages=self.viewer_pages,
+            route_controls={
+                "data_setup": self.data_setup_controls,
+                "virtual_imaging": self.virtual_detector_page.controls_panel,
+                "bragg_detection": self.bragg_peaks_page.controls_panel,
+                "calibration": self.calibration_page.controls_panel,
+                "bf_df_preview": self.bf_df_preview_page.controls_panel,
+                "dpc_segmented": self.dpc_segmented_page.controls_panel,
+                "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
+                "parallax_bf": self.parallax_bf_page.controls_panel,
+                "parallax_alignment": self.parallax_alignment_page.controls_panel,
+                "parallax_review": self.parallax_review_page.controls_panel,
+                "parallax_advanced": self.parallax_advanced_page.controls_panel,
+                "parallax": self.parallax_alignment_page.controls_panel,
+                "ptychography": self.ptychography_page.controls_panel,
+                "method_comparison": self.method_comparison_page.controls_panel,
+                "radial_profile": self.radial_profile_page.controls_panel,
+            },
+            crystal_controls={
+                "Strain Mapping": self.strain_map_page.controls_panel,
+                "Orientation Mapping": self.orientation_page.controls_panel,
+                "Structural Phase Mapping": self.structural_phase_page.controls_panel,
+            },
+            amorphous_controls={
+                "Amorphous Strain": self.amorphous_strain_page.controls_panel,
+                "RDF": self.rdf_page.controls_panel,
+                "FEM": self.fem_page.controls_panel,
+            },
+            dpc_controls={
+                "DPC / CoM": self.dpc_reconstruction_page.controls_panel,
+                "default": self.dpc_legacy_page.controls_panel,
+            },
+            export_controls={
+                "Parallax": self.parallax_export_page.controls_panel,
+                "default": self.export_controls,
+            },
+        )
+        self.project_coordinator = ProjectCoordinator(
+            workflow_state=self.workflow_state,
+            pages=self.pages,
+            page_objects={
+                "virtual_detector": self.virtual_detector_page,
+                "preprocessing": self.preprocessing_page,
+                "bragg_peaks": self.bragg_peaks_page,
+                "calibration": self.calibration_page,
+                "orientation": self.orientation_page,
+                "strain_map": self.strain_map_page,
+                "phase_contrast": self.phase_contrast_page,
+                "bf_df_preview": self.bf_df_preview_page,
+                "ptychography": self.ptychography_page,
+                "method_comparison": self.method_comparison_page,
+            },
+            dpc_pages=(
+                self.dpc_segmented_page,
+                self.dpc_preprocess_page,
+                self.dpc_review_page,
+                self.dpc_reconstruction_page,
+                self.dpc_legacy_page,
+            ),
+            parallax_pages={
+                "parallax": self.parallax_page,
+                "parallax_bf": self.parallax_bf_page,
+                "parallax_alignment": self.parallax_alignment_page,
+                "parallax_review": self.parallax_review_page,
+                "parallax_advanced": self.parallax_advanced_page,
+                "parallax_export": self.parallax_export_page,
+            },
+            state_service=self.project_state_service,
+            result_registry=self.result_registry,
+            report_service=self.report_service,
+            log_panel=self.log_panel,
+        )
+        self.route_coordinator = RouteCoordinator(
+            toolbar=self.project_toolbar,
+            route_bar=self.route_bar,
+            module_panel=self.module_panel,
+            viewer_stack=self.viewer_stack,
+            viewer_pages=self.viewer_pages,
+            workflow_state=self.workflow_state,
+            controls_provider=lambda key, _goal: self._route_controls(key),
+            workspace_provider=self.pages.workspace_for_page,
+            style_refresher=self._bold_section_titles,
+            data_ready_provider=lambda: self._get_current_4d_shape() is not None,
+        )
         self._apply_cuda_setting(self.cuda_enabled)
 
         self.tree.node_selected.connect(self._handle_node_selected)
@@ -301,7 +267,6 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
         self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
-        self.log_panel.log("Application started.")
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
         self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
         self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
@@ -543,330 +508,31 @@ class MainWindow(QMainWindow):
                 child.setFont(child_font)
 
     def _update_structure_route(self, *_args) -> None:
-        structure = self.project_toolbar.structure.currentText()
-        goals = {
-            "Crystalline / Bragg-based": ["Orientation Mapping", "Strain Mapping", "Structural Phase Mapping"],
-            "Amorphous / Diffuse-scattering": ["RDF", "FEM", "Amorphous Strain"],
-            "Phase Retrieval / Ptychography": ["DPC / CoM", "Parallax", "Ptychography", "Method Comparison"],
-        }[structure]
-        if not self.project_toolbar.goal.count() or self.project_toolbar.goal.currentText() not in goals:
-            self.project_toolbar.set_goals(goals)
-        goal = self.project_toolbar.goal.currentText() or goals[0]
-        notebook_strain_route = structure == "Crystalline / Bragg-based" and goal == "Strain Mapping"
-        common_data = RouteModule(
-            "data_setup",
-            "Data & Preprocess" if notebook_strain_route else "Data Setup",
-            "preprocess" if notebook_strain_route else "overview",
-            "Open an HDF5 / EMD file, assign dataset roles, inspect the DataCube, and preview/apply preprocessing.",
-            "Validated roles, DataCube diagnostics, and an explicitly preprocessed working DataCube.",
-        )
-        if structure == "Crystalline / Bragg-based":
-            analysis_page = (
-                "strain" if goal == "Strain Mapping"
-                else "orientation" if goal == "Orientation Mapping"
-                else "structural_phase" if goal == "Structural Phase Mapping"
-                else "overview"
-            )
-            analysis_step = (
-                WorkflowStep.STRAIN_MAP
-                if goal == "Strain Mapping"
-                else WorkflowStep.ORIENTATION_MATCH
-                if goal == "Orientation Mapping"
-                else WorkflowStep.STRUCTURAL_PHASE
-                if goal == "Structural Phase Mapping"
-                else None
-            )
-            analysis_implemented = goal != "Structural Phase Mapping"
-            if goal == "Strain Mapping":
-                modules = [
-                    common_data,
-                    RouteModule(
-                        "virtual_imaging", "Virtual Imaging", "virtual",
-                        "Target DataCube; measured probe geometry is optional.",
-                        "BF, annular/off-axis DF, and ROI virtual diffraction.",
-                        WorkflowStep.VIRTUAL_DETECTOR, "data_setup",
-                    ),
-                    RouteModule(
-                        "bragg_detection", "Probe & Bragg", "bragg",
-                        "Target DataCube; vacuum probe or vacuum ROI recommended.",
-                        "Probe kernel, target/reference BraggVectors, histograms, and diagnostics.",
-                        WorkflowStep.BRAGG_FULL, "virtual_imaging",
-                    ),
-                    RouteModule(
-                        "calibration", "Calibration", "calibration",
-                        "Target and ellipse-reference BraggVectors plus rotation reference.",
-                        "Applied origin, ellipse, pixel-size, and rotation calibration.",
-                        WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
-                    ),
-                    RouteModule(
-                        "crystal_analysis", "Strain Analysis", "strain",
-                        "Target BraggVectors; calibration is recommended for accuracy.",
-                        "Basis diagnostics, strain components, quality maps, and references.",
-                        WorkflowStep.STRAIN_MAP, "bragg_detection",
-                    ),
-                    RouteModule(
-                        "export", "Export & Report", "overview",
-                        "At least one registered result.",
-                        "Result arrays, project state, and scientific report.",
-                        prerequisite="crystal_analysis",
-                    ),
-                ]
-            else:
-                modules = [
-                    common_data,
-                    RouteModule(
-                        "bragg_detection", "Bragg Detection", "bragg",
-                        "Target DataCube; probe kernel is optional but recommended.",
-                        "BraggVectors, BVM, peak tables, and detection diagnostics.",
-                        WorkflowStep.BRAGG_FULL, "data_setup",
-                    ),
-                    RouteModule(
-                        "calibration", "Calibration", "calibration",
-                        "BraggVectors; ellipse and rotation references when required.",
-                        "Applied origin, ellipse, pixel-size, and rotation calibration.",
-                        WorkflowStep.CALIBRATION_APPLY, "bragg_detection",
-                    ),
-                    RouteModule(
-                        "crystal_analysis", goal, analysis_page,
-                        "Calibrated BraggVectors and analysis-specific reference inputs.",
-                        f"{goal} result maps and quality diagnostics.",
-                        analysis_step, "calibration", analysis_implemented,
-                    ),
-                    RouteModule(
-                        "export", "Export", "overview",
-                        "At least one registered result.",
-                        "Result arrays, images, project state, or scientific report.",
-                        prerequisite="crystal_analysis",
-                    ),
-                ]
-        elif structure == "Amorphous / Diffuse-scattering":
-            goal_page = {
-                "RDF": "rdf",
-                "FEM": "fem",
-                "Amorphous Strain": "amorphous_strain",
-            }.get(goal, "overview")
-            modules = [
-                common_data,
-                RouteModule("radial_profile", "Radial Profile", "radial_profile",
-                    "Target DataCube for radial analysis.",
-                    "Radial intensity profile and peak diagnostics.",
-                    WorkflowStep.RADIAL_PROFILE, "data_setup", implemented=False),
-                RouteModule("amorphous_analysis", goal, goal_page,
-                    "Validated radial profile and analysis-specific parameters.",
-                    f"{goal} maps and diagnostics.",
-                    prerequisite="radial_profile", implemented=False),
-                RouteModule("export", "Export", "overview",
-                    "At least one registered result.",
-                    "Result arrays, images, project state, or scientific report.",
-                    prerequisite="amorphous_analysis"),
-            ]
-        elif structure == "Phase Retrieval / Ptychography":
-            goal_page = {
-                "DPC / CoM": "dpc",
-                "Parallax": "parallax",
-                "Ptychography": "ptychography",
-                "Method Comparison": "method_comparison",
-            }.get(goal, "dpc")
-            goal_step = {
-                "DPC / CoM": WorkflowStep.DPC,
-                "Parallax": WorkflowStep.PARALLAX,
-                "Ptychography": WorkflowStep.PTYCHOGRAPHY,
-                "Method Comparison": WorkflowStep.METHOD_COMPARISON,
-            }.get(goal)
-            if goal == "DPC / CoM":
-                modules = [
-                    common_data,
-                    RouteModule(
-                        "bf_df_preview", "BF / DF Preview", "bf_df",
-                        "Target DataCube for bright-field / dark-field virtual imaging.",
-                        "BF and DF virtual images for phase retrieval workflow entry.",
-                        WorkflowStep.BF_DF_PREVIEW, "data_setup",
-                    ),
-                    RouteModule(
-                        "dpc_segmented", "Segmented DPC", "dpc_segmented",
-                        "Target DataCube; BF/DF preview recommended for mask calibration.",
-                        "Four masks, segment intensities, opposing DPC, and weighted CoM.",
-                        WorkflowStep.DPC_SEGMENTED, "data_setup",
-                    ),
-                    RouteModule(
-                        "dpc_preprocess", "CoM Preprocessing & Review", "dpc_preprocess",
-                        "Target DataCube; segmented DPC is an optional demonstration.",
-                        "Measured, fitted, normalized, corrected CoM, review, and explicit acceptance.",
-                        WorkflowStep.DPC_REVIEW, "data_setup",
-                    ),
-                    RouteModule(
-                        "dpc", "Integrated Reconstruction", "dpc",
-                        "Accepted CoM preprocessing review.",
-                        "Integrated DPC potential, convergence, and stored iterations.",
-                        WorkflowStep.DPC, "dpc_preprocess",
-                    ),
-                    RouteModule(
-                        "export", "Export", "overview",
-                        "At least one registered result.",
-                        "Intermediate and final DPC results, project state, and report.",
-                        prerequisite="dpc",
-                    ),
-                ]
-            elif goal == "Parallax":
-                modules = [
-                    common_data,
-                    RouteModule(
-                        "parallax_bf", "BF Disk & Virtual BF", "parallax_bf",
-                        "Target DataCube.",
-                        "Reviewed and explicitly accepted bright-field disk mask.",
-                        WorkflowStep.PARALLAX_BF_ACCEPT, "data_setup",
-                    ),
-                    RouteModule(
-                        "parallax_alignment", "Parallax Alignment", "parallax_alignment",
-                        "Accepted BF disk mask.",
-                        "Core cross-correlation Parallax alignment.",
-                        WorkflowStep.PARALLAX_ALIGNMENT, "parallax_bf",
-                    ),
-                    RouteModule(
-                        "parallax_review", "Alignment Review", "parallax_review",
-                        "Completed Parallax alignment.",
-                        "Reviewed shifts and explicitly accepted aligned BF result.",
-                        WorkflowStep.PARALLAX_REVIEW, "parallax_alignment",
-                    ),
-                    RouteModule(
-                        "parallax_advanced", "Advanced Reconstruction", "parallax_advanced",
-                        "Accepted alignment review.",
-                        "Optional subpixel reconstruction and expert aberration processing.",
-                        WorkflowStep.PARALLAX_ADVANCED, "parallax_review",
-                    ),
-                    RouteModule(
-                        "export", "Export", "parallax_export",
-                        "Accepted core alignment or advanced reconstruction.",
-                        "Registered results and an explicitly saved Parallax package.",
-                        prerequisite="parallax_review",
-                    ),
-                ]
-            else:
-                modules = [
-                    common_data,
-                    RouteModule(
-                        "bf_df_preview", "BF / DF Preview", "bf_df",
-                        "Target DataCube for bright-field / dark-field virtual imaging.",
-                        "BF and DF virtual images for phase retrieval workflow entry.",
-                        WorkflowStep.BF_DF_PREVIEW, "data_setup",
-                    ),
-                    RouteModule(
-                        "dpc", "DPC / CoM", "dpc_legacy",
-                        "Target DataCube; DPC recommended for downstream initialization.",
-                        "Integrated DPC result when available.",
-                        WorkflowStep.DPC, "data_setup",
-                    ),
-                    RouteModule(
-                        "parallax", "Parallax", "parallax",
-                        "Target DataCube; DPC recommended for rotation and defocus estimates.",
-                        "Aligned bright-field image, shift maps, and aberration estimates.",
-                        WorkflowStep.PARALLAX, "dpc",
-                    ),
-                    RouteModule(
-                        "ptychography", "Ptychography", "ptychography",
-                        "Target DataCube and optional vacuum probe.",
-                        "Phase and amplitude reconstruction from iterative ptychography.",
-                        WorkflowStep.PTYCHOGRAPHY, "data_setup",
-                    ),
-                    RouteModule(
-                        "method_comparison", "Method Comparison", "method_comparison",
-                        "At least one retained DPC or Ptychography result.",
-                        "Side-by-side comparison of retained phase retrieval outputs.",
-                        WorkflowStep.METHOD_COMPARISON, "ptychography",
-                    ),
-                    RouteModule(
-                        "export", "Export", "overview",
-                        "At least one registered result.",
-                        "Result arrays, images, project state, or scientific report.",
-                        prerequisite="method_comparison",
-                    ),
-                ]
-        else:
-            modules = [common_data]
-        self.route_modules = modules
-        self.route_bar.set_modules(modules)
-        if self.current_route_key not in {module.key for module in modules}:
-            self.current_route_key = "data_setup"
-        self._refresh_pipeline_state()
+        self.route_coordinator.current_key = self.current_route_key
+        self.route_coordinator.update_structure()
+        self.route_modules = self.route_coordinator.modules
+        self.current_route_key = self.route_coordinator.current_key
 
     def _route_states(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        data_ready = self.current_dataset_shape is not None and len(self.current_dataset_shape) == 4
-        for module in self.route_modules:
-            if module.key == "data_setup":
-                states[module.key] = "Ready" if data_ready else "Ready"
-                continue
-            if module.state_step and self.workflow_state.is_stale(module.state_step):
-                states[module.key] = "Warning"
-            elif module.state_step and self.workflow_state.is_completed(module.state_step):
-                states[module.key] = "Completed"
-            else:
-                states[module.key] = "Ready"
-        return states
+        return self.route_coordinator.states()
 
     def _select_route_module(self, key: str) -> None:
-        self.current_route_key = key
-        self._refresh_pipeline_state()
+        self.route_coordinator.select(key)
+        self.current_route_key = self.route_coordinator.current_key
 
     def _refresh_pipeline_state(self) -> None:
-        if not hasattr(self, "route_bar"):
+        if not hasattr(self, "route_coordinator"):
             return
-        states = self._route_states()
-        self.route_bar.update_states(states, self.current_route_key)
-        module = next(item for item in self.route_modules if item.key == self.current_route_key)
-        page = self.viewer_pages[module.page_key]
-        refresh_stage = getattr(page, "refresh_stage", None)
-        if callable(refresh_stage):
-            refresh_stage()
-        self.viewer_stack.setCurrentWidget(page)
-        controls = self._controls_for_route(module.key)
-        self.module_panel.set_module(module, controls)
-        workspace = self._workspace_for_page(self.viewer_pages[module.page_key])
-        if workspace is not None:
-            workspace.refresh_layout()
-        self._bold_section_titles()
+        self.route_coordinator.current_key = self.current_route_key
+        self.route_coordinator.modules = self.route_modules
+        self.route_coordinator.refresh()
+        self.current_route_key = self.route_coordinator.current_key
 
     def _controls_for_route(self, key: str) -> QWidget | None:
-        goal = self.project_toolbar.goal.currentText()
-        return {
-            "data_setup": self.data_setup_controls,
-            "virtual_imaging": self.virtual_detector_page.controls_panel,
-            "bragg_detection": self.bragg_peaks_page.controls_panel,
-            "calibration": self.calibration_page.controls_panel,
-            "crystal_analysis": (
-                self.strain_map_page.controls_panel
-                if goal == "Strain Mapping"
-                else self.orientation_page.controls_panel
-                if goal == "Orientation Mapping"
-                else self.structural_phase_page.controls_panel
-                if goal == "Structural Phase Mapping"
-                else None
-            ),
-            "bf_df_preview": self.bf_df_preview_page.controls_panel,
-            "dpc_segmented": self.dpc_segmented_page.controls_panel,
-            "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
-            "dpc": (
-                self.dpc_reconstruction_page.controls_panel
-                if goal == "DPC / CoM"
-                else self.dpc_legacy_page.controls_panel
-            ),
-            "parallax_bf": self.parallax_bf_page.controls_panel,
-            "parallax_alignment": self.parallax_alignment_page.controls_panel,
-            "parallax_review": self.parallax_review_page.controls_panel,
-            "parallax_advanced": self.parallax_advanced_page.controls_panel,
-            "parallax": self.parallax_alignment_page.controls_panel,
-            "ptychography": self.ptychography_page.controls_panel,
-            "method_comparison": self.method_comparison_page.controls_panel,
-            "radial_profile": self.radial_profile_page.controls_panel,
-            "amorphous_analysis": self.amorphous_strain_page.controls_panel if goal == "Amorphous Strain" else (
-                self.rdf_page.controls_panel if goal == "RDF" else self.fem_page.controls_panel
-            ),
-            "export": (
-                self.parallax_export_page.controls_panel
-                if goal == "Parallax"
-                else self.export_controls
-            ),
-        }.get(key)
+        return self._route_controls(key)
+
+    def _route_controls(self, key: str) -> QWidget | None:
+        return self.pages.controls_for_route(key, self.project_toolbar.goal.currentText())
 
     def _build_role_panel(self) -> QWidget:
         roles_group = QGroupBox("Dataset Roles / Sources")
@@ -906,33 +572,11 @@ class MainWindow(QMainWindow):
         return panel
 
     def export_registered_result(self) -> None:
-        entries = self.result_registry.list_entries()
-        if not entries:
-            QMessageBox.information(
-                self, "Export Results", "No results are available yet. Run a workflow step first."
-            )
-            return
-        labels = [entry.key for entry in entries]
-        key, ok = QInputDialog.getItem(self, "Export Results", "Result", labels, 0, False)
-        if not ok or not key:
-            return
-        entry = self.result_registry.get(key)
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export result",
-            str(self._default_output_dir() / self._safe_result_filename(entry.name, entry.export_formats[0])),
-            ";;".join(self._filters_for_entry(entry.export_formats)),
+        output_dir = self.project_coordinator.export_registered_result(
+            self, self._default_output_dir()
         )
-        if not path:
-            return
-        output_path = self._path_with_supported_suffix(Path(path), entry.export_formats[0])
-        try:
-            exported = self.result_registry.export(key, output_path)
-            self.recent_export_dir = exported.parent
-            self.log_panel.log(f"Result exported: {exported}")
-        except ResultRegistryError as exc:
-            self.log_panel.log(f"Result export failed: {exc}")
-            QMessageBox.warning(self, "Export Results", str(exc))
+        if output_dir is not None:
+            self.recent_export_dir = output_dir
 
     def _populate_sidebar_controls(self) -> None:
         for page in [
@@ -974,8 +618,7 @@ class MainWindow(QMainWindow):
     def _open_file_path(self, file_path: str) -> None:
         try:
             self._close_current_file()
-            self.current_file = self.hdf5_service.open_file(file_path)
-            self.current_file_path = Path(file_path)
+            self.current_file = self.session.open_file(file_path)
             self.result_registry.clear()
             self.braggvectors_by_datacube.clear()
             self.reference_braggvectors_cache.clear()
@@ -990,7 +633,6 @@ class MainWindow(QMainWindow):
             self.dpc_service.reset_dpc_workflow()
             self.parallax_service.reset()
             self.workflow_state.data_source_updated()
-            self.py4dstem_service.defer_open_file(file_path)
             self.log_panel.log(f"Opened file: {file_path}")
             self.log_panel.log(
                 "Opened in safe HDF5 mode. py4DSTEM import is deferred so startup and browsing "
@@ -1003,95 +645,32 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", str(exc))
 
     def save_project(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save project",
-            str(self._default_output_dir() / "project.json"),
-            "Project JSON (*.json)",
+        output_dir = self.project_coordinator.save_project(
+            self, self._default_output_dir(), self._project_state()
         )
-        if not path:
-            return
-        output_path = Path(path)
-        if output_path.suffix.lower() != ".json":
-            output_path = output_path.with_suffix(".json")
-        try:
-            result_data = {}
-            result_entries = []
-            for entry in self.result_registry.list_entries():
-                result_data[entry.key] = entry.data
-                result_entries.append({
-                    "key": entry.key,
-                    "name": entry.name,
-                    "category": entry.category,
-                    "export_formats": list(entry.export_formats),
-                    "metadata": {str(k): str(v) for k, v in entry.metadata.items()},
-                })
-            state = replace(self._project_state(), result_entries=result_entries)
-            if result_data:
-                self.project_state_service.save_with_results(output_path, state, result_data)
-            else:
-                self.project_state_service.save(output_path, state)
-            self.recent_export_dir = output_path.parent
-            self.log_panel.log(f"Project saved: {output_path}")
-        except Exception as exc:
-            self.log_panel.log(f"Project save failed: {exc}")
-            QMessageBox.warning(self, "Save Project", str(exc))
+        if output_dir is not None:
+            self.recent_export_dir = output_dir
 
     def load_project(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load project",
-            str(self._default_output_dir()),
-            "Project JSON (*.json);;All files (*.*)",
+        state = self.project_coordinator.choose_and_load_project(
+            self, self._default_output_dir()
         )
-        if not path:
-            return
-        try:
-            state = self.project_state_service.load(path)
+        if state is not None:
             self._apply_project_state(state)
-            if state.result_entries:
-                results = self.project_state_service.load_results(path, state.result_entries)
-                for entry_info in state.result_entries:
-                    key = entry_info.get("key", "")
-                    if key and key in results:
-                        self.result_registry.register(
-                            name=entry_info.get("name", key),
-                            category=entry_info.get("category", ""),
-                            data=results[key],
-                            export_formats=tuple(entry_info.get("export_formats", ("npy",))),
-                            metadata=entry_info.get("metadata", {}),
-                        )
-            self.recent_export_dir = Path(path).parent
-            self.log_panel.log(f"Project loaded: {path}")
-        except Exception as exc:
-            self.log_panel.log(f"Project load failed: {exc}")
-            QMessageBox.warning(self, "Load Project", str(exc))
+            self.project_coordinator.restore_loaded_results(state)
+            if self.project_coordinator.loaded_project_path is not None:
+                self.recent_export_dir = self.project_coordinator.loaded_project_path.parent
 
     def generate_report(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
+        output_dir = self.project_coordinator.generate_report(
             self,
-            "Generate report",
-            str(self._default_output_dir() / "py4dstem_report.md"),
-            "Markdown (*.md)",
+            self._default_output_dir(),
+            self._project_state(),
+            self.log_panel.event_log.toPlainText(),
+            self.log_panel.process_log.toPlainText(),
         )
-        if not path:
-            return
-        output_path = Path(path)
-        if output_path.suffix.lower() != ".md":
-            output_path = output_path.with_suffix(".md")
-        try:
-            self.report_service.generate_markdown(
-                output_path,
-                self._project_state(),
-                self.result_registry,
-                self.log_panel.event_log.toPlainText(),
-                self.log_panel.process_log.toPlainText(),
-            )
-            self.recent_export_dir = output_path.parent
-            self.log_panel.log(f"Report generated: {output_path}")
-        except Exception as exc:
-            self.log_panel.log(f"Report generation failed: {exc}")
-            QMessageBox.warning(self, "Generate Report", str(exc))
+        if output_dir is not None:
+            self.recent_export_dir = output_dir
 
     def _handle_node_selected(self, hdf5_path: str, node_kind: str) -> None:
         if self.current_file is None:
@@ -1103,6 +682,7 @@ class MainWindow(QMainWindow):
         self.current_dataset_path = None
         self.current_dataset_shape = None
         self.current_4d_source = None
+        self._clear_raw_scan_image_cache()
         self._set_index_controls_visible(False)
 
         try:
@@ -1311,7 +891,7 @@ class MainWindow(QMainWindow):
         dataset = self.current_file[hdf5_path]
         info = self.py4dstem_service.load_raw_4d_array(dataset, hdf5_path)
         self.workflow_state.data_source_updated()
-        scan_image = self.hdf5_service.read_4d_scan_image(dataset)
+        scan_image = self._raw_scan_image(hdf5_path, dataset)
         self.scan_viewer.set_image(scan_image)
         self.current_4d_source = "hdf5"
         self.current_dataset_path = hdf5_path
@@ -1357,22 +937,15 @@ class MainWindow(QMainWindow):
             pass
 
     def _close_current_file(self) -> None:
-        if self.current_file is not None:
-            try:
-                self.current_file.close()
-                if self.current_file_path is not None:
-                    self.log_panel.log(f"Closed file: {self.current_file_path}")
-            except Exception as exc:
-                self.log_panel.log(f"Failed to close file cleanly: {exc}")
-        self.current_file = None
-        self.current_file_path = None
-        self.py4dstem_service.close()
+        closed_path, error = self.session.close_file()
+        if closed_path is not None and error is None:
+            self.log_panel.log(f"Closed file: {closed_path}")
+        if error is not None:
+            self.log_panel.log(f"Failed to close file cleanly: {error}")
         self.bragg_strain_service.braggvectors = None
         self.bragg_strain_service.strainmap = None
         self.bragg_strain_service.strain_result = None
         self.bragg_strain_service.probe_kernel = None
-        self.braggvectors_by_datacube.clear()
-        self.reference_braggvectors_cache.clear()
         self.phase_retrieval_results.clear()
         self.workflow_state.set_dataset_role("target_datacube", None)
         self.workflow_state.set_dataset_role("polycrystal_calibration", None)
@@ -1381,40 +954,18 @@ class MainWindow(QMainWindow):
         self._refresh_role_labels()
 
     def _get_virtual_detector_source(self):
-        if self.current_4d_source == "py4dstem":
-            return self.py4dstem_service.datacube
-        if self.current_4d_source == "hdf5" and self.current_file is not None and self.current_dataset_path:
-            return self.current_file[self.current_dataset_path]
-        return None
+        return self.session.virtual_detector_source()
 
     def _get_virtual_detector_image(self):
         return self.virtual_detector_page.result
 
     def _get_py4dstem_datacube(self):
-        if self.current_4d_source == "py4dstem":
-            return self.py4dstem_service.datacube
-        return None
+        return self.session.py4dstem_datacube()
 
     def _get_selected_display_source(self):
         path = self._current_tree_selection_path()
-        if path and self.current_file is not None:
-            try:
-                node = self.current_file[path]
-                if isinstance(node, h5py.Dataset):
-                    return node
-            except Exception:
-                pass
-            try:
-                return self.py4dstem_service.read_datapath(path)
-            except Exception:
-                pass
         target_path = self.workflow_state.dataset_roles.target_datacube
-        if target_path and target_path != path:
-            try:
-                return self.py4dstem_service.read_datapath(target_path)
-            except Exception:
-                pass
-        return self._get_virtual_detector_source()
+        return self.session.selected_display_source(path, target_path)
 
     def _get_braggvectors(self):
         if self.current_dataset_path and self.current_dataset_path in self.braggvectors_by_datacube:
@@ -1482,20 +1033,13 @@ class MainWindow(QMainWindow):
         )
 
     def _get_target_bright_field_image(self) -> np.ndarray | None:
-        try:
-            if self.current_4d_source == "py4dstem":
-                return self.py4dstem_service.get_scan_image()
-            if (
-                self.current_4d_source == "hdf5"
-                and self.current_file is not None
-                and self.current_dataset_path
-            ):
-                node = self.current_file[self.current_dataset_path]
-                if isinstance(node, h5py.Dataset) and len(tuple(node.shape)) == 4:
-                    return self.hdf5_service.read_4d_scan_image(node)
-        except Exception:
-            return None
-        return None
+        return self.session.target_bright_field_image()
+
+    def _raw_scan_image(self, hdf5_path: str, dataset: h5py.Dataset) -> np.ndarray:
+        return self.session.raw_scan_image(hdf5_path, dataset)
+
+    def _clear_raw_scan_image_cache(self) -> None:
+        self.session.clear_raw_scan_image_cache()
 
     def _get_probe_geometry(self):
         return self.py4dstem_service.probe_geometry
@@ -1523,9 +1067,7 @@ class MainWindow(QMainWindow):
         )
 
     def _get_current_4d_shape(self) -> tuple[int, int, int, int] | None:
-        if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:
-            return None
-        return self.current_dataset_shape
+        return self.session.current_4d_shape()
 
     def _assign_current_role(self, role: str) -> None:
         selected_path = self._current_tree_selection_path()
@@ -1533,16 +1075,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Dataset Roles", "Select a node in the HDF5 tree first.")
             return
         self.selected_hdf5_path = selected_path
-        previous_target = self.workflow_state.dataset_roles.target_datacube
-        self.workflow_state.set_dataset_role(role, selected_path)
-        if role == "target_datacube" and previous_target != selected_path:
-            self.dpc_service.reset_dpc_workflow()
-            self.parallax_service.reset()
-            if previous_target is None:
-                self._clear_all_image_workspaces(exclude_keys={"preprocess"})
-            else:
-                self._clear_all_image_workspaces()
-                self.result_registry.clear()
+        self.session.assign_role(
+            role,
+            selected_path,
+            workflow_state=self.workflow_state,
+            dpc_service=self.dpc_service,
+            parallax_service=self.parallax_service,
+            clear_workspaces=self._clear_all_image_workspaces,
+            result_registry=self.result_registry,
+        )
         self._refresh_role_labels()
         self.log_panel.log(f"Assigned {role}: {selected_path}")
 
@@ -1594,45 +1135,13 @@ class MainWindow(QMainWindow):
         self.diffraction_viewer.clear(base)
 
     def _project_state(self) -> ProjectState:
-        roles = self.workflow_state.dataset_roles
-        return ProjectState(
-            file_path=str(self.current_file_path) if self.current_file_path else None,
+        return self.project_coordinator.snapshot(
+            file_path=self.current_file_path,
             selected_hdf5_path=self.selected_hdf5_path,
             image_scaling=self.image_scaling,
             image_cmap=self.image_cmap,
             cuda_enabled=self.cuda_enabled,
-            recent_export_dir=str(self.recent_export_dir) if self.recent_export_dir else None,
-            dataset_roles={
-                "target_datacube": roles.target_datacube,
-                "polycrystal_calibration": roles.polycrystal_calibration,
-                "vacuum_probe": roles.vacuum_probe,
-                "defocused_cbed": roles.defocused_cbed,
-            },
-            page_params={
-                "virtual_detector": self.virtual_detector_page.params_snapshot(),
-                "preprocessing": self.preprocessing_page.params_snapshot(),
-                "bragg_peaks": self.bragg_peaks_page.params_snapshot(),
-                "calibration": self.calibration_page.params_snapshot(),
-                "orientation": self.orientation_page.params_snapshot(),
-                "strain_map": self.strain_map_page.params_snapshot(),
-                "phase_contrast": self.phase_contrast_page.params_snapshot(),
-                "bf_df_preview": self.bf_df_preview_page.params_snapshot(),
-                "dpc": self._dpc_params_snapshot(),
-                "dpc_segmented": self.dpc_segmented_page.params_snapshot(),
-                "dpc_preprocess": self.dpc_preprocess_page.params_snapshot(),
-                "dpc_review": self.dpc_review_page.params_snapshot(),
-                "dpc_reconstruction": self.dpc_reconstruction_page.params_snapshot(),
-                "dpc_legacy": self.dpc_legacy_page.params_snapshot(),
-                "parallax": self.parallax_page.params_snapshot(),
-                "parallax_bf": self.parallax_bf_page.params_snapshot(),
-                "parallax_alignment": self.parallax_alignment_page.params_snapshot(),
-                "parallax_review": self.parallax_review_page.params_snapshot(),
-                "parallax_advanced": self.parallax_advanced_page.params_snapshot(),
-                "parallax_export": self.parallax_export_page.params_snapshot(),
-                "ptychography": self.ptychography_page.params_snapshot(),
-                "method_comparison": self.method_comparison_page.params_snapshot(),
-            },
-            grid_states=self._grid_states(),
+            recent_export_dir=self.recent_export_dir,
         )
 
     def _apply_project_state(self, state: ProjectState) -> None:
@@ -1649,11 +1158,8 @@ class MainWindow(QMainWindow):
         for role, value in state.dataset_roles.items():
             self.workflow_state.set_dataset_role(role, value)
         self._refresh_role_labels()
-        self._apply_page_params(state.page_params)
-        for key, grid_state in state.grid_states.items():
-            workspace = self._named_workspaces().get(key)
-            if workspace is not None:
-                workspace.restore_grid_state(grid_state)
+        self.project_coordinator.apply_page_params(state.page_params)
+        self.project_coordinator.restore_grid_states(state.grid_states)
         if self.current_file is not None and state.selected_hdf5_path:
             try:
                 node = self.current_file[state.selected_hdf5_path]
@@ -1663,114 +1169,33 @@ class MainWindow(QMainWindow):
                 self.log_panel.log(f"Saved HDF5 selection is unavailable: {exc}")
 
     def _apply_page_params(self, page_params: dict[str, dict[str, object]]) -> None:
-        for key, page in [
-            ("virtual_detector", self.virtual_detector_page),
-            ("preprocessing", self.preprocessing_page),
-            ("bragg_peaks", self.bragg_peaks_page),
-            ("calibration", self.calibration_page),
-            ("orientation", self.orientation_page),
-            ("strain_map", self.strain_map_page),
-            ("bf_df_preview", self.bf_df_preview_page),
-            ("ptychography", self.ptychography_page),
-        ]:
-            params = page_params.get(key)
-            if params:
-                page.apply_params_snapshot(params)
-        legacy_parallax = page_params.get("parallax", {})
-        for key, page in [
-            ("parallax_bf", self.parallax_bf_page),
-            ("parallax_alignment", self.parallax_alignment_page),
-            ("parallax_review", self.parallax_review_page),
-            ("parallax_advanced", self.parallax_advanced_page),
-            ("parallax_export", self.parallax_export_page),
-        ]:
-            params = page_params.get(key) or legacy_parallax
-            if params:
-                page.apply_params_snapshot(params)
-        legacy_dpc = page_params.get("dpc", {})
-        for key, page in [
-            ("dpc_segmented", self.dpc_segmented_page),
-            ("dpc_preprocess", self.dpc_preprocess_page),
-            ("dpc_review", self.dpc_review_page),
-            ("dpc_reconstruction", self.dpc_reconstruction_page),
-            ("dpc_legacy", self.dpc_legacy_page),
-        ]:
-            params = page_params.get(key) or legacy_dpc
-            if params:
-                page.apply_params_snapshot(params)
+        self.project_coordinator.apply_page_params(page_params)
 
     def _dpc_params_snapshot(self) -> dict[str, object]:
-        snapshot: dict[str, object] = {}
-        for page in (
-            self.dpc_segmented_page,
-            self.dpc_preprocess_page,
-            self.dpc_review_page,
-            self.dpc_reconstruction_page,
-            self.dpc_legacy_page,
-        ):
-            snapshot.update(page.params_snapshot())
-        return snapshot
+        return self.project_coordinator.dpc_params_snapshot()
 
     def _default_output_dir(self) -> Path:
-        if self.recent_export_dir is not None:
-            return self.recent_export_dir
-        if self.current_file_path is not None:
-            return self.current_file_path.parent
-        return Path.cwd()
+        return self.project_coordinator.default_output_dir(
+            self.recent_export_dir, self.current_file_path
+        )
 
     def _named_workspaces(self) -> dict[str, AdaptiveImageWorkspace]:
-        workspaces: dict[str, AdaptiveImageWorkspace] = {}
-        for key, page in self.viewer_pages.items():
-            workspace = self._workspace_for_page(page)
-            if workspace is not None:
-                workspaces[key] = workspace
-        return workspaces
+        return self.pages.named_workspaces()
 
     def _workspace_for_page(self, page: QWidget) -> AdaptiveImageWorkspace | None:
-        if isinstance(page, AdaptiveImageWorkspace):
-            return page
-        for attribute in ("workspace", "viewers", "selected_grid"):
-            workspace = getattr(page, attribute, None)
-            if isinstance(workspace, AdaptiveImageWorkspace):
-                return workspace
-        return page.findChild(AdaptiveImageWorkspace)
+        return self.pages.workspace_for_page(page)
 
     def _grid_states(self) -> dict[str, dict[str, object]]:
-        return {key: workspace.grid_state() for key, workspace in self._named_workspaces().items()}
+        return self.pages.grid_states()
 
     def _clear_all_image_workspaces(self, exclude_keys: set[str] | None = None) -> None:
-        excluded = set(exclude_keys or ())
-        cleared: set[int] = set()
-        for key, page in self.viewer_pages.items():
-            if key in excluded:
-                continue
-            if id(page) in cleared:
-                continue
-            cleared.add(id(page))
-            clear_results = getattr(page, "clear_results", None)
-            if callable(clear_results):
-                clear_results()
-                continue
-            workspace = self._workspace_for_page(page)
-            if workspace is not None:
-                workspace.clear_results()
+        self.pages.clear_workspaces(exclude_keys)
 
     def _filters_for_entry(self, formats: tuple[str, ...]) -> list[str]:
-        labels = {
-            "npy": "NumPy array (*.npy)",
-            "npz": "NumPy archive (*.npz)",
-            "png": "PNG image (*.png)",
-            "tiff": "TIFF image (*.tif *.tiff)",
-        }
-        return [labels[item] for item in formats if item in labels]
+        return self.project_coordinator.filters_for_entry(formats)
 
     def _safe_result_filename(self, name: str, extension: str) -> str:
-        safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in name)
-        suffix = "tif" if extension == "tiff" else extension
-        return f"{safe}.{suffix}"
+        return self.project_coordinator.safe_result_filename(name, extension)
 
     def _path_with_supported_suffix(self, path: Path, extension: str) -> Path:
-        suffix = "tif" if extension == "tiff" else extension
-        if path.suffix:
-            return path
-        return path.with_suffix(f".{suffix}")
+        return self.project_coordinator.path_with_supported_suffix(path, extension)

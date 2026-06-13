@@ -133,6 +133,15 @@ class ParallaxWorkflowTests(unittest.TestCase):
         self.assertEqual(calls, [True])
         self.assertIn("Incoherent BF", result.images)
 
+    def test_prepare_bf_vectorized_integration_matches_masked_sum(self):
+        result = self.service.prepare_bf(self.datacube, BFMaskParams(threshold=0.5))
+        mask = result.metadata["bf_mask"]
+
+        np.testing.assert_allclose(
+            result.images["Incoherent BF"],
+            self.datacube.data[:, :, mask].sum(axis=2),
+        )
+
     def test_progress_is_stage_based(self):
         self.service.prepare_bf(self.datacube, BFMaskParams())
         self.service.accept_bf_mask()
@@ -194,6 +203,31 @@ class ParallaxWorkflowTests(unittest.TestCase):
         self.assertIn("Original Aligned BF FFT", subpixel.images)
         self.assertIn("Subpixel Aligned BF FFT", subpixel.images)
         self.assertIn("radial_cone_values", subpixel.metadata)
+
+    def test_vectorized_radial_profile_matches_bin_means(self):
+        parallax = _FakeParallax()
+        result = types.SimpleNamespace(images={}, metadata={})
+
+        ParallaxService._add_subpixel_diagnostics(result, parallax)
+
+        subpixel = parallax.recon_BF_subpixel_aligned
+        sampling = parallax._scan_sampling[0] / parallax._kde_upsample_factor
+        nx, ny = subpixel.shape
+        radius = np.sqrt(
+            np.fft.fftfreq(nx, d=sampling)[:, None] ** 2
+            + np.fft.fftfreq(ny, d=sampling)[None, :] ** 2
+        )
+        cone = np.abs(np.fft.fft2(subpixel)) * radius
+        bins = np.linspace(0, float(radius.max()), max(min(nx, ny) // 2, 2))
+        indices = np.digitize(radius.ravel(), bins)
+        expected = np.asarray(
+            [
+                cone.ravel()[indices == index].mean() if np.any(indices == index) else 0
+                for index in range(1, len(bins))
+            ]
+        )
+
+        np.testing.assert_allclose(result.images["Radial cone-weighted FFT"], expected[None, :])
 
     def test_finite_dose_includes_safe_three_pattern_montages(self):
         class Calibration:

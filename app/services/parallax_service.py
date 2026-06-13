@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from app.services.array_reduction import detector_sum
 from app.services.phase_contrast_service import PhaseContrastResult
 
 
@@ -324,10 +325,12 @@ class ParallaxService:
         mask_count = int(np.count_nonzero(mask))
         if mask_count == 0:
             raise ParallaxServiceError("The BF disk mask is empty. Lower the threshold or adjust the circle.")
-        incoherent_bf = np.zeros(tuple(data.shape[:2]), dtype=np.result_type(data.dtype, np.float32))
         selected = np.argwhere(mask)
-        for qx, qy in selected:
-            incoherent_bf += np.asarray(data[:, :, qx, qy])
+        incoherent_bf = detector_sum(
+            data,
+            mask,
+            dtype=np.result_type(data.dtype, np.float32),
+        )
         virtual: dict[str, np.ndarray] = {}
         selected_indices = self._representative_indices(selected, params.virtual_bf_count)
         crop = max(1, min(int(params.virtual_bf_crop), data.shape[0], data.shape[1]))
@@ -686,10 +689,15 @@ class ParallaxService:
             )
             bins = np.linspace(0, float(radius.max()), max(min(nx, ny) // 2, 2))
             indices = np.digitize(radius.ravel(), bins)
-            radial = np.array([
-                cone.ravel()[indices == index].mean() if np.any(indices == index) else 0
-                for index in range(1, len(bins))
-            ])
+            flat_cone = cone.ravel()
+            sums = np.bincount(indices, weights=flat_cone, minlength=len(bins) + 1)
+            counts = np.bincount(indices, minlength=len(bins) + 1)
+            radial = np.divide(
+                sums[1:len(bins)],
+                counts[1:len(bins)],
+                out=np.zeros(len(bins) - 1, dtype=float),
+                where=counts[1:len(bins)] > 0,
+            )
             result.images["Radial cone-weighted FFT"] = radial[None, :]
             result.metadata["radial_cone_frequency"] = bins[1:]
             result.metadata["radial_cone_values"] = ParallaxService._median_filter_1d(radial, 5)

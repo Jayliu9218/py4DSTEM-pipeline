@@ -111,6 +111,25 @@ class FileOpenAndRolesTests(unittest.TestCase):
 
         module.read.assert_not_called()
 
+    def test_raw_scan_image_cache_reuses_and_invalidates_reduction(self) -> None:
+        self.window._open_file_path(str(self.path))
+        dataset = self.window.current_file["target"]
+
+        with patch.object(
+            self.window.hdf5_service,
+            "read_4d_scan_image",
+            wraps=self.window.hdf5_service.read_4d_scan_image,
+        ) as read_scan:
+            self.window._load_raw_4d_dataset("/target", tuple(dataset.shape))
+            first = self.window._get_target_bright_field_image()
+            second = self.window._get_target_bright_field_image()
+            self.assertIs(first, second)
+            self.assertEqual(read_scan.call_count, 1)
+
+            self.window._clear_raw_scan_image_cache()
+            self.window._get_target_bright_field_image()
+            self.assertEqual(read_scan.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

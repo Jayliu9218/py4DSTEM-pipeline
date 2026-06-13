@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.array_reduction import max_diffraction, mean_diffraction
+
 
 class PreprocessingServiceError(Exception):
     """User-facing preprocessing error."""
@@ -53,8 +55,7 @@ class PreprocessingService:
         if params.threshold <= 1:
             raise PreprocessingServiceError("Hot-pixel threshold must be greater than 1.")
         start = perf_counter()
-        array = np.asarray(data)
-        before = np.asarray(array.mean(axis=(0, 1)), dtype=float)
+        before = mean_diffraction(data)
         neighborhood = self._local_median(before)
         mask = before > params.threshold * np.maximum(neighborhood, np.finfo(float).eps)
         after = before.copy()
@@ -69,22 +70,22 @@ class PreprocessingService:
             return preview.hot_pixel_count
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         array = np.asarray(data)
-        neighborhood = self._local_median(np.asarray(array.mean(axis=(0, 1)), dtype=float))
+        neighborhood = self._local_median(mean_diffraction(data))
         array[..., preview.hot_pixel_mask] = neighborhood[preview.hot_pixel_mask]
         return preview.hot_pixel_count
 
     def basic_diagnostics(self, source: Any) -> dict[str, np.ndarray]:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
-        array = np.asarray(data)
-        if array.ndim != 4:
+        shape = tuple(int(value) for value in getattr(data, "shape", ()))
+        if len(shape) != 4:
             raise PreprocessingServiceError("A 4D DataCube is required.")
-        rx, ry = array.shape[0] // 2, array.shape[1] // 2
-        qx, qy = array.shape[2] // 2, array.shape[3] // 2
+        rx, ry = shape[0] // 2, shape[1] // 2
+        qx, qy = shape[2] // 2, shape[3] // 2
         return {
-            "Central diffraction pattern": array[rx, ry],
-            "Central real-space slice": array[:, :, qx, qy],
-            "Mean diffraction pattern": array.mean(axis=(0, 1)),
-            "Maximum diffraction pattern": array.max(axis=(0, 1)),
+            "Central diffraction pattern": np.asarray(data[rx, ry]),
+            "Central real-space slice": np.asarray(data[:, :, qx, qy]),
+            "Mean diffraction pattern": mean_diffraction(data),
+            "Maximum diffraction pattern": max_diffraction(data),
         }
 
     def _local_median(self, image: np.ndarray) -> np.ndarray:
