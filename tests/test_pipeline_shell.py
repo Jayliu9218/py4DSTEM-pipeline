@@ -1,5 +1,6 @@
 import unittest
 import types
+from unittest.mock import patch
 
 import numpy as np
 from PySide6.QtCore import Qt
@@ -67,30 +68,26 @@ class PipelineShellTests(unittest.TestCase):
                 "Data Setup",
                 "BF / DF Preview",
                 "Segmented DPC",
-                "CoM Preprocessing",
-                "CoM Review & Accept",
+                "CoM Preprocessing & Review",
                 "Integrated Reconstruction",
                 "Export",
             ],
         )
         segmented = next(module for module in self.window.route_modules if module.key == "dpc_segmented")
         preprocess = next(module for module in self.window.route_modules if module.key == "dpc_preprocess")
-        review = next(module for module in self.window.route_modules if module.key == "dpc_review")
         dpc = next(module for module in self.window.route_modules if module.key == "dpc")
         self.assertEqual(segmented.prerequisite, "data_setup")
         self.assertEqual(preprocess.prerequisite, "data_setup")
-        self.assertEqual(review.prerequisite, "dpc_preprocess")
-        self.assertEqual(dpc.prerequisite, "dpc_review")
+        self.assertEqual(dpc.prerequisite, "dpc_preprocess")
 
     def test_dpc_stages_have_independent_workspaces(self) -> None:
         pages = [
             self.window.dpc_segmented_page,
             self.window.dpc_preprocess_page,
-            self.window.dpc_review_page,
             self.window.dpc_reconstruction_page,
         ]
 
-        self.assertEqual(len({id(page.workspace) for page in pages}), 4)
+        self.assertEqual(len({id(page.workspace) for page in pages}), 3)
         self.assertEqual(len({id(page.service) for page in pages}), 1)
 
     def test_dpc_pages_complete_their_own_workflow_steps(self) -> None:
@@ -121,18 +118,15 @@ class PipelineShellTests(unittest.TestCase):
         self.assertIn("dpc_legacy", state.page_params)
         self.assertIn("segment_outer_radius_mrad", state.page_params["dpc"])
 
-    def test_com_review_controls_exist_only_in_review_stage(self) -> None:
+    def test_com_review_controls_are_merged_into_preprocessing(self) -> None:
         preprocess = self.window.dpc_preprocess_page
-        review = self.window.dpc_review_page
 
-        self.assertTrue(preprocess.accept_button.isHidden())
-        self.assertTrue(preprocess.preprocess_view.isHidden())
-        self.assertFalse(review.accept_button.isHidden())
-        self.assertFalse(review.preprocess_view.isHidden())
+        self.assertFalse(preprocess.accept_button.isHidden())
+        self.assertFalse(preprocess.preprocess_view.isHidden())
+        self.assertIs(self.window.dpc_review_page, preprocess)
 
-    def test_preprocess_hands_result_to_review_without_duplicate_display(self) -> None:
+    def test_preprocess_displays_review_and_requires_acceptance(self) -> None:
         preprocess = self.window.dpc_preprocess_page
-        review = self.window.dpc_review_page
         result = PhaseContrastResult(
             method="DPC",
             images={
@@ -144,12 +138,10 @@ class PipelineShellTests(unittest.TestCase):
         preprocess.pending_operation = "DPC CoM preprocessing"
 
         preprocess._handle_finished(result)
-        review.refresh_stage()
 
-        self.assertEqual(preprocess.workspace.results, [])
-        self.assertIs(review.result, result)
-        self.assertGreater(len(review.workspace.results), 0)
-        self.assertIn("Continue to CoM Review & Accept", preprocess.status_label.text())
+        self.assertIs(preprocess.result, result)
+        self.assertGreater(len(preprocess.workspace.results), 0)
+        self.assertIn("explicitly accept preprocessing", preprocess.status_label.text())
 
     def test_parallax_goal_uses_focused_six_module_route(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
@@ -170,11 +162,75 @@ class PipelineShellTests(unittest.TestCase):
             self.window._controls_for_route("parallax_alignment"),
             self.window.parallax_alignment_page.controls_panel,
         )
-        self.assertTrue(self.window.parallax_advanced_page.subpixel.isChecked())
-        self.assertFalse(self.window.parallax_advanced_page.aberration_fit.isChecked())
-        self.assertFalse(self.window.parallax_advanced_page.aberration_correction.isChecked())
+        self.assertTrue(self.window.parallax_advanced_page.subpixel_button.isEnabled() is False)
         self.assertFalse(self.window.parallax_advanced_page.high_order.isChecked())
         self.assertFalse(self.window.parallax_advanced_page.ctf_fit.isChecked())
+
+    def test_parallax_alignment_presets_switch_between_fast_and_notebook_quality(self) -> None:
+        page = self.window.parallax_alignment_page
+
+        self.assertEqual(page.alignment_preset.currentText(), "Fast")
+        self.assertEqual(page._alignment_params().alignment_bin_values, (32, 32, 16, 16, 8, 8))
+        self.assertEqual(page._alignment_params().cross_correlation_upsample_factor, 4)
+
+        page.alignment_preset.setCurrentText("Notebook Quality")
+
+        self.assertEqual(
+            page._alignment_params().alignment_bin_values,
+            (32, 32, 32, 32, 32, 32, 16, 16, 16, 16, 8, 8),
+        )
+        self.assertEqual(page._alignment_params().cross_correlation_upsample_factor, 8)
+
+    def test_parallax_results_are_not_retained_for_method_comparison(self) -> None:
+        self.assertFalse(hasattr(self.window, "_store_parallax_result"))
+        self.assertNotIn("Parallax", self.window.phase_retrieval_results)
+
+    def test_parallax_review_skips_unchanged_result_redraw(self) -> None:
+        page = self.window.parallax_review_page
+        result = PhaseContrastResult(
+            method="Parallax",
+            images={
+                "Aligned BF": np.ones((4, 4)),
+                "Shift Magnitude": np.ones((4, 4)),
+            },
+        )
+        page.service.context.alignment_result = result
+        page.service.context.shift_vectors = np.ones((16, 4))
+        page._display_signature = None
+
+        with patch.object(page.workspace, "set_results") as set_results:
+            page._refresh_display()
+            page._refresh_display()
+
+        set_results.assert_called_once()
+        figures = set_results.call_args.args[0]
+        self.assertEqual([figure.title for figure in figures], ["Aligned BF", "Shift Magnitude"])
+        self.assertEqual(figures[1].vector_stride, 4)
+
+    def test_parallax_exposes_on_demand_notebook_diagnostic_views(self) -> None:
+        review = self.window.parallax_review_page
+        advanced = self.window.parallax_advanced_page
+
+        self.assertIn("Notebook review", [review.review_view.itemText(i) for i in range(review.review_view.count())])
+        self.assertIn("Finite-dose diffraction montage", [review.review_view.itemText(i) for i in range(review.review_view.count())])
+        advanced_views = [advanced.advanced_view.itemText(i) for i in range(advanced.advanced_view.count())]
+        self.assertIn("Original vs subpixel FFT", advanced_views)
+        self.assertIn("Measured vs fitted shifts", advanced_views)
+        self.assertIn("CTF comparison", advanced_views)
+
+    def test_accept_alignment_emits_one_state_change_without_redraw(self) -> None:
+        page = self.window.parallax_review_page
+        page.service.context.alignment_result = PhaseContrastResult(
+            method="Parallax", images={"Aligned BF": np.ones((2, 2))}
+        )
+        changes = []
+        self.window.workflow_state.changed.connect(lambda: changes.append(True))
+
+        with patch.object(page.workspace, "set_results") as set_results:
+            page.accept_alignment()
+
+        set_results.assert_not_called()
+        self.assertEqual(len(changes), 1)
 
     def test_route_module_selection_works(self) -> None:
         self.window._select_route_module("bragg_detection")

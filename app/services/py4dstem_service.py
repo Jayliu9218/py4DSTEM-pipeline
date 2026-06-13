@@ -6,6 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -83,12 +84,18 @@ class Py4DSTEMService:
     def load_datacube(self, datapath: str) -> DataCubeInfo:
         if self.file_path is None:
             raise Py4DSTEMServiceError("No file is open.")
+        canonical_datapath = self._resolve_datacube_path(datapath)
+        if canonical_datapath is None:
+            raise Py4DSTEMServiceError(
+                "This node is not a py4DSTEM DataCube. "
+                "Raw 4D HDF5 datasets remain available for browsing."
+            )
         py4DSTEM = self._py4dstem()
 
         try:
             obj = py4DSTEM.read(
                 filepath=self.file_path,
-                datapath=datapath,
+                datapath=canonical_datapath,
                 tree=False,
                 verbose=False,
             )
@@ -113,8 +120,8 @@ class Py4DSTEMService:
 
         shape = self.get_datacube_shape(obj)
         info = DataCubeInfo(
-            name=str(getattr(obj, "name", "") or Path(datapath).name or "DataCube"),
-            datapath=datapath,
+            name=str(getattr(obj, "name", "") or Path(canonical_datapath).name or "DataCube"),
+            datapath=canonical_datapath,
             shape=shape,
             scan_shape=shape[:2],
             diffraction_shape=shape[2:],
@@ -124,6 +131,32 @@ class Py4DSTEMService:
         self.datacube_info = info
         self.probe_geometry = None
         return info
+
+    def _resolve_datacube_path(self, datapath: str) -> str | None:
+        if self.file_path is None:
+            return None
+        try:
+            with h5py.File(self.file_path, "r") as source:
+                node = source[datapath]
+                if self._python_class(node) == "DataCube":
+                    return node.name
+                if (
+                    isinstance(node, h5py.Dataset)
+                    and node.ndim == 4
+                    and node.name.rsplit("/", 1)[-1] == "data"
+                    and self._python_class(node.parent) == "DataCube"
+                ):
+                    return node.parent.name
+        except (KeyError, OSError, ValueError):
+            return None
+        return None
+
+    @staticmethod
+    def _python_class(node: h5py.Group | h5py.Dataset) -> str | None:
+        value = node.attrs.get("python_class")
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value) if value is not None else None
 
     def read_datapath(self, datapath: str) -> Any:
         if self.file_path is None:
@@ -164,7 +197,11 @@ class Py4DSTEMService:
 
     def is_datacube(self, obj: Any) -> bool:
         py4DSTEM = self._py4dstem()
-        return isinstance(obj, py4DSTEM.DataCube) or (
+        datacube_type = getattr(py4DSTEM, "DataCube", None)
+        return (
+            isinstance(datacube_type, type)
+            and isinstance(obj, datacube_type)
+        ) or (
             hasattr(obj, "data") and self._shape_is_4d(getattr(obj, "shape", None))
         )
 

@@ -174,10 +174,14 @@ class WorkflowState(QObject):
         self.dataset_roles = DatasetRoles()
 
     def mark_completed(self, step: str) -> None:
-        downstream = self._with_downstream({step}) - {step}
+        self.mark_completed_many({step})
+
+    def mark_completed_many(self, steps: Iterable[str]) -> None:
+        completed = set(steps)
+        downstream = self._with_downstream(completed) - completed
         self._stale.update(downstream & self._completed)
-        self._completed.add(step)
-        self._stale.discard(step)
+        self._completed.update(completed)
+        self._stale.difference_update(completed)
         self.changed.emit()
 
     def parameters_updated(self, steps: str | Iterable[str]) -> None:

@@ -22,14 +22,12 @@ class MethodComparisonPage(QWidget):
     def __init__(
         self,
         dpc_result_provider: Callable[[], PhaseContrastResult | None],
-        parallax_result_provider: Callable[[], PhaseContrastResult | None],
         ptychography_result_provider: Callable[[], PhaseContrastResult | None],
         log_panel: LogPanel,
         workflow_state: WorkflowState,
     ) -> None:
         super().__init__()
         self.dpc_result_provider = dpc_result_provider
-        self.parallax_result_provider = parallax_result_provider
         self.ptychography_result_provider = ptychography_result_provider
         self.log_panel = log_panel
         self.workflow_state = workflow_state
@@ -39,7 +37,7 @@ class MethodComparisonPage(QWidget):
         self.refresh_button = QPushButton("Refresh Results")
         self.refresh_button.clicked.connect(self._refresh)
 
-        self.status_label = QLabel("Run DPC, Parallax, or Ptychography first.")
+        self.status_label = QLabel("Run DPC or Ptychography first.")
         self.status_label.setWordWrap(True)
 
         self._build_layout()
@@ -71,35 +69,24 @@ class MethodComparisonPage(QWidget):
                 if first_image is not None:
                     self.workspace.update_result("dpc", FigureResult("DPC / CoM", np.asarray(first_image)))
 
-        parallax = self.parallax_result_provider()
-        if parallax is not None:
-            for name, image in parallax.images.items():
-                self.workspace.update_result("parallax", FigureResult("Parallax", np.asarray(image)))
-                break
-
         ptychography = self.ptychography_result_provider()
         if ptychography is not None:
             for name, image in ptychography.images.items():
                 self.workspace.update_result("ptychography", FigureResult("Ptychography", np.asarray(image)))
                 break
 
-        has_any = dpc is not None or parallax is not None or ptychography is not None
+        has_any = dpc is not None or ptychography is not None
         if has_any:
             self.workflow_state.mark_completed(WorkflowStep.METHOD_COMPARISON)
 
     def _update_status(self) -> None:
         dpc_done = self.workflow_state.is_completed(WorkflowStep.DPC)
-        parallax_done = self.workflow_state.is_completed(WorkflowStep.PARALLAX)
         ptychography_done = self.workflow_state.is_completed(WorkflowStep.PTYCHOGRAPHY)
         parts = []
         if dpc_done:
             parts.append("DPC: done")
         else:
             parts.append("DPC: not run")
-        if parallax_done:
-            parts.append("Parallax: done")
-        else:
-            parts.append("Parallax: not run")
         if ptychography_done:
             parts.append("Ptychography: done")
         else:

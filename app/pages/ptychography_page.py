@@ -69,7 +69,6 @@ class PtychographyPage(QWidget):
         workflow_state: WorkflowState,
         result_registry: ResultRegistry | None = None,
         dpc_result_provider: Callable[[], PhaseContrastResult | None] | None = None,
-        parallax_result_provider: Callable[[], PhaseContrastResult | None] | None = None,
     ) -> None:
         super().__init__()
         self.source_provider = source_provider
@@ -77,7 +76,6 @@ class PtychographyPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.dpc_result_provider = dpc_result_provider
-        self.parallax_result_provider = parallax_result_provider
         self.service = PhaseContrastService()
         self.worker_thread: QThread | None = None
         self.worker: PtychographyWorker | None = None
@@ -106,7 +104,7 @@ class PtychographyPage(QWidget):
         self.rotation_label = QLabel("")
         self.rotation_label.setWordWrap(True)
 
-        self.compare_button = QPushButton("Compare with DPC / Parallax")
+        self.compare_button = QPushButton("Compare with DPC")
         self.compare_button.clicked.connect(self._show_comparison)
 
         self.run_button = QPushButton("Reconstruct")
@@ -162,19 +160,12 @@ class PtychographyPage(QWidget):
     def _show_comparison(self) -> None:
         has_any = False
         dpc = self.dpc_result_provider() if self.dpc_result_provider else None
-        parallax = self.parallax_result_provider() if self.parallax_result_provider else None
         ptychography = self.result
 
         if ptychography is not None:
             phase = ptychography.images.get("Phase")
             if phase is not None:
                 self.workspace.update_result("comparison-ptychography", FigureResult("Ptychography Phase", np.asarray(phase)))
-                has_any = True
-
-        if parallax is not None:
-            aligned = parallax.images.get("Aligned BF")
-            if aligned is not None:
-                self.workspace.update_result("comparison-parallax", FigureResult("Parallax Aligned BF", np.asarray(aligned)))
                 has_any = True
 
         if dpc is not None:
@@ -187,7 +178,7 @@ class PtychographyPage(QWidget):
 
         if not has_any:
             QMessageBox.information(self, "Ptychography Comparison",
-                "No phase retrieval results available. Run DPC, Parallax, or Ptychography first.")
+                "No retained results available. Run DPC or Ptychography first.")
 
     def _load_vacuum_probe(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

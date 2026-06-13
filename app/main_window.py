@@ -185,14 +185,8 @@ class MainWindow(QMainWindow):
             service=self.dpc_service,
             stage_mode="preprocess",
         )
-        self.dpc_review_page = DPCPage(
-            source_provider=self._get_py4dstem_datacube,
-            log_panel=self.log_panel,
-            workflow_state=self.workflow_state,
-            result_registry=self.result_registry,
-            service=self.dpc_service,
-            stage_mode="review",
-        )
+        # Compatibility alias for project files created before review was merged.
+        self.dpc_review_page = self.dpc_preprocess_page
         self.dpc_reconstruction_page = DPCPage(
             source_provider=self._get_py4dstem_datacube,
             log_panel=self.log_panel,
@@ -258,11 +252,9 @@ class MainWindow(QMainWindow):
             workflow_state=self.workflow_state,
             result_registry=self.result_registry,
             dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
-            parallax_result_provider=lambda: self.phase_retrieval_results.get("Parallax"),
         )
         self.method_comparison_page = MethodComparisonPage(
             dpc_result_provider=lambda: self.phase_retrieval_results.get("DPC"),
-            parallax_result_provider=lambda: self.phase_retrieval_results.get("Parallax"),
             ptychography_result_provider=lambda: self.phase_retrieval_results.get("Ptychography"),
             log_panel=self.log_panel,
             workflow_state=self.workflow_state,
@@ -312,8 +304,6 @@ class MainWindow(QMainWindow):
         self.log_panel.log("Application started.")
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
         self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
-        self.parallax_review_page.parallax_result_ready.connect(self._store_parallax_result)
-        self.parallax_advanced_page.parallax_result_ready.connect(self._store_parallax_result)
         self.ptychography_page.ptychography_result_ready.connect(self._store_ptychography_result)
         self.log_panel.log("Application started.")
         self._apply_image_scaling(self.image_scaling)
@@ -409,6 +399,14 @@ class MainWindow(QMainWindow):
         self.cuda_enabled = enabled
         self.bragg_peaks_page.set_cuda_enabled(enabled)
         self.orientation_page.set_cuda_enabled(enabled)
+        for page in (
+            self.parallax_bf_page,
+            self.parallax_alignment_page,
+            self.parallax_review_page,
+            self.parallax_advanced_page,
+            self.parallax_export_page,
+        ):
+            page.set_cuda_enabled(enabled)
 
     def _build_layout(self) -> None:
         data_browser = QWidget()
@@ -439,7 +437,6 @@ class MainWindow(QMainWindow):
             "bf_df": self.bf_df_preview_page,
             "dpc_segmented": self.dpc_segmented_page,
             "dpc_preprocess": self.dpc_preprocess_page,
-            "dpc_review": self.dpc_review_page,
             "dpc": self.dpc_reconstruction_page,
             "dpc_legacy": self.dpc_legacy_page,
             "parallax_bf": self.parallax_bf_page,
@@ -692,22 +689,16 @@ class MainWindow(QMainWindow):
                         WorkflowStep.DPC_SEGMENTED, "data_setup",
                     ),
                     RouteModule(
-                        "dpc_preprocess", "CoM Preprocessing", "dpc_preprocess",
+                        "dpc_preprocess", "CoM Preprocessing & Review", "dpc_preprocess",
                         "Target DataCube; segmented DPC is an optional demonstration.",
-                        "Measured, fitted, normalized, and corrected pixelated CoM.",
-                        WorkflowStep.DPC_PREPROCESS, "data_setup",
-                    ),
-                    RouteModule(
-                        "dpc_review", "CoM Review & Accept", "dpc_review",
-                        "Completed pixelated CoM preprocessing.",
-                        "Reviewed rotation, transpose, corrected CoM, and explicit acceptance.",
-                        WorkflowStep.DPC_REVIEW, "dpc_preprocess",
+                        "Measured, fitted, normalized, corrected CoM, review, and explicit acceptance.",
+                        WorkflowStep.DPC_REVIEW, "data_setup",
                     ),
                     RouteModule(
                         "dpc", "Integrated Reconstruction", "dpc",
                         "Accepted CoM preprocessing review.",
                         "Integrated DPC potential, convergence, and stored iterations.",
-                        WorkflowStep.DPC, "dpc_review",
+                        WorkflowStep.DPC, "dpc_preprocess",
                     ),
                     RouteModule(
                         "export", "Export", "overview",
@@ -773,14 +764,14 @@ class MainWindow(QMainWindow):
                     ),
                     RouteModule(
                         "ptychography", "Ptychography", "ptychography",
-                        "Target DataCube and optional vacuum probe; Parallax recommended for initialization.",
+                        "Target DataCube and optional vacuum probe.",
                         "Phase and amplitude reconstruction from iterative ptychography.",
-                        WorkflowStep.PTYCHOGRAPHY, "parallax",
+                        WorkflowStep.PTYCHOGRAPHY, "data_setup",
                     ),
                     RouteModule(
                         "method_comparison", "Method Comparison", "method_comparison",
-                        "At least one phase retrieval result (DPC, Parallax, or Ptychography).",
-                        "Side-by-side comparison of phase retrieval method outputs.",
+                        "At least one retained DPC or Ptychography result.",
+                        "Side-by-side comparison of retained phase retrieval outputs.",
                         WorkflowStep.METHOD_COMPARISON, "ptychography",
                     ),
                     RouteModule(
@@ -854,7 +845,6 @@ class MainWindow(QMainWindow):
             "bf_df_preview": self.bf_df_preview_page.controls_panel,
             "dpc_segmented": self.dpc_segmented_page.controls_panel,
             "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
-            "dpc_review": self.dpc_review_page.controls_panel,
             "dpc": (
                 self.dpc_reconstruction_page.controls_panel
                 if goal == "DPC / CoM"
@@ -1519,10 +1509,6 @@ class MainWindow(QMainWindow):
     def _store_dpc_result(self, result: PhaseContrastResult) -> None:
         self.phase_retrieval_results["DPC"] = result
         self.log_panel.log("DPC result stored for method comparison")
-
-    def _store_parallax_result(self, result: PhaseContrastResult) -> None:
-        self.phase_retrieval_results["Parallax"] = result
-        self.log_panel.log("Parallax result stored for method comparison")
 
     def _store_ptychography_result(self, result: PhaseContrastResult) -> None:
         self.phase_retrieval_results["Ptychography"] = result

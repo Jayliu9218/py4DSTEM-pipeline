@@ -98,10 +98,10 @@ class ImageViewerTests(unittest.TestCase):
         viewer = ImageViewer()
         viewer.set_image(np.ones((8, 8)))
         viewer.add_vector_overlays(np.asarray([[2, 3, 1, -1], [4, 5, -2, 1]]))
-        self.assertEqual(len(viewer.overlay_items), 2)
+        self.assertEqual(len(viewer.overlay_items), 1)
         first_x, first_y = viewer.overlay_items[0].getData()
-        np.testing.assert_array_equal(first_x, [3, 2])
-        np.testing.assert_array_equal(first_y, [2, 3])
+        np.testing.assert_array_equal(first_x, [3, 2, np.nan, 5, 6, np.nan])
+        np.testing.assert_array_equal(first_y, [2, 3, np.nan, 4, 2, np.nan])
         viewer.clear_overlays()
         self.assertEqual(viewer.overlay_items, [])
 

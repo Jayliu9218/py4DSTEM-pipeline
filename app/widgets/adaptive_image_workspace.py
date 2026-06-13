@@ -38,6 +38,8 @@ class FigureResult:
     points: np.ndarray | None = None
     point_labels: list[str] | None = None
     vectors: np.ndarray | None = None
+    vector_stride: int = 1
+    vector_scale: float = 1.0
     circles: np.ndarray | None = None
     mask: np.ndarray | None = None
     overlay: dict[str, float | str] | None = None
@@ -114,7 +116,11 @@ class FigurePanel(QFrame):
             if self.result.point_labels:
                 viewer.add_point_labels(self.result.points, self.result.point_labels)
         if self.result.vectors is not None and len(self.result.vectors):
-            viewer.add_vector_overlays(self.result.vectors)
+            viewer.add_vector_overlays(
+                self.result.vectors,
+                stride=self.result.vector_stride,
+                scale=self.result.vector_scale,
+            )
         if self.result.circles is not None and len(self.result.circles):
             for x, y, radius in self.result.circles:
                 viewer.add_circle_overlay(float(x), float(y), float(radius), color="r")
