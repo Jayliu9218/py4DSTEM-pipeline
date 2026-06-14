@@ -428,10 +428,10 @@ class MainWindow(QMainWindow):
         self.theme_action_group = None
         self.dark_theme_action = self.view_menu.addAction("Dark Theme")
         self.dark_theme_action.setCheckable(True)
-        self.dark_theme_action.setChecked(False)
+        self.dark_theme_action.setChecked(True)
         self.light_theme_action = self.view_menu.addAction("Light Theme")
         self.light_theme_action.setCheckable(True)
-        self.light_theme_action.setChecked(True)
+        self.light_theme_action.setChecked(False)
         self.theme_action_group = QActionGroup(self)
         self.theme_action_group.addAction(self.dark_theme_action)
         self.theme_action_group.addAction(self.light_theme_action)
@@ -608,10 +608,8 @@ class MainWindow(QMainWindow):
     def _build_layout(self) -> None:
         data_browser = QWidget()
         data_browser_layout = QVBoxLayout(data_browser)
-        data_browser_layout.setContentsMargins(6, 6, 6, 6)
-        data_title = QLabel("Data Tree")
-        data_title.setObjectName("sectionTitle")
-        data_browser_layout.addWidget(data_title)
+        data_browser_layout.setContentsMargins(0, 0, 0, 0)
+        data_browser_layout.setSpacing(0)
         data_browser_layout.addWidget(self.tree, 1)
         self.tree.setFrameShape(QFrame.NoFrame)
 
