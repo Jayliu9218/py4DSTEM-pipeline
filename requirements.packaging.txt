@@ -3,4 +3,3 @@ pyinstaller-hooks-contrib==2026.5
 nuitka
 ordered-set
 zstandard
-conda-pack

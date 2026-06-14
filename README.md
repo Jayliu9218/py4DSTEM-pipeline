@@ -71,12 +71,15 @@ environment for release builds:
 .\packaging\build_pyinstaller.ps1
 ```
 
-The packaging environment is cloned from `4dstem`, augmented with the tools in
-`requirements.packaging.txt`, then installs py4DSTEM directly from the
+The packaging environment is created **from a clean Python 3.11 base** (not by
+cloning the development environment), then installs the pinned runtime
+dependencies in `requirements.txt` plus the packaging tools in
+`requirements.packaging.txt`, and finally ensures py4DSTEM is installed from the
 [`dev` branch](https://github.com/py4dstem/py4DSTEM/tree/dev). It disables
 Python user-site packages and validates the recorded Git source and commit.
-PyInstaller builds also run a short packaged-application launch check by
-default.
+Building from a clean base keeps heavy dev-only tools (Jupyter, notebook,
+IPython, …) out of the distributable. PyInstaller builds also run a short
+packaged-application launch check by default.
 
 ## Project Layout
 
@@ -190,10 +193,18 @@ packaging\inno_setup.iss
 
 ### 4. Stable Release
 
-Use conda-pack when environment reproducibility is the priority:
+Use the portable zip for a no-install distribution (requires the PyInstaller
+build from step 2):
 
 ```powershell
-.\packaging\build_conda_pack.ps1
+.\packaging\build_pyinstaller.ps1
+.\packaging\build_portable.ps1
+```
+
+Output:
+
+```text
+dist\py4DSTEM-Pipeline-portable.zip
 ```
 
 Use Nuitka when a compiled distribution is preferred:
