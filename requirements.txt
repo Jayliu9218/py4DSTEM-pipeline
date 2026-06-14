@@ -1,7 +1,27 @@
-PySide6
-pyqtgraph
-h5py
-numpy
-py4DSTEM
-matplotlib
-tifffile
+# --- Application core (GUI + I/O + imaging) ---
+# Pinned to versions validated against the packaging environment.
+PySide6==6.11.1
+pyqtgraph==0.14.0
+h5py==3.16.0
+numpy==1.26.4
+matplotlib==3.10.9
+tifffile==2026.3.3
+
+# --- py4DSTEM (always installed from the dev branch) ---
+py4DSTEM @ git+https://github.com/py4dstem/py4DSTEM.git@dev
+
+# --- py4DSTEM hard transitive deps (eagerly imported by `import py4DSTEM`) ---
+# Declared explicitly so missing ones surface as a clear pip error instead of a
+# late ImportError inside the frozen app. Versions are left as floors so pip can
+# resolve a compatible build alongside the other scientific packages.
+scipy>=1.5.2
+scikit-image>=0.17.2
+scikit-learn>=0.23.2
+scikit-optimize>=0.9.0
+ncempy>=1.8.1
+hdf5plugin>=4.1.3
+emdfile>=0.0.14
+pylops>=2.1.0
+colorspacious>=1.1.2
+gdown>=5.1.0
+pymatgen>=2022.11.7

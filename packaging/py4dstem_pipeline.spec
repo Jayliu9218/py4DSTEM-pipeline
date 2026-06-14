@@ -10,6 +10,11 @@ datas = []
 binaries = [(str(Path(sys.prefix) / "Library" / "bin" / "libexpat.dll"), ".")]
 hiddenimports = []
 
+# Packages collected wholesale. py4DSTEM's __init__.py eagerly imports these
+# submodules (io/visualize/process/...), so their hard transitive deps must be
+# bundled too: scipy, scikit-image/learn/optimize, ncempy, hdf5plugin, gdown,
+# pylops, colorspacious, pymatgen (+ monty/spglib). Excluding any of those would
+# break `import py4DSTEM` in the frozen app.
 for package_name in [
     "py4DSTEM",
     "emdfile",
@@ -41,10 +46,26 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        "notebook",
-        "IPython",
-        "jupyter",
-        "pytest",
+        # --- Notebook / interactive (dev-only, never needed at runtime) ---
+        "notebook", "IPython", "jupyter", "jupyter_client", "jupyter_core",
+        "jupyter_server", "jupyterlab", "jupyterlab_server",
+        "ipykernel", "ipywidgets", "ipython_genutils",
+        "nbformat", "nbconvert", "nbclient",
+        # --- Test frameworks ---
+        "pytest", "pytest-qt",
+        # --- py4DSTEM lazy imports (only triggered by large-scale parallel /
+        #     distributed processing paths the desktop GUI never reaches) ---
+        "dask", "distributed", "mpire",
+        # --- Heavy packages not declared by py4DSTEM and not used by the app.
+        #     They sneak in as transitive deps of scikit-* or pymatgen but the
+        #     app's py4DSTEM code paths do not touch them. ---
+        "plotly", "pandas", "sympy", "bokeh",
+        # --- py4DSTEM optional extras (not installed by default) ---
+        "tensorflow", "tensorflow_addons",
+        "cupy",
+        "ipyparallel",
+        # --- Misc dev tooling that may leak into the env ---
+        "pip", "setuptools", "wheel", "conda_pack", "nuitka",
     ],
     noarchive=False,
     optimize=0,
