@@ -30,15 +30,15 @@ GOALS_BY_STRUCTURE = {
 
 
 def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
-    strain_route = structure == "Crystalline / Bragg-based" and goal == "Strain Mapping"
+    crystalline_route = structure == "Crystalline / Bragg-based"
     common = RouteModule(
         "data_setup",
-        "Data & Preprocess" if strain_route else "Data Setup",
-        "preprocess" if strain_route else "overview",
+        "Data & Preprocess" if crystalline_route else "Data Setup",
+        "preprocess" if crystalline_route else "overview",
         "Open an HDF5 / EMD file, assign dataset roles, inspect the DataCube, and preview/apply preprocessing.",
         "Validated roles, DataCube diagnostics, and an explicitly preprocessed working DataCube.",
     )
-    if structure == "Crystalline / Bragg-based":
+    if crystalline_route:
         return _crystalline_modules(common, goal)
     if structure == "Amorphous / Diffuse-scattering":
         return _amorphous_modules(common, goal)
@@ -48,29 +48,50 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
 
 
 def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
+    shared = [
+        common,
+        RouteModule("virtual_imaging", "Virtual Imaging", "virtual",
+            "Target DataCube; measured probe geometry is optional.",
+            "BF, annular/off-axis DF, and ROI virtual diffraction.",
+            WorkflowStep.VIRTUAL_DETECTOR, "data_setup"),
+        RouteModule("bragg_detection", "Probe & Bragg", "bragg",
+            "Virtual image and target DataCube; vacuum probe or vacuum ROI recommended.",
+            "Probe kernel, target/reference BraggVectors, histograms, and diagnostics.",
+            WorkflowStep.BRAGG_FULL, "virtual_imaging"),
+        RouteModule("calibration", "Calibration", "calibration",
+            "Target and ellipse-reference BraggVectors plus rotation reference.",
+            "Applied origin, ellipse, pixel-size, and rotation calibration.",
+            WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
+    ]
     if goal == "Strain Mapping":
-        return [
-            common,
-            RouteModule("virtual_imaging", "Virtual Imaging", "virtual",
-                "Target DataCube; measured probe geometry is optional.",
-                "BF, annular/off-axis DF, and ROI virtual diffraction.",
-                WorkflowStep.VIRTUAL_DETECTOR, "data_setup"),
-            RouteModule("bragg_detection", "Probe & Bragg", "bragg",
-                "Target DataCube; vacuum probe or vacuum ROI recommended.",
-                "Probe kernel, target/reference BraggVectors, histograms, and diagnostics.",
-                WorkflowStep.BRAGG_FULL, "virtual_imaging"),
-            RouteModule("calibration", "Calibration", "calibration",
-                "Target and ellipse-reference BraggVectors plus rotation reference.",
-                "Applied origin, ellipse, pixel-size, and rotation calibration.",
-                WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
+        return shared + [
             RouteModule("crystal_analysis", "Strain Analysis", "strain",
                 "Target BraggVectors; calibration is recommended for accuracy.",
                 "Basis diagnostics, strain components, quality maps, and references.",
-                WorkflowStep.STRAIN_MAP, "bragg_detection"),
-            RouteModule("export", "Export & Report", "overview",
-                "At least one registered result.",
+                WorkflowStep.STRAIN_MAP, "calibration"),
+            RouteModule("crystalline_results", "Results & Quality", "crystalline_results",
+                "Completed strain analysis.",
+                "Filtered final results, quality maps, and diagnostics.",
+                WorkflowStep.STRAIN_MAP, "crystal_analysis"),
+            RouteModule("export", "Export", "crystalline_results",
+                "Reviewed crystalline results.",
                 "Result arrays, project state, and scientific report.",
-                prerequisite="crystal_analysis"),
+                prerequisite="crystalline_results"),
+        ]
+    if goal == "Orientation Mapping":
+        return shared + [
+            RouteModule("orientation_setup", "Orientation Setup & Validation", "orientation",
+                "Calibrated BraggVectors and a CIF or manual crystal; incomplete calibration is allowed with warnings.",
+                "Reviewed candidates and an explicitly accepted single-pattern match.",
+                WorkflowStep.ORIENTATION_REVIEW_ACCEPT, "calibration"),
+            RouteModule("crystalline_results", "Results & Quality", "crystalline_results",
+                "Explicitly accepted single-pattern match review.",
+                "Orientation mapping and quality review.",
+                WorkflowStep.ORIENTATION_MATCH, "orientation_setup"),
+            RouteModule("export", "Export", "crystalline_results",
+                "Reviewed crystalline results.",
+                "Result arrays, project state, and scientific report.",
+                prerequisite="crystalline_results"),
         ]
     page = {
         "Orientation Mapping": "orientation",

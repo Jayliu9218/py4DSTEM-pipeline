@@ -247,6 +247,8 @@ class MainWindow(QMainWindow):
                 "virtual_imaging": self.virtual_detector_page.controls_panel,
                 "bragg_detection": self.bragg_peaks_page.controls_panel,
                 "calibration": self.calibration_page.controls_panel,
+                "orientation_setup": self.orientation_setup_page.controls_panel,
+                "crystalline_results": self.crystalline_results_page.controls_panel,
                 "bf_df_preview": self.bf_df_preview_page.controls_panel,
                 "dpc_segmented": self.dpc_segmented_page.controls_panel,
                 "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
@@ -294,7 +296,8 @@ class MainWindow(QMainWindow):
                 "preprocessing": self.preprocessing_page,
                 "bragg_peaks": self.bragg_peaks_page,
                 "calibration": self.calibration_page,
-                "orientation": self.orientation_page,
+                "orientation": self.orientation_setup_page,
+                "orientation_map": self.orientation_map_page,
                 "strain_map": self.strain_map_page,
                 "phase_contrast": self.phase_contrast_page,
                 "bf_df_preview": self.bf_df_preview_page,
@@ -477,7 +480,11 @@ class MainWindow(QMainWindow):
     def _apply_cuda_setting(self, enabled: bool) -> None:
         self.cuda_enabled = enabled
         self.bragg_peaks_page.set_cuda_enabled(enabled)
-        self.orientation_page.set_cuda_enabled(enabled)
+        for page in (
+            self.orientation_setup_page,
+            self.orientation_map_page,
+        ):
+            page.set_cuda_enabled(enabled)
         for page in (
             self.parallax_bf_page,
             self.parallax_alignment_page,
@@ -517,7 +524,8 @@ class MainWindow(QMainWindow):
             "virtual": self.virtual_detector_page,
             "bragg": self.bragg_peaks_page,
             "calibration": self.calibration_page,
-            "orientation": self.orientation_page,
+            "orientation": self.orientation_setup_page,
+            "crystalline_results": self.crystalline_results_page,
             "strain": self.strain_map_page,
             "structural_phase": self.structural_phase_page,
             "phase_contrast": self.phase_contrast_page,

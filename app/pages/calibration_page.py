@@ -650,30 +650,31 @@ class CalibrationPage(QWidget):
         )
         self.log_panel.log(result.message)
         self.log_panel.process_finished(self.current_process_name, result.message)
-        self.viewers.clear()
-        self.figure_results.clear()
-        self._set_comparison_tab(result)
-        for name, image in result.images.items():
-            self._set_viewer_tab(
-                name,
-                image,
-                make_current=False,
-                overlay=result.overlays.get(name),
-                vectors=result.vectors.get(name),
-                image_kind=result.image_kinds.get(name),
-            )
-            if self.result_registry is not None:
-                self.result_registry.register(
-                    f"{self.current_process_name} - {name}",
-                    "Calibration",
+        if result.images:
+            self.viewers.clear()
+            self.figure_results.clear()
+            self._set_comparison_tab(result)
+            for name, image in result.images.items():
+                self._set_viewer_tab(
+                    name,
                     image,
-                    ("npy", "png", "tiff"),
-                    {
-                        "process": self.current_process_name,
-                        "message": result.message,
-                        **self.params_snapshot(),
-                    },
+                    make_current=False,
+                    overlay=result.overlays.get(name),
+                    vectors=result.vectors.get(name),
+                    image_kind=result.image_kinds.get(name),
                 )
+                if self.result_registry is not None:
+                    self.result_registry.register(
+                        f"{self.current_process_name} - {name}",
+                        "Calibration",
+                        image,
+                        ("npy", "png", "tiff"),
+                        {
+                            "process": self.current_process_name,
+                            "message": result.message,
+                            **self.params_snapshot(),
+                        },
+                    )
         self._show_measurements(result)
         self.refresh_status(show_histogram=False)
         self.workflow_state.mark_completed(self.current_process_step)

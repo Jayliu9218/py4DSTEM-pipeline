@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QTableWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -113,7 +114,7 @@ class MultiViewWorkspace(QWidget):
         self.workspace.set_layout("2")
         self.clear_results()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.workspace, 1)
 
     def clear_results(self) -> None:
@@ -156,6 +157,7 @@ class ModuleControlPanel(QWidget):
         if controls is None:
             self.controls_stack.setCurrentWidget(self._placeholder)
             return
+        self._prepare_controls_layout(controls)
         identity = id(controls)
         if identity not in self._controls:
             if isinstance(controls, QScrollArea):
@@ -174,6 +176,66 @@ class ModuleControlPanel(QWidget):
             self._controls[identity] = scroll
             self.controls_stack.addWidget(scroll)
         self.controls_stack.setCurrentWidget(self._controls[identity])
+
+    @staticmethod
+    def _prepare_controls_layout(controls: QWidget) -> None:
+        content = controls.widget() if isinstance(controls, QScrollArea) else controls
+        layout = content.layout() if content is not None else None
+        if layout is None:
+            return
+        layout.setSpacing(12)
+        for table in content.findChildren(QTableWidget):
+            table.setFixedHeight(180)
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            header_font = table.horizontalHeader().font()
+            header_font.setBold(True)
+            table.horizontalHeader().setFont(header_font)
+            table.setStyleSheet(
+                """
+                QHeaderView::section {
+                    background: #e7ebef;
+                    font-weight: bold;
+                    padding: 4px;
+                    border: 0;
+                    border-right: 1px solid #c8cdd3;
+                    border-bottom: 1px solid #c8cdd3;
+                }
+                QTableWidget {
+                    background: white;
+                    border: 1px solid #c8cdd3;
+                    gridline-color: #d8dde2;
+                }
+                """
+            )
+        for index in range(layout.count()):
+            widget = layout.itemAt(index).widget()
+            if isinstance(widget, QGroupBox):
+                widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                widget.setStyleSheet(
+                    """
+                    QGroupBox {
+                        border: 1px solid #c8cdd3;
+                        border-radius: 6px;
+                        margin-top: 12px;
+                        padding: 8px;
+                        background: #fafbfc;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin;
+                        subcontrol-position: top left;
+                        left: 10px;
+                        padding: 2px 6px;
+                        background: #eef1f4;
+                        border-radius: 3px;
+                    }
+                    """
+                )
+                widget.setMinimumHeight(0)
+                widget.setMaximumHeight(16777215)
+                natural_height = max(widget.sizeHint().height(), 1)
+                widget.setMinimumHeight(natural_height)
+                widget.setMaximumHeight(natural_height)
 
 
 class ProjectToolbar(QWidget):

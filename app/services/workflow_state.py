@@ -27,6 +27,8 @@ class WorkflowStep:
     CALIBRATION_ROTATION = "calibration_rotation"
     CALIBRATION_APPLY = "calibration_apply"
     ORIENTATION_PLAN = "orientation_plan"
+    ORIENTATION_REVIEW = "orientation_review"
+    ORIENTATION_REVIEW_ACCEPT = "orientation_review_accept"
     ORIENTATION_MATCH = "orientation_match"
     STRAIN_MAP = "strain_map"
     STRUCTURAL_PHASE = "structural_phase"
@@ -101,6 +103,8 @@ class WorkflowState(QObject):
             WorkflowStep.CALIBRATION_ROTATION,
             WorkflowStep.CALIBRATION_APPLY,
             WorkflowStep.ORIENTATION_PLAN,
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
             WorkflowStep.BF_DF_PREVIEW,
@@ -139,6 +143,9 @@ class WorkflowState(QObject):
             WorkflowStep.CALIBRATION_PIXEL,
             WorkflowStep.CALIBRATION_ROTATION,
             WorkflowStep.CALIBRATION_APPLY,
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
+            WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
             WorkflowStep.DPC_SEGMENTED,
             WorkflowStep.DPC_PREPROCESS,
@@ -174,11 +181,16 @@ class WorkflowState(QObject):
             WorkflowStep.CALIBRATION_ELLIPSE,
             WorkflowStep.CALIBRATION_PIXEL,
             WorkflowStep.CALIBRATION_ROTATION,
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
+            WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
         },
         WorkflowStep.BRAGG_VECTOR_MAP: {
             WorkflowStep.CALIBRATION_ORIGIN,
             WorkflowStep.CALIBRATION_APPLY,
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
         },
@@ -187,10 +199,21 @@ class WorkflowState(QObject):
         WorkflowStep.CALIBRATION_PIXEL: {WorkflowStep.CALIBRATION_APPLY},
         WorkflowStep.CALIBRATION_ROTATION: {WorkflowStep.CALIBRATION_APPLY},
         WorkflowStep.CALIBRATION_APPLY: {
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
         },
-        WorkflowStep.ORIENTATION_PLAN: {WorkflowStep.ORIENTATION_MATCH},
+        WorkflowStep.ORIENTATION_PLAN: {
+            WorkflowStep.ORIENTATION_REVIEW,
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
+            WorkflowStep.ORIENTATION_MATCH,
+        },
+        WorkflowStep.ORIENTATION_REVIEW: {
+            WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
+            WorkflowStep.ORIENTATION_MATCH,
+        },
+        WorkflowStep.ORIENTATION_REVIEW_ACCEPT: {WorkflowStep.ORIENTATION_MATCH},
         WorkflowStep.DPC_PREPROCESS: {WorkflowStep.DPC_REVIEW},
         WorkflowStep.DPC_REVIEW: {WorkflowStep.DPC},
         WorkflowStep.PARALLAX_BF: {WorkflowStep.PARALLAX_BF_ACCEPT},

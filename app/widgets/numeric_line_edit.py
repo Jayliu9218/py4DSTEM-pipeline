@@ -27,7 +27,7 @@ class NumericLineEdit(QWidget):
         self.line_edit = QLineEdit()
         self.line_edit.setMinimumWidth(0)
         self.line_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.line_edit.setAlignment(Qt.AlignRight)
+        self.line_edit.setAlignment(Qt.AlignLeft)
         self.line_edit.setValidator(self._validator())
         self.line_edit.editingFinished.connect(self._commit_text)
         self.line_edit.textChanged.connect(self._handle_text_changed)

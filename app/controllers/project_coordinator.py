@@ -89,6 +89,11 @@ class ProjectCoordinator:
         )
 
     def apply_page_params(self, page_params: dict[str, dict[str, object]]) -> None:
+        if "orientation" not in page_params:
+            for legacy_key in ("orientation_review", "orientation_plan", "orientation_map"):
+                if page_params.get(legacy_key):
+                    page_params = {**page_params, "orientation": page_params[legacy_key]}
+                    break
         for key, page in self.page_objects.items():
             params = page_params.get(key)
             if params and callable(getattr(page, "apply_params_snapshot", None)):
@@ -113,10 +118,23 @@ class ProjectCoordinator:
 
     def restore_grid_states(self, grid_states: dict[str, dict[str, object]]) -> None:
         workspaces = self.pages.named_workspaces()
-        for key, grid_state in grid_states.items():
+        canonical_states = dict(grid_states)
+        if "orientation" not in canonical_states:
+            for legacy_key in ("orientation_plan", "orientation_review", "orientation_map"):
+                if legacy_key in grid_states:
+                    canonical_states["orientation"] = grid_states[legacy_key]
+                    break
+        for key, grid_state in canonical_states.items():
             workspace = workspaces.get(key)
             if workspace is not None:
                 workspace.restore_grid_state(grid_state)
+        orientation = workspaces.get("orientation")
+        crystalline_results = workspaces.get("crystalline_results")
+        if orientation is not None and crystalline_results is not None:
+            results_page = crystalline_results.current_page
+            crystalline_results.restore_grid_state(
+                {"layout": orientation.grid_state()["layout"], "page": results_page}
+            )
 
     def dpc_params_snapshot(self) -> dict[str, object]:
         snapshot: dict[str, object] = {}
