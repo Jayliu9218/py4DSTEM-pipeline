@@ -188,8 +188,19 @@ class BraggPeaksPage(QWidget, WorkerRunner):
             self.roi_ry_start.value(),
             self.roi_ry_end.value(),
         )
+        # Reject a degenerate ROI up front so the user gets a clear message
+        # instead of an apparent hang inside py4DSTEM's vacuum-probe averaging.
+        roi_area = (roi[1] - roi[0]) * (roi[3] - roi[2])
+        if roi_area < 4:
+            QMessageBox.warning(
+                self,
+                "Probe Kernel",
+                "The vacuum ROI is too small. Click 'Draw ROI' and drag a larger "
+                "rectangular region over vacuum scan positions (at least 2x2).",
+            )
+            return
         self._start_worker(
-            lambda cb: self.service.prepare_probe_kernel(datacube, *roi),
+            lambda cb: self.service.prepare_probe_kernel(datacube, *roi, progress=cb),
             self._handle_probe_kernel_result,
             "Preparing vacuum-probe kernel...",
         )

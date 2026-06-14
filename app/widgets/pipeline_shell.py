@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QFormLayout,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.theme import PARAM_GROUP_MAX_HEIGHT
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.image_viewer import ImageViewer
 
@@ -43,6 +45,7 @@ class TechnicalRouteBar(QWidget):
         "Completed": "#4caf50",
         "Warning": "#ff9800",
         "Ready": "#757575",
+        "Disabled": "#555555",
     }
 
     def __init__(self) -> None:
@@ -68,6 +71,15 @@ class TechnicalRouteBar(QWidget):
             button.setCheckable(True)
             button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            # Surface stub modules (implemented=False) as greyed-out and non-clickable.
+            if not module.implemented:
+                button.setProperty("implemented", "false")
+                button.setToolTip(f"{module.title} — coming soon")
+                button.setEnabled(False)
+            else:
+                button.setProperty("implemented", "true")
+                button.setToolTip("")
+                button.setEnabled(True)
             button.clicked.connect(lambda _checked=False, key=module.key: self.module_selected.emit(key))
             self.group.addButton(button)
             self.buttons[module.key] = button
@@ -84,6 +96,9 @@ class TechnicalRouteBar(QWidget):
             color = self.STATE_COLORS.get(state, self.STATE_COLORS["Ready"])
             button.setText(f"●  {module.title}")
             is_selected = module.key == current_key
+            # Disabled buttons (no data yet, or stub modules) are non-interactive.
+            is_disabled = state == "Disabled" or not module.implemented
+            button.setEnabled(not is_disabled)
             # Non-selected buttons show status-colored text; selected buttons
             # use the QSS white text so it's readable on the highlighted background.
             if is_selected:
@@ -205,12 +220,71 @@ class ModuleControlPanel(QWidget):
         for index in range(layout.count()):
             widget = layout.itemAt(index).widget()
             if isinstance(widget, QGroupBox):
-                widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                widget.setMinimumHeight(0)
-                widget.setMaximumHeight(16777215)
-                natural_height = max(widget.sizeHint().height(), 1)
-                widget.setMinimumHeight(natural_height)
-                widget.setMaximumHeight(natural_height)
+                ModuleControlPanel._apply_table_form(layout, index, widget)
+
+    @staticmethod
+    def _apply_table_form(parent_layout, index: int, group: QGroupBox) -> None:
+        """Make a parameter group box fixed-height, internally scrollable, and
+        table-like (aligned label/value columns, uniform row height, zero gaps).
+
+        Every form layout inside the box gets flat table policies so label/value
+        pairs align into columns. If the box's natural height exceeds
+        ``PARAM_GROUP_MAX_HEIGHT``, the whole group is wrapped in a vertical
+        ``QScrollArea`` (preserving any nested sub-layouts) so long parameter
+        lists wheel-scroll in place without overflowing the panel.
+        """
+        # Apply table-like layout policies to every QFormLayout in this box.
+        for form in group.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            form.setVerticalSpacing(0)
+            form.setHorizontalSpacing(0)
+            # Zebra striping: tag each row's label widget with an alternating
+            # object name so QSS can give every second row pair a subtle
+            # contrasting background on the label side. Rows are grouped in
+            # pairs (rows 0/1, 2/3, ... share a shade). Only labels are tinted
+            # so input controls keep their native styling.
+            for row in range(form.rowCount()):
+                pair = (row // 2) % 2
+                if pair != 1:
+                    continue  # leave default background on the base shade
+                item = form.itemAt(row, QFormLayout.LabelRole)
+                label = item.widget() if item is not None else None
+                if label is not None:
+                    label.setObjectName("paramRowOdd")
+                    # autoFillBackground ensures the QSS background color
+                    # actually fills the label area (QLabel defaults off).
+                    label.setAutoFillBackground(True)
+        group.setObjectName("paramForm")
+
+        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        group.setMinimumHeight(0)
+        group.setMaximumHeight(16777215)
+        natural_height = max(group.sizeHint().height(), 1)
+
+        if natural_height <= PARAM_GROUP_MAX_HEIGHT:
+            # Fits comfortably — pin to its natural height.
+            group.setMinimumHeight(natural_height)
+            group.setMaximumHeight(natural_height)
+            return
+
+        # Box is too tall: replace it in the parent layout with a scroll area
+        # that hosts the (intact) group, then cap the scroll area's height so
+        # the rows wheel-scroll inside the fixed-height slot.
+        parent_layout.removeWidget(group)
+        group.setParent(None)
+        scroll = QScrollArea()
+        scroll.setObjectName("paramFormScroll")
+        scroll.setWidget(group)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        scroll.setFixedHeight(PARAM_GROUP_MAX_HEIGHT)
+        parent_layout.insertWidget(index, scroll)
 
 
 class ProjectToolbar(QWidget):
@@ -242,6 +316,11 @@ class ProjectToolbar(QWidget):
         layout.addWidget(self.goal)
 
         layout.addStretch()
+
+        self.export_button = QPushButton("Export")
+        self.export_button.setObjectName("exportButton")
+        self.export_button.clicked.connect(self.export_clicked.emit)
+        layout.addWidget(self.export_button)
 
     def set_goals(self, goals: list[str]) -> None:
         current = self.goal.currentText()

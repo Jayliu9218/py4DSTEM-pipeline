@@ -65,7 +65,7 @@ QToolBar::separator {
 QToolBar QToolButton {
     padding: 4px 8px;
     border: none;
-    border-radius: 3px;
+    border-radius: 2px;
     color: #e0e0e0;
 }
 QToolBar QToolButton:hover {
@@ -96,13 +96,21 @@ QToolButton#routeButton {
 QToolButton#routeButton:checked {
     background: #4a6878;
     color: #ffffff;
-    border-radius: 3px;
+    border-radius: 2px;
     font-weight: bold;
 }
 QToolButton#routeButton:hover:!checked {
     background: #3a4a5a;
     color: #e0e0e0;
-    border-radius: 3px;
+    border-radius: 2px;
+}
+/* Stub / not-yet-implemented route modules — greyed out and non-interactive. */
+QToolButton#routeButton[implemented="false"] {
+    color: #555555;
+}
+QToolButton#routeButton[implemented="false"]:checked {
+    background: #2a2a2a;
+    color: #666666;
 }
 QLabel#routeArrow {
     color: #666666;
@@ -120,17 +128,17 @@ QFrame#logDivider {
 
 /* --- Splitters ----------------------------------------------------------- */
 QSplitter::handle {
-    background: #3c3c3c;
+    background: #4a4a4a;
 }
-QSplitter::handle:horizontal { width: 1px; }
-QSplitter::handle:vertical { height: 1px; }
+QSplitter::handle:horizontal { width: 4px; }
+QSplitter::handle:vertical { height: 4px; }
 
 /* --- Tree (data browser) ------------------------------------------------- */
 QTreeWidget {
     background: #1e1e1e;
     color: #e0e0e0;
     border: 1px solid #3c3c3c;
-    border-radius: 3px;
+    border-radius: 2px;
     alternate-background-color: #252525;
 }
 QTreeWidget::item:selected {
@@ -170,9 +178,10 @@ QLabel#sectionTitle {
 /* --- Group boxes (flat cards) ------------------------------------------- */
 QGroupBox {
     border: 1px solid #3c3c3c;
-    border-radius: 3px;
-    margin-top: 10px;
+    border-radius: 2px;
+    margin-top: 4px;
     padding: 8px;
+    padding-top: 18px;
     background: #2f2f2f;
     color: #e0e0e0;
     font-weight: bold;
@@ -180,11 +189,47 @@ QGroupBox {
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 8px;
-    padding: 1px 6px;
+    left: 0px;
+    margin-left: 0px;
+    padding: 3px 8px;
     background: #3a3a3a;
+    border: none;
+    border-radius: 0px;
+    color: #d0d0d0;
+}
+
+/* --- Table-like parameter forms (object-name paramForm) ----------------- */
+QGroupBox#paramForm {
+    border: 1px solid #3c3c3c;
     border-radius: 2px;
-    color: #b0b0b0;
+    background: #2b2b2b;
+}
+QGroupBox#paramForm::title {
+    background: #333333;
+    border-bottom: 1px solid #3c3c3c;
+    border-radius: 0px;
+    padding: 4px 8px;
+    color: #e0e0e0;
+}
+/* Uniform fixed row height for inputs inside param-form boxes — gives the
+   aligned "Parameter | Value" table look. */
+QGroupBox#paramForm QLineEdit,
+QGroupBox#paramForm QComboBox,
+QGroupBox#paramForm QSpinBox,
+QGroupBox#paramForm QDoubleSpinBox {
+    min-height: 20px;
+    max-height: 20px;
+    border-radius: 2px;
+}
+/* Flat buttons inside param-form boxes. */
+QGroupBox#paramForm QPushButton {
+    min-height: 20px;
+    border-radius: 2px;
+}
+/* Zebra striping: every second row pair gets a subtle contrasting background
+   on the label side, giving the dense parameter form a readable table rhythm. */
+QGroupBox#paramForm QLabel#paramRowOdd {
+    background: #333333;
 }
 
 /* --- Tables -------------------------------------------------------------- */
@@ -211,9 +256,9 @@ QLineEdit {
     background: #1e1e1e;
     color: #e0e0e0;
     border: 1px solid #404040;
-    border-radius: 3px;
-    padding: 3px 6px;
-    min-height: 18px;
+    border-radius: 2px;
+    padding: 2px 6px;
+    min-height: 20px;
     selection-background-color: #4a9eff;
     selection-color: #ffffff;
 }
@@ -221,7 +266,7 @@ QComboBox:hover,
 QSpinBox:hover,
 QDoubleSpinBox:hover,
 QLineEdit:hover {
-    border: 1px solid #4a9eff;
+    background: #252525;
 }
 QComboBox:focus,
 QSpinBox:focus,
@@ -231,8 +276,14 @@ QLineEdit:focus {
 }
 QComboBox::drop-down {
     border: none;
-    width: 18px;
+    border-left: 1px solid #404040;
+    background: #383838;
+    width: 20px;
+    border-top-right-radius: 2px;
+    border-bottom-right-radius: 2px;
 }
+QComboBox::drop-down:hover { background: #424242; }
+QComboBox::down-arrow { width: 9px; height: 9px; }
 QComboBox QAbstractItemView {
     background: #1e1e1e;
     color: #e0e0e0;
@@ -249,13 +300,12 @@ QPushButton {
     background: #383838;
     color: #e0e0e0;
     border: 1px solid #404040;
-    border-radius: 3px;
+    border-radius: 2px;
     padding: 5px 14px;
     min-height: 18px;
 }
 QPushButton:hover {
-    background: #404040;
-    border: 1px solid #4a9eff;
+    background: #424242;
 }
 QPushButton:pressed {
     background: #4a9eff;
@@ -283,7 +333,7 @@ QRadioButton::indicator {
 }
 QCheckBox::indicator:hover,
 QRadioButton::indicator:hover {
-    border: 1px solid #4a9eff;
+    background: #252525;
 }
 QCheckBox::indicator:checked {
     background: #4a9eff;
@@ -295,13 +345,13 @@ QProgressBar {
     background: #1e1e1e;
     color: #e0e0e0;
     border: 1px solid #3c3c3c;
-    border-radius: 3px;
+    border-radius: 2px;
     text-align: center;
     min-height: 18px;
 }
 QProgressBar::chunk {
     background: #4a9eff;
-    border-radius: 2px;
+    border-radius: 0px;
 }
 
 /* --- Tabs ---------------------------------------------------------------- */
@@ -317,8 +367,8 @@ QTabBar::tab {
     border-bottom: none;
     padding: 5px 12px;
     margin-right: 2px;
-    border-top-left-radius: 3px;
-    border-top-right-radius: 3px;
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
 }
 QTabBar::tab:selected {
     background: #1e1e1e;
@@ -337,7 +387,7 @@ QTextEdit {
     background: #1e1e1e;
     color: #c0c0c0;
     border: 1px solid #3c3c3c;
-    border-radius: 3px;
+    border-radius: 2px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 9pt;
 }
@@ -359,12 +409,12 @@ QStatusBar QLabel {
 /* --- Scroll bars --------------------------------------------------------- */
 QScrollBar:vertical {
     background: #2b2b2b;
-    width: 12px;
+    width: 10px;
     border: none;
 }
 QScrollBar::handle:vertical {
     background: #4a4a4a;
-    border-radius: 4px;
+    border-radius: 0px;
     min-height: 24px;
 }
 QScrollBar::handle:vertical:hover {
@@ -376,12 +426,12 @@ QScrollBar::add-page:vertical,
 QScrollBar::sub-page:vertical { background: #2b2b2b; }
 QScrollBar:horizontal {
     background: #2b2b2b;
-    height: 12px;
+    height: 10px;
     border: none;
 }
 QScrollBar::handle:horizontal {
     background: #4a4a4a;
-    border-radius: 4px;
+    border-radius: 0px;
     min-width: 24px;
 }
 QScrollBar::handle:horizontal:hover {
@@ -401,15 +451,16 @@ QScrollArea {
 /* --- Dock widgets -------------------------------------------------------- */
 QDockWidget {
     color: #e0e0e0;
+    border: 1px solid #3c3c3c;
     titlebar-close-icon: none;
     titlebar-normal-icon: none;
 }
 QDockWidget::title {
-    background: #333333;
-    border-bottom: 1px solid #3c3c3c;
+    background: #1f1f1f;
+    border-bottom: 1px solid #4a4a4a;
     padding: 4px 8px;
     text-align: left;
-    color: #b0b0b0;
+    color: #e0e0e0;
     font-weight: bold;
 }
 

@@ -45,3 +45,5 @@ PANEL_MARGIN = 6           # compact panel content margin
 PANEL_MARGIN_TIGHT = 4     # tighter for toolbars / route bars
 GROUP_SPACING = 8          # spacing between QGroupBox sections
 INPUT_MAX_WIDTH = 280      # compact input control max width
+PARAM_GROUP_MAX_HEIGHT = 280  # capped height for dense parameter QGroupBox sections
+PARAM_ROW_HEIGHT = 22         # uniform row height inside table-like parameter forms

@@ -7,13 +7,28 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg", force=True)
-import matplotlib.pyplot as plt
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_matplotlib():
+    """Lazily import matplotlib with the Agg backend on first use.
+
+    matplotlib is a heavy import (~0.5-1.5s cold); deferring it keeps it off
+    the application startup path, since no rendering happens until a user
+    action triggers figure generation.
+    """
+    cached = globals().get("_plt")
+    if cached is not None:
+        return cached
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    globals()["_plt"] = plt
+    return plt
 
 
 class BraggStrainServiceError(Exception):
@@ -238,23 +253,46 @@ class BraggStrainService:
         rx_end: int,
         ry_start: int,
         ry_end: int,
+        progress: Any = None,
     ) -> ProbeKernelResult:
+        def _report(message: str, fraction: float = -1.0) -> None:
+            logger.info("prepare_probe_kernel: %s", message)
+            if progress is not None:
+                try:
+                    progress(message, fraction)
+                except Exception:  # noqa: BLE001 - progress is best-effort
+                    pass
+
         self._ensure_datacube(datacube)
         shape = tuple(int(dim) for dim in getattr(datacube, "shape", datacube.data.shape))
         if not (0 <= rx_start < rx_end <= shape[0] and 0 <= ry_start < ry_end <= shape[1]):
             raise BraggStrainServiceError(
                 f"Vacuum ROI must fit inside scan shape {shape[:2]} and have non-zero area."
             )
+        # Reject degenerate (near-zero-area) ROIs that make py4DSTEM's
+        # get_vacuum_probe loop for an extremely long time or fail to converge.
+        roi_area = (rx_end - rx_start) * (ry_end - ry_start)
+        if roi_area < 4:
+            raise BraggStrainServiceError(
+                f"Vacuum ROI is too small ({roi_area} px); draw a larger region "
+                f"(at least a 2x2 area) over vacuum scan positions."
+            )
 
+        _report(f"Preparing vacuum probe over ROI ({rx_start}:{rx_end}, {ry_start}:{ry_end}) "
+                f"of scan shape {shape[:2]}", 0.0)
         start = perf_counter()
         roi = np.zeros(shape[:2], dtype=bool)
         roi[rx_start:rx_end, ry_start:ry_end] = True
         try:
+            _report("Averaging vacuum-probe diffraction patterns...", 0.1)
             probe = datacube.get_vacuum_probe(ROI=roi, plot=False, returncalc=True)
+            _report("Measuring probe size...", 0.5)
             py4DSTEM = self._py4dstem()
             radius, center_x, center_y = py4DSTEM.process.calibration.get_probe_size(probe.probe)
+            _report(f"Probe radius={radius:.2f}px; building kernel...", 0.7)
             probe.get_kernel(mode="sigmoid", radii=(radius, 2 * radius))
             kernel = np.asarray(probe.kernel)
+            _report("Computing diagnostics...", 0.9)
             centered_kernel, profile_plot = self._kernel_diagnostics(kernel, R=24, L=24, W=1)
         except (AttributeError, TypeError, ValueError) as exc:
             raise BraggStrainServiceError(f"Could not prepare vacuum-probe kernel: {exc}") from exc
@@ -263,6 +301,7 @@ class BraggStrainService:
             raise BraggStrainServiceError(f"Could not prepare vacuum-probe kernel: {exc}") from exc
 
         self.probe_kernel = kernel
+        _report(f"Probe kernel ready (radius={radius:.2f}px).", 1.0)
         return ProbeKernelResult(
             kernel=kernel,
             centered_kernel=centered_kernel,
@@ -1033,6 +1072,7 @@ class BraggStrainService:
             raise BraggStrainServiceError("No BraggVectors object is available. Run full BraggVectors first.")
 
         start = perf_counter()
+        plt = _ensure_matplotlib()
         try:
             py4DSTEM = self._py4dstem()
             strainmap = py4DSTEM.StrainMap(braggvectors=braggvectors)
@@ -1262,6 +1302,7 @@ class BraggStrainService:
             raise BraggStrainServiceError("Supported strain exports are PNG, TIFF, NPY, and NPZ.")
 
     def _save_strain_png(self, result: StrainMapResult, path: Path) -> None:
+        plt = _ensure_matplotlib()
         fig, axes = plt.subplots(2, 2, figsize=(8, 7), constrained_layout=True)
         for ax, name in zip(axes.ravel(), ["exx", "eyy", "exy", "theta"]):
             im = ax.imshow(result.components[name], cmap="PRGn" if name == "theta" else "RdBu_r")
@@ -1273,6 +1314,7 @@ class BraggStrainService:
         plt.close(fig)
 
     def _close_matplotlib_result(self, result: Any) -> None:
+        plt = _ensure_matplotlib()
         if result is None:
             plt.close("all")
             return
@@ -1284,6 +1326,7 @@ class BraggStrainService:
             plt.close("all")
 
     def _figure_to_rgb(self, fig: Any) -> np.ndarray:
+        plt = _ensure_matplotlib()
         fig.canvas.draw()
         image = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
         plt.close(fig)
@@ -1292,6 +1335,7 @@ class BraggStrainService:
     def _kernel_diagnostics(
         self, kernel: np.ndarray, R: int, L: int, W: int
     ) -> tuple[np.ndarray, np.ndarray]:
+        plt = _ensure_matplotlib()
         shifted = np.fft.fftshift(np.asarray(kernel))
         cx, cy = shifted.shape[0] // 2, shifted.shape[1] // 2
         centered = shifted[
