@@ -274,6 +274,10 @@ QDockWidget {
     color: #212121;
     border: 1px solid #a8aeb4;
 }
+/* Prominent separator between the Controls dock and the central figure grid. */
+QDockWidget#controlsDock {
+    border-left: 2px solid #80868c;
+}
 QDockWidget::title {
     background: #c8cdd3;
     border-bottom: 2px solid #98a0a8;
