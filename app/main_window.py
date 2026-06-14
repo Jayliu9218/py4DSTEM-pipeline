@@ -1132,7 +1132,7 @@ class MainWindow(QMainWindow):
 
         datacube = self.py4dstem_service.read_datapath(role_path)
         params = self.bragg_peaks_page.bragg_detection_params()
-        result = BraggStrainService().compute_braggvectors(datacube, params)
+        result = self.bragg_strain_service.compute_braggvectors(datacube, params)
         self.reference_braggvectors_cache[role_path] = result.braggvectors
         self.result_registry.register(
             "ellipse reference bragg vector map",

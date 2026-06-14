@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import re
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import hsv_to_rgb
 from matplotlib.figure import Figure
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,29 +33,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class DPCWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                self.finished.emit(self.operation())
-            stream.flush()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class DPCPage(QWidget):
+class DPCPage(QWidget, WorkerRunner):
     dpc_result_ready = Signal(object)
 
     def __init__(
@@ -76,9 +55,7 @@ class DPCPage(QWidget):
         self.result_registry = result_registry
         self.service = service or PhaseContrastService()
         self.stage_mode = stage_mode
-        self.worker_thread: QThread | None = None
-        self.worker: DPCWorker | None = None
-        self.pending_operation = ""
+        self._init_worker_runner()
         self.result: PhaseContrastResult | None = None
         self.segmented_result: DPCStageResult | None = None
 
@@ -320,7 +297,7 @@ class DPCPage(QWidget):
         try:
             state = self.service.accept_dpc_preprocessing()
         except Exception as exc:
-            self._handle_failed(str(exc))
+            self._handle_error(str(exc))
             return
         self.reconstruct_button.setEnabled(state.preprocessing)
         self.status_label.setText("Pixelated CoM preprocessing accepted.")
@@ -334,25 +311,12 @@ class DPCPage(QWidget):
         )
 
     def _start_operation(self, name: str, operation) -> None:
-        self.pending_operation = name
-        self.status_label.setText(f"Running {name}...")
         for button in (self.segment_button, self.preprocess_button, self.reconstruct_button):
             button.setEnabled(False)
-        self.log_panel.process_started(name, name)
-        self.log_panel.process_snapshot(ProcessSnapshot(step=name, parameters=self.params_snapshot()))
-        self.worker_thread = QThread()
-        self.worker = DPCWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_finished)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.progress.connect(self._handle_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self._clear_worker)
-        self.worker_thread.start()
+        # operation is a no-arg lambda; wrap to accept the progress callback.
+        self._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
 
-    def _handle_finished(self, result: object) -> None:
+    def _handle_result(self, result: object) -> None:
         if isinstance(result, DPCStageResult):
             self.segmented_result = result
             self.segment_view.setCurrentText("Detector masks")
@@ -653,21 +617,18 @@ class DPCPage(QWidget):
         except Exception:
             return None
 
-    def _handle_failed(self, error: str) -> None:
+    def _handle_error(self, error: str) -> None:
         self.status_label.setText("Failed")
         self.log_panel.log(f"{self.pending_operation or 'DPC'} failed: {error}")
         self.log_panel.process_finished(f"{self.pending_operation or 'DPC'} failed", error)
         self._enable_available_buttons()
 
-    def _handle_progress(self, message: str) -> None:
+    def _handle_progress(self, message: str, fraction: float) -> None:
         self.log_panel.log(message)
-        match = re.search(r"(\d+)%", message)
-        if match:
-            self.log_panel.process_progress(f"DPC {match.group(1)}%")
+        super()._handle_progress(message, fraction)
 
-    def _clear_worker(self) -> None:
-        self.worker = None
-        self.worker_thread = None
+    def _clear_worker_refs(self) -> None:
+        super()._clear_worker_refs()
         self._enable_available_buttons()
 
     def _enable_available_buttons(self) -> None:

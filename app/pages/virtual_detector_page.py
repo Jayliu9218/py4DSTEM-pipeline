@@ -5,7 +5,7 @@ from typing import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -28,31 +28,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.worker_runner import WorkerRunner
 
 
-class VirtualDetectorWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-
-    def __init__(
-        self,
-        service: VirtualDetectorService,
-        source,
-        params: VirtualDetectorParams,
-    ) -> None:
-        super().__init__()
-        self.service = service
-        self.source = source
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            self.finished.emit(self.service.compute(self.source, self.params))
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class VirtualDetectorPage(QWidget):
+class VirtualDetectorPage(QWidget, WorkerRunner):
     virtual_image_ready = Signal(object)
 
     def __init__(
@@ -73,8 +52,7 @@ class VirtualDetectorPage(QWidget):
         self.result_registry = result_registry
         self.service = VirtualDetectorService()
         self.result: np.ndarray | None = None
-        self.worker_thread: QThread | None = None
-        self.worker: VirtualDetectorWorker | None = None
+        self._init_worker_runner()
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(
@@ -216,36 +194,24 @@ class VirtualDetectorPage(QWidget):
             return
 
         params = self._params_from_ui()
-        self.status_label.setText("Running...")
         self.run_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.log_panel.log(f"Virtual detector started: {params.mode}")
-        self.log_panel.process_started("Virtual detector", params.mode)
-        self.log_panel.process_snapshot(
-            ProcessSnapshot(
-                step="Virtual detector",
-                parameters={
-                    "mode": params.mode,
-                    "center_x": params.center_x,
-                    "center_y": params.center_y,
-                    "inner_radius": params.inner_radius,
-                    "outer_radius": params.outer_radius,
-                },
-            )
-        )
 
-        self.worker_thread = QThread()
-        self.worker = VirtualDetectorWorker(self.service, source, params)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_finished)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
-        self.worker_thread.finished.connect(self._clear_worker_refs)
-        self.worker_thread.start()
+        operation = lambda _cb: self.service.compute(source, params)
+        if not self._start_background(
+            "Virtual detector",
+            operation,
+            capture_stdout=False,
+            parameters={
+                "mode": params.mode,
+                "center_x": params.center_x,
+                "center_y": params.center_y,
+                "inner_radius": params.inner_radius,
+                "outer_radius": params.outer_radius,
+            },
+        ):
+            self.run_button.setEnabled(True)
 
     def export_result(self) -> None:
         if self.result is None:
@@ -285,7 +251,7 @@ class VirtualDetectorPage(QWidget):
             roi_radius=self.roi_radius.value(),
         )
 
-    def _handle_finished(self, result: VirtualDetectorResult) -> None:
+    def _handle_result(self, result: VirtualDetectorResult) -> None:
         self.result = result.image
         figures = []
         if result.real_space_preview is not None:
@@ -333,17 +299,13 @@ class VirtualDetectorPage(QWidget):
                     {"mode": result.mode, "overlay": result.detector_overlay, **self.params_snapshot()},
                 )
 
-    def _handle_failed(self, message: str) -> None:
+    def _handle_error(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.run_button.setEnabled(True)
         self.export_button.setEnabled(self.result is not None)
         self.log_panel.log(f"Virtual detector failed: {message}")
-        self.log_panel.process_failed("Virtual detector", message)
+        self.log_panel.process_failed(self.pending_operation or "Virtual detector", message)
         QMessageBox.warning(self, "Virtual Detector", message)
-
-    def _clear_worker_refs(self) -> None:
-        self.worker = None
-        self.worker_thread = None
 
     def _sync_mode_state(self) -> None:
         mode = self.mode_combo.currentText()

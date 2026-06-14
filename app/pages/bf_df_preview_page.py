@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
@@ -21,29 +20,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class BFDFWorker(QObject):
-    finished = Signal(dict)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                self.finished.emit(self.operation())
-            stream.flush()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class BFDFPreviewPage(QWidget):
+class BFDFPreviewPage(QWidget, WorkerRunner):
     bf_df_ready = Signal(dict)
 
     def __init__(
@@ -63,8 +43,7 @@ class BFDFPreviewPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.service = PhaseContrastService()
-        self.worker_thread: QThread | None = None
-        self.worker: BFDFWorker | None = None
+        self._init_worker_runner()
         self.result: dict[str, np.ndarray] | None = None
 
         self.bf_radius = self._float_input(1, 1000, 10, decimals=1, unit="px")
@@ -109,7 +88,6 @@ class BFDFPreviewPage(QWidget):
             QMessageBox.information(self, "BF / DF Preview", "Load a 4D DataCube first.")
             return
 
-        self.status_label.setText("Computing BF / DF...")
         self.compute_button.setEnabled(False)
         self.log_panel.log("BF / DF preview started")
 
@@ -118,30 +96,24 @@ class BFDFPreviewPage(QWidget):
         df_outer = self.df_outer.value()
         probe_geom = self.probe_geometry_provider()
 
-        operation = lambda: self.service.compute_bf_df(
-            source,
-            bf_radius=bf_radius,
-            df_inner=df_inner,
-            df_outer=df_outer,
-            probe_geometry=probe_geom,
-        )
+        def operation(_cb):
+            return self.service.compute_bf_df(
+                source,
+                bf_radius=bf_radius,
+                df_inner=df_inner,
+                df_outer=df_outer,
+                probe_geometry=probe_geom,
+            )
 
-        self.worker_thread = QThread()
-        self.worker = BFDFWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_finished)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.progress.connect(lambda msg: self.log_panel.log(msg))
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.start()
+        if not self._start_background("BF / DF Preview", operation, parameters=self.params_snapshot()):
+            self.compute_button.setEnabled(True)
 
-    def _handle_finished(self, images: dict[str, np.ndarray]) -> None:
+    def _handle_result(self, images: dict[str, np.ndarray]) -> None:
         self.result = images
         self.compute_button.setEnabled(True)
         self.status_label.setText("Done")
         self.log_panel.log("BF / DF preview complete")
+        self.log_panel.process_finished(self.pending_operation)
 
         self.workspace.append_results([
             FigureResult(f"BF / DF: {name}", image) for name, image in images.items()
@@ -160,10 +132,16 @@ class BFDFPreviewPage(QWidget):
         self.bf_df_ready.emit(images)
         self.workflow_state.mark_completed(WorkflowStep.BF_DF_PREVIEW)
 
-    def _handle_failed(self, error: str) -> None:
+    def _handle_error(self, error: str) -> None:
         self.compute_button.setEnabled(True)
         self.status_label.setText("Failed")
         self.log_panel.log(f"BF / DF preview failed: {error}")
+        self.log_panel.process_failed(self.pending_operation or "BF / DF Preview", error)
+
+    def _handle_progress(self, message: str, fraction: float) -> None:
+        # BF/DF forwards captured text to both the activity log and the progress bar.
+        self.log_panel.log(message)
+        super()._handle_progress(message, fraction)
 
     def _refresh_stale_status(self) -> None:
         if self.workflow_state.any_stale([WorkflowStep.BF_DF_PREVIEW]):

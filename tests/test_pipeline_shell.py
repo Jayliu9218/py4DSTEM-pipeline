@@ -143,7 +143,7 @@ class PipelineShellTests(unittest.TestCase):
     def test_dpc_pages_complete_their_own_workflow_steps(self) -> None:
         segmented = self.window.dpc_segmented_page
         segmented.pending_operation = "Segmented DPC"
-        segmented._handle_finished(
+        segmented._handle_result(
             DPCStageResult(
                 stage="segmented",
                 images={"Mean diffraction pattern": np.ones((2, 2))},
@@ -152,7 +152,7 @@ class PipelineShellTests(unittest.TestCase):
         )
         preprocess = self.window.dpc_preprocess_page
         preprocess.pending_operation = "DPC CoM preprocessing"
-        preprocess._handle_finished(PhaseContrastResult(method="DPC"))
+        preprocess._handle_result(PhaseContrastResult(method="DPC"))
 
         self.assertTrue(self.window.workflow_state.is_completed(WorkflowStep.DPC_SEGMENTED))
         self.assertTrue(self.window.workflow_state.is_completed(WorkflowStep.DPC_PREPROCESS))
@@ -187,7 +187,7 @@ class PipelineShellTests(unittest.TestCase):
         preprocess.workspace.clear_results()
         preprocess.pending_operation = "DPC CoM preprocessing"
 
-        preprocess._handle_finished(result)
+        preprocess._handle_result(result)
 
         self.assertIs(preprocess.result, result)
         self.assertGreater(len(preprocess.workspace.results), 0)
@@ -509,7 +509,7 @@ class PipelineShellTests(unittest.TestCase):
         before = list(page.viewers.results)
         page.current_process_name = "Apply origin correction"
 
-        page._finished(CalibrationActionResult("Applied corrections: center.", {}, 0.01))
+        page._handle_result(CalibrationActionResult("Applied corrections: center.", {}, 0.01))
 
         self.assertEqual(page.viewers.results, before)
 
@@ -572,13 +572,13 @@ class PipelineShellTests(unittest.TestCase):
         ])
         mapping_page.workspace.set_layout("Auto")
 
-        with patch("app.pages.orientation_page.QThread.start"):
+        with patch("app.widgets.worker_runner.QThread.start"):
             mapping_page._start("Full Orientation Map", lambda: None)
 
         locked = mapping_page.workspace.layout_choice.currentText()
         self.assertNotEqual(locked, "Auto")
         self.assertEqual(setup.layout_choice.currentText(), locked)
-        mapping_page._clear_worker()
+        mapping_page._clear_worker_refs()
 
     def test_parameter_inputs_remain_left_aligned(self) -> None:
         self.assertEqual(

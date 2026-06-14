@@ -6,7 +6,6 @@ from typing import Callable
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QLabel,
     QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
@@ -24,25 +23,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.worker_runner import WorkerRunner
 
 
-class ParallaxWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str, float)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            self.finished.emit(self.operation(self.progress.emit))
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class ParallaxPage(QWidget):
+class ParallaxPage(QWidget, WorkerRunner):
     def __init__(
         self,
         source_provider: Callable[[], object | None],
@@ -59,9 +43,7 @@ class ParallaxPage(QWidget):
         self.result_registry = result_registry
         self.service = service or ParallaxService()
         self.stage_mode = stage_mode
-        self.worker_thread: QThread | None = None
-        self.worker: ParallaxWorker | None = None
-        self.pending_operation = ""
+        self._init_worker_runner()
         self.cuda_enabled = False
         self._display_signature: tuple[object, ...] | None = None
         self.status_label = QLabel("Idle")
@@ -376,22 +358,11 @@ class ParallaxPage(QWidget):
         self.log_panel.process_progress("Export 100%")
 
     def _start(self, name: str, operation) -> None:
-        self.pending_operation = name
-        self.status_label.setText(f"Running {name}...")
-        self.log_panel.process_started(name, name)
-        self.log_panel.process_snapshot(ProcessSnapshot(step=name, parameters=self.params_snapshot()))
-        self.worker_thread = QThread()
-        self.worker = ParallaxWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self._progress)
-        self.worker.finished.connect(self._finished)
-        self.worker.failed.connect(self._failed)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.start()
+        # operation already has signature (progress_callback) -> result.
+        self._start_background(name, operation, capture_stdout=False,
+                               parameters=self.params_snapshot())
 
-    def _finished(self, result: PhaseContrastResult | ParallaxStageResult) -> None:
+    def _handle_result(self, result: PhaseContrastResult | ParallaxStageResult) -> None:
         if self.pending_operation == "Finite-Dose Comparison":
             self.review_view.setCurrentText("Finite-dose aligned BF")
         elif self.pending_operation == "Subpixel Reconstruction":
@@ -411,9 +382,9 @@ class ParallaxPage(QWidget):
             self.workflow_state.mark_completed(WorkflowStep.PARALLAX_ADVANCED)
             self.workflow_state.mark_completed(WorkflowStep.PARALLAX)
 
-    def _progress(self, message: str, fraction: float) -> None:
+    def _handle_progress(self, message: str, fraction: float) -> None:
         self.log_panel.log(f"Parallax: {message}")
-        self.log_panel.process_progress(f"{message} {int(fraction * 100)}%")
+        super()._handle_progress(message, fraction)
 
     def _refresh_display(self, force: bool = False) -> None:
         ctx = self.service.context
@@ -604,7 +575,10 @@ class ParallaxPage(QWidget):
     def _failed(self, error: str) -> None:
         self.status_label.setText("Failed")
         self.log_panel.log(f"Parallax failed: {error}")
-        self.log_panel.process_finished("Parallax failed", error)
+        self.log_panel.process_failed(self.pending_operation or "Parallax", error)
+
+    def _handle_error(self, message: str) -> None:
+        self._failed(message)
 
     def _watch_parameters(self) -> None:
         step = {
