@@ -49,6 +49,19 @@ class WorkflowStateTests(unittest.TestCase):
 
         self.assertTrue(state.is_stale(WorkflowStep.ORIENTATION_MATCH))
 
+    def test_orientation_and_strain_specific_parameters_do_not_cross_invalidate(self) -> None:
+        state = WorkflowState()
+        state.mark_completed_many({
+            WorkflowStep.ORIENTATION_PLAN,
+            WorkflowStep.ORIENTATION_MATCH,
+            WorkflowStep.STRAIN_MAP,
+        })
+
+        state.parameters_updated(WorkflowStep.ORIENTATION_PLAN)
+
+        self.assertTrue(state.is_stale(WorkflowStep.ORIENTATION_MATCH))
+        self.assertFalse(state.is_stale(WorkflowStep.STRAIN_MAP))
+
     def test_strain_requires_braggvectors_not_calibration_completion(self) -> None:
         state = WorkflowState()
         self.assertIn("bragg full", state.prerequisite_message([WorkflowStep.BRAGG_FULL]))

@@ -6,6 +6,7 @@ from app.pages.amorphous_strain_page import AmorphousStrainPage
 from app.pages.bf_df_preview_page import BFDFPreviewPage
 from app.pages.bragg_peaks_page import BraggPeaksPage
 from app.pages.calibration_page import CalibrationPage
+from app.pages.crystalline_results_page import CrystallineResultsPage
 from app.pages.dpc_page import DPCPage
 from app.pages.fem_page import FEMPage
 from app.pages.method_comparison_page import MethodComparisonPage
@@ -20,6 +21,7 @@ from app.pages.strain_map_page import StrainMapPage
 from app.pages.structural_phase_page import StructuralPhasePage
 from app.pages.virtual_detector_page import VirtualDetectorPage
 from app.services.parallax_service import ParallaxService
+from app.services.orientation_service import OrientationService
 from app.services.phase_contrast_service import PhaseContrastService
 from app.services.ptychography_service import PtychographyService
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
@@ -92,9 +94,35 @@ class ApplicationPages:
             service=bragg_strain_service,
             **common,
         )
-        pages["orientation_page"] = OrientationPage(
-            braggvectors_provider=providers["braggvectors"], **common
+        orientation_service = OrientationService()
+        orientation_workspace = AdaptiveImageWorkspace()
+        crystalline_results_workspace = AdaptiveImageWorkspace()
+        orientation_workspace.layout_changed.connect(crystalline_results_workspace.apply_layout_preference)
+        crystalline_results_workspace.layout_changed.connect(orientation_workspace.apply_layout_preference)
+        pages["orientation_setup_page"] = OrientationPage(
+            braggvectors_provider=providers["braggvectors"],
+            service=orientation_service,
+            stage_mode="setup",
+            workspace=orientation_workspace,
+            **common,
         )
+        pages["orientation_map_page"] = OrientationPage(
+            braggvectors_provider=providers["braggvectors"],
+            service=orientation_service,
+            stage_mode="map",
+            workspace=crystalline_results_workspace,
+            **common,
+        )
+        pages["orientation_map_page"].set_review_position_target(pages["orientation_setup_page"])
+        pages["crystalline_results_page"] = CrystallineResultsPage(
+            result_registry=result_registry,
+            orientation_mapping_controls=pages["orientation_map_page"].controls_panel,
+            orientation_mapping_refresh=pages["orientation_map_page"].refresh_stage,
+            workspace=crystalline_results_workspace,
+        )
+        pages["orientation_page"] = pages["orientation_setup_page"]
+        pages["orientation_plan_page"] = pages["orientation_setup_page"]
+        pages["orientation_review_page"] = pages["orientation_setup_page"]
         pages["phase_contrast_page"] = PhaseContrastPage(
             source_provider=providers["datacube"], **common
         )
@@ -168,7 +196,19 @@ class ApplicationPages:
         pages["rdf_page"] = RDFPage()
         pages["fem_page"] = FEMPage()
         pages["amorphous_strain_page"] = AmorphousStrainPage()
+        ApplicationPages._normalize_workspace_page_layouts(pages.values())
         return pages, dpc_service, parallax_service
+
+    @staticmethod
+    def _normalize_workspace_page_layouts(pages) -> None:
+        normalized: set[int] = set()
+        for page in pages:
+            if id(page) in normalized:
+                continue
+            normalized.add(id(page))
+            if ApplicationPages.workspace_for_page(page) is None or page.layout() is None:
+                continue
+            page.layout().setContentsMargins(0, 0, 0, 0)
 
     def controls_for_route(self, key: str, goal: str) -> QWidget | None:
         if key == "crystal_analysis":

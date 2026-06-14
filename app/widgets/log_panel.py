@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QTabWidget,
+    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -22,6 +23,8 @@ class ProcessSnapshot:
 
 
 class LogPanel(QWidget):
+    PROGRESS_BAR_WIDTH = 520
+
     def __init__(self) -> None:
         super().__init__()
         self.event_log = self._make_output()
@@ -31,6 +34,8 @@ class LogPanel(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat("Idle")
+        self.progress.setFixedWidth(self.PROGRESS_BAR_WIDTH)
+        self._current_progress = 0
         self.tabs = QTabWidget()
         self.tabs.addTab(self._progress_panel(), "Progress")
         self.tabs.addTab(self.event_log, "Activity Log")
@@ -49,6 +54,7 @@ class LogPanel(QWidget):
         self.process_log.appendPlainText(self._timestamped(message))
 
     def process_started(self, name: str, details: str = "") -> None:
+        self._current_progress = 0
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setFormat(f"Doing... {name} 0%")
@@ -56,6 +62,7 @@ class LogPanel(QWidget):
         self.process(f"START {name}{suffix}")
 
     def process_finished(self, name: str, details: str = "") -> None:
+        self._current_progress = 100
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.progress.setFormat(f"Completed: {name}")
@@ -64,7 +71,7 @@ class LogPanel(QWidget):
 
     def process_failed(self, name: str, message: str) -> None:
         self.progress.setRange(0, 100)
-        self.progress.setValue(0)
+        self.progress.setValue(self._current_progress)
         self.progress.setFormat(f"Failed: {name}")
         self.process(f"FAIL  {name} | {message}")
         self.warning_log.appendPlainText(self._timestamped(f"FAIL  {name} | {message}"))
@@ -75,8 +82,9 @@ class LogPanel(QWidget):
         match = re.search(r"(\d+(?:\.\d+)?)\s*%", message)
         if match:
             value = min(max(float(match.group(1)), 0), 100)
+            self._current_progress = max(self._current_progress, int(value))
             self.progress.setRange(0, 100)
-            self.progress.setValue(int(value))
+            self.progress.setValue(self._current_progress)
             self.progress.setFormat(f"Doing... {message}")
 
     def process_snapshot(self, snapshot: ProcessSnapshot) -> None:
@@ -99,7 +107,11 @@ class LogPanel(QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
         layout.addWidget(QLabel("Current calculation status"))
-        layout.addWidget(self.progress)
+        progress_row = QHBoxLayout()
+        progress_row.setContentsMargins(0, 0, 0, 0)
+        progress_row.addWidget(self.progress)
+        progress_row.addStretch(1)
+        layout.addLayout(progress_row)
         layout.addWidget(self.process_log)
         return panel
 

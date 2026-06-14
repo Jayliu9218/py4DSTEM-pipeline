@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -174,6 +174,7 @@ class FigurePanel(QFrame):
 
 
 class AdaptiveImageWorkspace(QWidget):
+    layout_changed = Signal(str)
     MAX_RESULTS = 6
     LAYOUT_CAPACITY = {"Auto": 0, "1": 1, "2": 2, "4": 4, "6": 6}
 
@@ -189,16 +190,26 @@ class AdaptiveImageWorkspace(QWidget):
         self._last_resize = (-1, -1)
         self.layout_choice = QComboBox()
         self.layout_choice.addItems(list(self.LAYOUT_CAPACITY))
+        self.layout_choice.setFixedWidth(80)
         self.layout_choice.currentTextChanged.connect(self._layout_changed)
         self.previous_button = QPushButton("Previous")
         self.next_button = QPushButton("Next")
+        self.previous_button.setFixedWidth(90)
+        self.next_button.setFixedWidth(70)
         self.previous_button.clicked.connect(lambda: self.set_page(self.current_page - 1))
         self.next_button.clicked.connect(lambda: self.set_page(self.current_page + 1))
         self.page_label = QLabel("Page 0 / 0")
+        self.page_label.setFixedWidth(80)
+        self.page_label.setAlignment(Qt.AlignCenter)
         self.reset_button = QPushButton("Reset Grid")
+        self.reset_button.setFixedWidth(100)
         self.reset_button.clicked.connect(self.reset_grid)
+        grid_label = QLabel("Grid")
+        grid_label.setFixedWidth(32)
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Grid"))
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(6)
+        controls.addWidget(grid_label)
         controls.addWidget(self.layout_choice)
         controls.addWidget(self.reset_button)
         controls.addStretch(1)
@@ -209,7 +220,8 @@ class AdaptiveImageWorkspace(QWidget):
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(6)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
         layout.addLayout(controls)
         layout.addLayout(self.grid, 1)
         self._render()
@@ -293,6 +305,21 @@ class AdaptiveImageWorkspace(QWidget):
             raise ValueError(f"Unsupported grid layout: {layout}")
         self.layout_choice.setCurrentText(layout)
 
+    def apply_layout_preference(self, layout: str) -> None:
+        if layout not in self.LAYOUT_CAPACITY or layout == self.layout_choice.currentText():
+            return
+        page = self.current_page
+        self.layout_choice.blockSignals(True)
+        self.layout_choice.setCurrentText(layout)
+        self.layout_choice.blockSignals(False)
+        self.current_page = page
+        self._render()
+
+    def lock_auto_layout(self) -> str:
+        if self.layout_choice.currentText() == "Auto":
+            self.set_layout(str(self.page_capacity()))
+        return self.layout_choice.currentText()
+
     def grid_state(self) -> dict[str, object]:
         return {"layout": self.layout_choice.currentText(), "page": self.current_page}
 
@@ -304,6 +331,7 @@ class AdaptiveImageWorkspace(QWidget):
         self.layout_choice.blockSignals(False)
         self.current_page = max(page, 0)
         self._render()
+        self.updateGeometry()
 
     def set_page(self, page: int) -> None:
         page_count = self.page_count()
@@ -345,6 +373,7 @@ class AdaptiveImageWorkspace(QWidget):
     def _layout_changed(self, _text: str) -> None:
         self.current_page = 0
         self._render()
+        self.layout_changed.emit(self.layout_choice.currentText())
 
     def _render(self) -> None:
         for panel in self._panels_by_key.values():

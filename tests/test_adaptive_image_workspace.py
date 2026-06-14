@@ -19,6 +19,23 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
     def test_automatic_capacity_matches_figure_count(self) -> None:
         self.assertEqual([AdaptiveImageWorkspace.automatic_capacity(i) for i in range(1, 7)], [1, 2, 4, 4, 6, 6])
 
+    def test_workspace_owns_data_setup_style_content_margin(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        margins = workspace.layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (8, 8, 8, 8),
+        )
+
+    def test_grid_toolbar_controls_have_stable_default_geometry(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+
+        self.assertEqual(workspace.layout_choice.width(), 80)
+        self.assertEqual(workspace.reset_button.width(), 100)
+        self.assertEqual(workspace.previous_button.width(), 90)
+        self.assertEqual(workspace.page_label.width(), 80)
+        self.assertEqual(workspace.next_button.width(), 70)
+
     def test_set_results_is_capped_at_six(self) -> None:
         workspace = AdaptiveImageWorkspace()
         workspace.resize(1200, 800)
@@ -77,6 +94,19 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
         self.assertEqual(other.grid_state(), state)
         workspace.clear_results()
         self.assertEqual(workspace.results, [])
+
+    def test_layout_change_signal_and_auto_lock(self) -> None:
+        workspace = AdaptiveImageWorkspace()
+        workspace.resize(1200, 800)
+        workspace.set_results(self.results(4))
+        changes = []
+        workspace.layout_changed.connect(changes.append)
+
+        locked = workspace.lock_auto_layout()
+
+        self.assertEqual(locked, "4")
+        self.assertEqual(workspace.layout_choice.currentText(), "4")
+        self.assertEqual(changes, ["4"])
 
     def test_batch_append_keeps_or_replaces_complete_batch(self) -> None:
         workspace = AdaptiveImageWorkspace()

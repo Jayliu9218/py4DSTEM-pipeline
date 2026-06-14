@@ -11,12 +11,16 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QTableWidget,
     QTabWidget,
 )
 
 from app.main_window import MainWindow
+from app.services.bragg_strain_service import CalibrationActionResult
 from app.services.phase_contrast_service import DPCStageResult, PhaseContrastResult
 from app.services.workflow_state import WorkflowStep
+from app.widgets.adaptive_image_workspace import FigureResult
 
 
 class PipelineShellTests(unittest.TestCase):
@@ -40,12 +44,58 @@ class PipelineShellTests(unittest.TestCase):
 
         self.assertEqual(
             titles,
-            ["Data & Preprocess", "Virtual Imaging", "Probe & Bragg", "Calibration", "Strain Analysis", "Export & Report"],
+            ["Data & Preprocess", "Virtual Imaging", "Probe & Bragg", "Calibration", "Strain Analysis", "Results & Quality", "Export"],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
         strain = next(module for module in self.window.route_modules if module.key == "crystal_analysis")
-        self.assertEqual(strain.prerequisite, "bragg_detection")
+        self.assertEqual(strain.prerequisite, "calibration")
         self.assertIn("calibration is recommended", strain.requirements)
+
+    def test_orientation_and_results_use_canonical_shared_workspaces(self) -> None:
+        self.assertIs(self.window.orientation_page, self.window.orientation_setup_page)
+        self.assertIs(self.window.orientation_plan_page, self.window.orientation_setup_page)
+        self.assertIs(self.window.orientation_review_page, self.window.orientation_setup_page)
+        self.assertIs(
+            self.window.orientation_map_page.workspace,
+            self.window.crystalline_results_page.workspace,
+        )
+        workspaces = self.window.pages.named_workspaces()
+        self.assertIn("orientation", workspaces)
+        self.assertIn("crystalline_results", workspaces)
+        self.assertNotIn("orientation_plan", workspaces)
+        self.assertNotIn("orientation_review", workspaces)
+        self.assertNotIn("orientation_map", workspaces)
+
+    def test_legacy_orientation_grid_restores_into_shared_workspace(self) -> None:
+        self.window.project_coordinator.restore_grid_states(
+            {"orientation_review": {"layout": "4", "page": 3}}
+        )
+        self.assertEqual(self.window.orientation_setup_page.workspace.grid_state()["layout"], "4")
+        self.assertEqual(self.window.crystalline_results_page.workspace.grid_state()["layout"], "4")
+
+    def test_orientation_grid_layout_syncs_without_syncing_page(self) -> None:
+        setup = self.window.orientation_setup_page.workspace
+        results = self.window.crystalline_results_page.workspace
+        setup.set_results([FigureResult(str(index), np.ones((2, 2))) for index in range(6)])
+        results.set_results([
+            FigureResult(str(index), np.ones((2, 2))) for index in range(6)
+        ])
+        results.set_layout("2")
+        results.set_page(1)
+
+        setup.set_layout("1")
+
+        self.assertEqual(results.layout_choice.currentText(), "1")
+        self.assertEqual(results.current_page, 1)
+
+    def test_crystalline_export_is_final_and_keeps_results_workspace(self) -> None:
+        self.assertEqual(self.window.route_modules[-1].key, "export")
+        self.assertEqual(self.window.route_modules[-1].page_key, "crystalline_results")
+        self.window._select_route_module("export")
+        self.assertIs(
+            self.window.viewer_stack.currentWidget(),
+            self.window.crystalline_results_page,
+        )
 
     def test_structure_and_goal_change_rebuilds_route(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
@@ -451,6 +501,97 @@ class PipelineShellTests(unittest.TestCase):
         result = page.viewers.results[-1]
         self.assertEqual(result.colormap, "RdBu_r")
         self.assertEqual(result.scaling, "linear")
+
+    def test_calibration_empty_apply_result_preserves_current_images(self) -> None:
+        page = self.window.calibration_page
+        page.viewers.clear_results()
+        page._set_viewer_tab("qx residual", np.asarray([[-1.0, 1.0]]))
+        before = list(page.viewers.results)
+        page.current_process_name = "Apply origin correction"
+
+        page._finished(CalibrationActionResult("Applied corrections: center.", {}, 0.01))
+
+        self.assertEqual(page.viewers.results, before)
+
+    def test_module_panel_gives_top_level_groups_comfortable_spacing(self) -> None:
+        self.window._select_route_module("crystal_analysis")
+        controls = self.window.strain_map_page.controls_panel
+        self.assertEqual(controls.layout().spacing(), 12)
+        for index in range(controls.layout().count()):
+            widget = controls.layout().itemAt(index).widget()
+            if isinstance(widget, QGroupBox):
+                self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Fixed)
+                self.assertIn("border-radius: 6px", widget.styleSheet())
+                self.assertEqual(widget.minimumHeight(), widget.maximumHeight())
+
+    def test_data_setup_does_not_double_shared_workspace_margin(self) -> None:
+        margins = self.window.main_view.layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (0, 0, 0, 0),
+        )
+
+    def test_all_workspace_pages_use_data_setup_outer_alignment(self) -> None:
+        for key, workspace in self.window.pages.named_workspaces().items():
+            page = self.window.viewer_pages[key]
+            margins = page.layout().contentsMargins()
+            self.assertEqual(
+                (margins.left(), margins.top(), margins.right(), margins.bottom()),
+                (0, 0, 0, 0),
+                key,
+            )
+            self.assertEqual(workspace.layout_choice.width(), 80, key)
+
+    def test_existing_parameter_tables_use_fixed_scrollable_style(self) -> None:
+        self.window.project_toolbar.goal.setCurrentText("Orientation Mapping")
+        self.window._select_route_module("orientation_setup")
+        table = self.window.orientation_setup_page.atom_table
+        self.assertEqual(table.height(), 180)
+        self.assertIn("font-weight: bold", table.styleSheet())
+        self.assertEqual(table.verticalScrollBarPolicy(), Qt.ScrollBarAsNeeded)
+
+    def test_orientation_rgb_map_click_returns_to_single_pattern_review(self) -> None:
+        target = self.window.orientation_setup_page
+        mapping = self.window.orientation_map_page
+        mapping.workspace.set_results([
+            FigureResult("Orientation RGB", np.zeros((3, 4, 3)), image_kind="rgb")
+        ])
+
+        mapping._connect_map_clicks()
+        mapping.workspace.panels[0].viewer.image_clicked.emit(2, 1)
+
+        self.assertEqual(target.scan_x.value(), 2)
+        self.assertEqual(target.scan_y.value(), 1)
+        self.assertIn("Selected map position", target.status_label.text())
+
+    def test_full_orientation_map_locks_auto_grid_before_calculation(self) -> None:
+        setup = self.window.orientation_setup_page.workspace
+        mapping_page = self.window.orientation_map_page
+        mapping_page.workspace.set_results([
+            FigureResult(str(index), np.ones((2, 2))) for index in range(4)
+        ])
+        mapping_page.workspace.set_layout("Auto")
+
+        with patch("app.pages.orientation_page.QThread.start"):
+            mapping_page._start("Full Orientation Map", lambda: None)
+
+        locked = mapping_page.workspace.layout_choice.currentText()
+        self.assertNotEqual(locked, "Auto")
+        self.assertEqual(setup.layout_choice.currentText(), locked)
+        mapping_page._clear_worker()
+
+    def test_parameter_inputs_remain_left_aligned(self) -> None:
+        self.assertEqual(
+            self.window.orientation_setup_page.voltage.line_edit.alignment(),
+            Qt.AlignLeft,
+        )
+
+    def test_orientation_grid_pages_have_no_top_status_bar(self) -> None:
+        setup = self.window.orientation_setup_page
+        results = self.window.crystalline_results_page
+        self.assertIs(setup.layout().itemAt(0).widget(), setup.workspace)
+        self.assertIs(results.layout().itemAt(0).widget(), results.workspace)
+        self.assertFalse(setup.status_label.isVisible())
 
     def test_main_window_uses_native_qt_style(self) -> None:
         self.assertEqual(self.window.styleSheet(), "")
