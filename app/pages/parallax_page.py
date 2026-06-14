@@ -20,6 +20,7 @@ from app.services.parallax_service import (
 from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
+from app.theme import Theme
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
@@ -620,7 +621,7 @@ class ParallaxPage(QWidget, WorkerRunner):
         }[self.stage_mode]
         if self.workflow_state.is_stale(step):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {Theme.STALE};")
 
     def params_snapshot(self) -> dict[str, object]:
         return {

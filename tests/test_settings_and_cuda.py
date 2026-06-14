@@ -67,7 +67,7 @@ class SettingsAndCudaTests(unittest.TestCase):
         top_level = [action.text().replace("&", "") for action in window.menuBar().actions()]
         file_actions = [action.text().replace("&", "") for action in window.file_menu.actions()]
 
-        self.assertEqual(top_level[:4], ["Files", "Mode", "Setting", "Help"])
+        self.assertEqual(top_level[:6], ["Files", "Mode", "Layout", "View", "Setting", "Help"])
         self.assertIn("Setting", top_level)
         self.assertNotIn("Setting", file_actions)
         self.assertFalse(hasattr(window, "setting_menu"))

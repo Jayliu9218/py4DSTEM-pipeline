@@ -47,6 +47,7 @@ class ProjectCoordinator:
         image_cmap: str,
         cuda_enabled: bool,
         recent_export_dir: Path | None,
+        window_state: str | None = None,
     ) -> ProjectState:
         roles = self.workflow_state.dataset_roles
         page_params = {
@@ -86,6 +87,7 @@ class ProjectCoordinator:
             },
             page_params=page_params,
             grid_states=self.pages.grid_states(),
+            window_state=window_state,
         )
 
     def apply_page_params(self, page_params: dict[str, dict[str, object]]) -> None:

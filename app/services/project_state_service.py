@@ -24,10 +24,11 @@ class ProjectState:
     page_params: dict[str, dict[str, object]] = field(default_factory=dict)
     result_entries: list[dict[str, object]] = field(default_factory=list)
     grid_states: dict[str, dict[str, object]] = field(default_factory=dict)
+    window_state: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "version": 3,
+            "version": 4,
             "file_path": self.file_path,
             "selected_hdf5_path": self.selected_hdf5_path,
             "image_scaling": self.image_scaling,
@@ -38,6 +39,7 @@ class ProjectState:
             "page_params": self.page_params,
             "result_entries": self.result_entries,
             "grid_states": self.grid_states,
+            "window_state": self.window_state,
         }
 
     @classmethod
@@ -53,6 +55,7 @@ class ProjectState:
             page_params=_page_params(payload.get("page_params", {})),
             result_entries=payload.get("result_entries", []),
             grid_states=_page_params(payload.get("grid_states", {})),
+            window_state=_optional_str(payload.get("window_state")),
         )
 
 

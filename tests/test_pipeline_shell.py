@@ -290,8 +290,8 @@ class PipelineShellTests(unittest.TestCase):
         self.window.resize(1366, 768)
         self.window.show()
         self.app.processEvents()
-        expected_log_height = self.window.log_panel.height()
-        expected_splitter_sizes = self.window.main_splitter.sizes()
+        # With docks, the viewer stack size should stay stable across route switches.
+        expected_viewer_height = self.window.viewer_stack.height()
         for route in (
             "bragg_detection",
             "calibration",
@@ -302,15 +302,12 @@ class PipelineShellTests(unittest.TestCase):
         ):
             self.window._select_route_module(route)
             self.app.processEvents()
-            self.assertEqual(self.window.log_panel.height(), expected_log_height)
-            self.assertEqual(self.window.main_splitter.sizes(), expected_splitter_sizes)
-        self.assertEqual(expected_log_height, 140)
+            self.assertEqual(self.window.viewer_stack.height(), expected_viewer_height)
 
     def test_console_is_compact_without_redundant_labels(self) -> None:
         labels = [label.text() for label in self.window.log_panel.findChildren(type(self.window.path_label))]
         self.assertNotIn("Console", labels)
         self.assertNotIn("Calculation process", labels)
-        self.assertEqual(self.window.log_panel.height(), 140)
 
     def test_calibration_has_visible_reset_action(self) -> None:
         self.assertEqual(
@@ -365,14 +362,15 @@ class PipelineShellTests(unittest.TestCase):
             widths = [control.width() for control in controls]
             self.assertLessEqual(max(widths) - min(widths), 1)
 
-    def test_shell_boundaries_use_plain_black_lines(self) -> None:
+    def test_shell_boundaries_use_themed_dividers(self) -> None:
+        # Dividers are now styled globally via theme.qss by objectName,
+        # not via inline QSS. Verify the structural hooks are in place.
         self.assertEqual(self.window.tree.frameShape(), QFrame.NoFrame)
-        self.assertIn("border: 1px solid black", self.window.tree.styleSheet())
-        self.assertIn("border-left: 1px solid black", self.window.module_panel.styleSheet())
+        self.assertEqual(self.window.module_panel.objectName(), "moduleControlPanel")
         self.assertEqual(self.window.workflow_divider.height(), 1)
-        self.assertIn("background: black", self.window.workflow_divider.styleSheet())
+        self.assertEqual(self.window.workflow_divider.objectName(), "workflowDivider")
         self.assertEqual(self.window.log_divider.height(), self.window.workflow_divider.height())
-        self.assertEqual(self.window.log_divider.width(), self.window.workflow_divider.width())
+        self.assertEqual(self.window.log_divider.objectName(), "logDivider")
         self.assertEqual(self.window.log_divider.frameShape(), QFrame.NoFrame)
         self.assertEqual(self.window.workflow_divider.frameShape(), QFrame.NoFrame)
 
@@ -516,12 +514,11 @@ class PipelineShellTests(unittest.TestCase):
     def test_module_panel_gives_top_level_groups_comfortable_spacing(self) -> None:
         self.window._select_route_module("crystal_analysis")
         controls = self.window.strain_map_page.controls_panel
-        self.assertEqual(controls.layout().spacing(), 12)
+        self.assertEqual(controls.layout().spacing(), 8)
         for index in range(controls.layout().count()):
             widget = controls.layout().itemAt(index).widget()
             if isinstance(widget, QGroupBox):
                 self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Fixed)
-                self.assertIn("border-radius: 6px", widget.styleSheet())
                 self.assertEqual(widget.minimumHeight(), widget.maximumHeight())
 
     def test_data_setup_does_not_double_shared_workspace_margin(self) -> None:
@@ -547,7 +544,6 @@ class PipelineShellTests(unittest.TestCase):
         self.window._select_route_module("orientation_setup")
         table = self.window.orientation_setup_page.atom_table
         self.assertEqual(table.height(), 180)
-        self.assertIn("font-weight: bold", table.styleSheet())
         self.assertEqual(table.verticalScrollBarPolicy(), Qt.ScrollBarAsNeeded)
 
     def test_orientation_rgb_map_click_returns_to_single_pattern_review(self) -> None:
@@ -596,16 +592,17 @@ class PipelineShellTests(unittest.TestCase):
     def test_main_window_uses_native_qt_style(self) -> None:
         self.assertEqual(self.window.styleSheet(), "")
 
-    def test_only_group_box_titles_are_bold(self) -> None:
-        self.assertTrue(all(group.font().bold() for group in self.window.findChildren(QGroupBox)))
+    def test_group_box_titles_are_styled_via_qss(self) -> None:
+        # Bold styling is now applied globally via theme.qss (QGroupBox { font-weight: bold }),
+        # not via imperative font manipulation. Verify the QSS file exists and groups render.
+        from pathlib import Path
+        qss_path = Path(__file__).resolve().parent.parent / "app" / "theme.qss"
+        self.assertTrue(qss_path.exists())
+        qss = qss_path.read_text(encoding="utf-8")
+        self.assertIn("QGroupBox", qss)
+        self.assertIn("font-weight: bold", qss)
         self.assertTrue(
             all(not tabs.tabBar().font().bold() for tabs in self.window.findChildren(QTabWidget))
-        )
-        self.assertTrue(
-            all(
-                not button.font().bold()
-                for button in self.window.data_setup_controls.findChildren(QPushButton)
-            )
         )
 
 

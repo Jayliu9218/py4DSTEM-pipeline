@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QInputDialog, QLabel, QMenu, QMessageBox, QVBoxLay
 
 class ImageViewer(QWidget):
     image_clicked = Signal(int, int)
+    coordinate_changed = Signal(str)
     roi_changed = Signal(int, int, int, int)
     circle_changed = Signal(float, float, float)
     annulus_changed = Signal(float, float, float, float)
@@ -60,6 +61,9 @@ class ImageViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.image_view)
         layout.addWidget(self.coordinate_label)
+        # Dark canvas background for SEM/FIB instrument look.
+        self.image_view.getView().setBackgroundColor("#1a1a1a")
+        self.image_view.setStyleSheet("background: #1a1a1a;")
         self._apply_colormap()
 
     def set_image(
@@ -788,17 +792,21 @@ class ImageViewer(QWidget):
     def _handle_mouse_moved(self, scene_pos) -> None:
         image_item = self.image_view.getImageItem()
         if image_item is None or self.raw_image is None:
-            self.coordinate_label.setText("x: -, y: -, value: -")
+            self._set_coordinate_text("x: -, y: -, value: -")
             return
         pos = image_item.mapFromScene(scene_pos)
         x = int(round(pos.y()))
         y = int(round(pos.x()))
         if x < 0 or y < 0 or x >= self.raw_image.shape[0] or y >= self.raw_image.shape[1]:
-            self.coordinate_label.setText("x: -, y: -, value: -")
+            self._set_coordinate_text("x: -, y: -, value: -")
             return
         value = self.raw_image[x, y]
         if np.isscalar(value):
             value_text = f"{float(value):.5g}" if np.isfinite(value) else str(value)
         else:
             value_text = np.array2string(np.asarray(value), precision=4, separator=", ")
-        self.coordinate_label.setText(f"x: {x}, y: {y}, value: {value_text}")
+        self._set_coordinate_text(f"x: {x}, y: {y}, value: {value_text}")
+
+    def _set_coordinate_text(self, text: str) -> None:
+        self.coordinate_label.setText(text)
+        self.coordinate_changed.emit(text)

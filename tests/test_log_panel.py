@@ -28,17 +28,16 @@ class LogPanelTests(unittest.TestCase):
         panel.process_started("Results")
         self.assertEqual(panel.progress.value(), 0)
 
-    def test_progress_track_width_stays_fixed_across_status_changes(self) -> None:
+    def test_progress_bar_hides_text_and_status_line_shows_latest(self) -> None:
         panel = LogPanel()
-        width = panel.progress.width()
-
-        panel.process_started("A long current calculation name")
-        panel.process_progress("nested operation with a long status message 57%")
-        panel.process_finished("A long current calculation name")
-
-        self.assertEqual(width, panel.PROGRESS_BAR_WIDTH)
-        self.assertEqual(panel.progress.minimumWidth(), panel.PROGRESS_BAR_WIDTH)
-        self.assertEqual(panel.progress.maximumWidth(), panel.PROGRESS_BAR_WIDTH)
+        # Progress bar should not display text overlay.
+        self.assertFalse(panel.progress.isTextVisible())
+        panel.process_started("Long calculation name")
+        panel.process_progress("nested operation 57%")
+        # The single-line status should show the latest message.
+        self.assertIn("nested operation 57%", panel.status_line.text())
+        panel.process_finished("Long calculation name")
+        self.assertIn("DONE", panel.status_line.text())
 
 
 if __name__ == "__main__":
