@@ -134,7 +134,7 @@ class StrainMapPage(QWidget, WorkerRunner):
                 return service.calculate_strain_from_stages(braggvectors, params)
             return service.compute_strain_map(braggvectors, params)
 
-        self._start_background(
+        started = self._start_background(
             "StrainMap",
             operation,
             parameters={
@@ -149,6 +149,9 @@ class StrainMapPage(QWidget, WorkerRunner):
                 "max_peak_spacing": self.max_spacing_spin.value(),
             },
         )
+        if not started:
+            self.run_button.setEnabled(True)
+            self.export_button.setEnabled(self.result is not None)
 
     def _on_start(self, name: str) -> None:
         super()._on_start(name)

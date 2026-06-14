@@ -376,15 +376,16 @@ class BraggPeaksPage(QWidget, WorkerRunner):
         self.status_label.setText("Applied editable 01_CBS Au Bragg-detection preset.")
 
     def _start_worker(self, operation, finished_slot, status: str) -> None:
-        for button in (
+        all_buttons = (
             self.run_current_button, self.run_full_button, self.run_selected_button,
             self.prepare_kernel_button, self.pick_roi_button,
-        ):
+        )
+        for button in all_buttons:
             button.setEnabled(False)
         self._pending_result_handler = finished_slot
         self._pending_status = status
         params = self._params()
-        self._start_background(
+        started = self._start_background(
             "Bragg calculation",
             operation,
             parameters={
@@ -402,6 +403,9 @@ class BraggPeaksPage(QWidget, WorkerRunner):
                 "CUDA": params.cuda,
             },
         )
+        if not started:
+            for button in all_buttons:
+                button.setEnabled(True)
 
     def _on_start(self, name: str) -> None:
         status = getattr(self, "_pending_status", None) or f"Running {name}..."

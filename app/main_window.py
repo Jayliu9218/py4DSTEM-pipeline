@@ -5,6 +5,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +38,7 @@ from app.controllers.route_coordinator import RouteCoordinator
 from app.controllers.application_pages import ApplicationPages
 from app.controllers.project_coordinator import ProjectCoordinator
 from app.controllers.data_session_controller import DataSessionController
+from app.theme import Theme
 from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
@@ -240,6 +244,7 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_layout()
+        self._build_status_bar()
         self.pages = ApplicationPages(
             viewer_pages=self.viewer_pages,
             route_controls={
@@ -355,6 +360,7 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
         self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
+        self.workflow_state.changed.connect(self._update_status_for_workflow)
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
         self.dpc_legacy_page.dpc_result_ready.connect(self._store_dpc_result)
         self.ptychography_advanced_page.ptychography_result_ready.connect(self._store_ptychography_result)
@@ -396,6 +402,34 @@ class MainWindow(QMainWindow):
         self.amorphous_mode_action = self.mode_menu.addAction("Amorphous / Diffuse-scattering")
         self.phase_retrieval_mode_action = self.mode_menu.addAction("Phase Retrieval / Ptychography")
 
+        self.layout_menu = self.menuBar().addMenu("&Layout")
+        self.reset_layout_action = self.layout_menu.addAction("Reset &Layout")
+        self.reset_layout_action.setStatusTip("Restore docks to default positions and sizes")
+        self.reset_layout_action.triggered.connect(lambda: self._reset_layout())
+        self.layout_menu.addSeparator()
+        self.toggle_data_dock = self.layout_menu.addAction("Data &Browser")
+        self.toggle_data_dock.setCheckable(True)
+        self.toggle_data_dock.setChecked(True)
+        self.toggle_controls_dock = self.layout_menu.addAction("&Controls")
+        self.toggle_controls_dock.setCheckable(True)
+        self.toggle_controls_dock.setChecked(True)
+        self.toggle_output_dock = self.layout_menu.addAction("&Output")
+        self.toggle_output_dock.setCheckable(True)
+        self.toggle_output_dock.setChecked(True)
+
+        self.view_menu = self.menuBar().addMenu("&View")
+        self.theme_action_group = None
+        self.dark_theme_action = self.view_menu.addAction("Dark Theme")
+        self.dark_theme_action.setCheckable(True)
+        self.dark_theme_action.setChecked(True)
+        self.light_theme_action = self.view_menu.addAction("Light Theme")
+        self.light_theme_action.setCheckable(True)
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.addAction(self.dark_theme_action)
+        self.theme_action_group.addAction(self.light_theme_action)
+        self.dark_theme_action.triggered.connect(lambda: self._apply_theme("dark"))
+        self.light_theme_action.triggered.connect(lambda: self._apply_theme("light"))
+
         self.setting_action = self.menuBar().addAction("&Setting")
         self.setting_action.triggered.connect(self.open_settings)
 
@@ -409,6 +443,67 @@ class MainWindow(QMainWindow):
         self.tutorials_action = self.help_menu.addAction("&Workflow Tutorials")
         self.tutorials_action.setStatusTip("Brief introduction to each analysis workflow")
         self.tutorials_action.triggered.connect(self.show_tutorials)
+
+    def _build_status_bar(self) -> None:
+        status = self.statusBar()
+        self.status_coord = QLabel("x: -, y: -, value: -")
+        self.status_coord.setMinimumWidth(220)
+        self.status_datacube = QLabel("No DataCube loaded")
+        self.status_led = QLabel(f"<span style='color:{Theme.NEUTRAL};'>{Theme.LED_CHAR}</span> Ready")
+        status.addWidget(self.status_coord)
+        status.addWidget(self.status_datacube)
+        status.addPermanentWidget(self.status_led)
+        self.scan_viewer.coordinate_changed.connect(self._update_status_coord)
+
+    def _apply_theme(self, theme: str) -> None:
+        """Switch the global application stylesheet between dark and light."""
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return
+        qss_name = "theme.qss" if theme == "dark" else "theme_light.qss"
+        # __file__ lives in app/, so the QSS files are siblings, not under an "app/" subdir.
+        qss_path = Path(__file__).parent / qss_name
+        try:
+            app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            self.log_panel.log(f"Could not load theme '{theme}': {exc}")
+            return
+        self.log_panel.log(f"Theme switched to {theme}.")
+
+    def _update_status_coord(self, text: str) -> None:
+        self.status_coord.setText(text)
+
+    def _update_status_datacube(self) -> None:
+        name = self.datacube_name_label.text()
+        if name == "-":
+            self.status_datacube.setText("No DataCube loaded")
+        else:
+            self.status_datacube.setText(
+                f"{name}  |  scan={self.scan_shape_label.text()}  "
+                f"diff={self.diffraction_shape_label.text()}"
+            )
+
+    def _update_status_led(self, state: str, message: str = "") -> None:
+        color = {
+            "ready": Theme.READY,
+            "running": Theme.RUNNING,
+            "stale": Theme.STALE,
+            "failed": Theme.FAILED,
+            "neutral": Theme.NEUTRAL,
+        }.get(state, Theme.NEUTRAL)
+        label = message or state.capitalize()
+        self.status_led.setText(
+            f"<span style='color:{color};'>{Theme.LED_CHAR}</span> {label}"
+        )
+
+    def _update_status_for_workflow(self) -> None:
+        if self.datacube_name_label.text() == "-":
+            self._update_status_led("neutral", "Ready")
+        elif self.workflow_state._stale:
+            self._update_status_led("stale", "Stale results")
+        else:
+            self._update_status_led("ready", "DataCube loaded")
 
     def show_about(self) -> None:
         self._show_help_dialog("About py4DSTEM Pipeline", self.ABOUT_HTML)
@@ -505,16 +600,12 @@ class MainWindow(QMainWindow):
     def _build_layout(self) -> None:
         data_browser = QWidget()
         data_browser_layout = QVBoxLayout(data_browser)
-        data_browser_layout.setContentsMargins(8, 8, 8, 8)
+        data_browser_layout.setContentsMargins(6, 6, 6, 6)
         data_title = QLabel("Data Tree")
         data_title.setObjectName("sectionTitle")
         data_browser_layout.addWidget(data_title)
         data_browser_layout.addWidget(self.tree, 1)
         self.tree.setFrameShape(QFrame.NoFrame)
-        self.tree.setStyleSheet("QTreeWidget { border: 1px solid black; }")
-        data_browser.setMinimumWidth(220)
-        data_browser.setMaximumWidth(500)
-        data_browser.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
         self.viewer_stack = QStackedWidget()
@@ -559,27 +650,51 @@ class MainWindow(QMainWindow):
             self.viewer_stack.addWidget(page)
 
         self.module_panel = ModuleControlPanel()
-        self.module_panel.setFixedWidth(400)
-        self.module_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.main_splitter = QSplitter(Qt.Horizontal)
-        self.main_splitter.addWidget(data_browser)
-        self.main_splitter.addWidget(self.viewer_stack)
-        self.main_splitter.addWidget(self.module_panel)
-        self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setStretchFactor(2, 0)
-        self.main_splitter.setCollapsible(0, False)
-        self.main_splitter.setCollapsible(2, False)
-        self.main_splitter.setHandleWidth(1)
-        self.main_splitter.setStyleSheet("QSplitter::handle { background: black; }")
-        self.main_splitter.setSizes([300, 900, 350])
+        self.module_panel.setMinimumWidth(300)
+        self.module_panel.setMaximumWidth(500)
+        self.module_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
+        # --- Docks (dockable, floatable, movable per SEM/FIB convention) ---
+        self.data_dock = QDockWidget("Data Browser", self)
+        self.data_dock.setObjectName("dataDock")
+        self.data_dock.setWidget(data_browser)
+        self.data_dock.setAllowedAreas(
+            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea
+        )
+        self.data_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
+
+        self.controls_dock = QDockWidget("Controls", self)
+        self.controls_dock.setObjectName("controlsDock")
+        self.controls_dock.setWidget(self.module_panel)
+        self.controls_dock.setAllowedAreas(
+            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea
+        )
+        self.controls_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
+
+        self.output_dock = QDockWidget("Output", self)
+        self.output_dock.setObjectName("outputDock")
         log_panel_widget = self.log_panel
-        log_panel_widget.setFixedHeight(140)
-        log_panel_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        log_panel_widget.setMinimumHeight(80)
+        log_panel_widget.setMaximumHeight(400)
+        log_panel_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.output_dock.setWidget(log_panel_widget)
+        self.output_dock.setAllowedAreas(
+            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea
+        )
+        self.output_dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
 
         self.project_toolbar = ProjectToolbar()
         self.route_bar = TechnicalRouteBar()
+        self.route_bar.setObjectName("routeBar")
         self.data_setup_controls = self._build_role_panel()
         self.export_controls = self._build_export_panel()
         self.project_toolbar.structure_changed.connect(self._update_structure_route)
@@ -595,27 +710,87 @@ class MainWindow(QMainWindow):
             lambda: self.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
         )
 
+        # --- Central widget: top toolbar/route bar + viewer stack ---
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
         central_layout.addWidget(self.project_toolbar)
         central_layout.addWidget(self.route_bar)
-
         self.workflow_divider = self._horizontal_divider("workflowDivider")
         central_layout.addWidget(self.workflow_divider)
-        central_layout.addWidget(self.main_splitter, 1)
+        central_layout.addWidget(self.viewer_stack, 1)
+        self.setCentralWidget(central)
 
         self.log_divider = self._horizontal_divider("logDivider")
-        central_layout.addWidget(self.log_divider)
 
-        central_layout.addWidget(log_panel_widget, 0)
-        self.setCentralWidget(central)
+        # Placeholder kept for backward compatibility (tests reference main_splitter.sizes).
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setVisible(False)
+
+        # Wire View-menu dock toggles now that docks exist.
+        # The reverse connection (visibilityChanged -> setChecked) uses
+        # blockSignals so programmatic setChecked (fired on minimize/restore)
+        # cannot re-enter setVisible and hide the docks on window restore.
+        # shiboken.isValid guards the late visibilityChanged emissions Qt may
+        # deliver after the menu's QAction has already been torn down at close.
+        from shiboken6 import isValid as _shiboken_is_valid
+
+        def _wire_dock_toggle(action, dock):
+            def toggle_visibility(checked):
+                dock.setVisible(checked)
+            def sync_action(visible):
+                if not _shiboken_is_valid(action):
+                    return
+                was = action.blockSignals(True)
+                action.setChecked(visible)
+                action.blockSignals(was)
+            action.toggled.connect(toggle_visibility)
+            dock.visibilityChanged.connect(sync_action)
+        _wire_dock_toggle(self.toggle_data_dock, self.data_dock)
+        _wire_dock_toggle(self.toggle_controls_dock, self.controls_dock)
+        _wire_dock_toggle(self.toggle_output_dock, self.output_dock)
 
         self._set_index_controls_visible(False)
         self._compact_input_controls()
         self._bold_section_titles()
         self._set_preview_empty()
+        # Apply default dock sizes so startup matches Layout > Reset Layout.
+        self.resizeDocks(
+            [self.data_dock, self.controls_dock],
+            [300, 350],
+            Qt.Horizontal,
+        )
+        self.resizeDocks([self.output_dock], [100], Qt.Vertical)
+
+    def _reset_layout(self, silent: bool = False) -> None:
+        """Restore all docks to their default dock areas and sizes."""
+        for dock in (self.data_dock, self.controls_dock, self.output_dock):
+            dock.setFloating(False)
+        # Re-add to canonical areas to undo any tabbing/dragging.
+        self.removeDockWidget(self.data_dock)
+        self.removeDockWidget(self.controls_dock)
+        self.removeDockWidget(self.output_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
+        # Explicitly show — removeDockWidget hides them and addDockWidget does not un-hide.
+        for dock in (self.data_dock, self.controls_dock, self.output_dock):
+            dock.setVisible(True)
+            dock.setFeatures(
+                QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+            )
+        self.resizeDocks(
+            [self.data_dock, self.controls_dock],
+            [300, 350],
+            Qt.Horizontal,
+        )
+        self.resizeDocks([self.output_dock], [100], Qt.Vertical)
+        self.toggle_data_dock.setChecked(True)
+        self.toggle_controls_dock.setChecked(True)
+        self.toggle_output_dock.setChecked(True)
+        if not silent:
+            self.log_panel.log("Layout reset to default.")
 
     def _horizontal_divider(self, object_name: str) -> QFrame:
         divider = QFrame()
@@ -623,27 +798,12 @@ class MainWindow(QMainWindow):
         divider.setFrameShape(QFrame.NoFrame)
         divider.setFixedHeight(1)
         divider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        divider.setStyleSheet("""
-            QFrame {
-                background: black;
-                border: 0px;
-                min-height: 1px;
-                max-height: 1px;
-            }
-        """)
         return divider
 
     def _bold_section_titles(self) -> None:
-        for group in self.findChildren(QGroupBox):
-            font = group.font()
-            font.setBold(True)
-            group.setFont(font)
-            for child in group.findChildren(QWidget):
-                if isinstance(child, QGroupBox):
-                    continue
-                child_font = child.font()
-                child_font.setBold(False)
-                child.setFont(child_font)
+        # Group-box bold styling is now handled globally by theme.qss.
+        # This hook is retained as the route_coordinator style_refresher callback.
+        pass
 
     def _update_structure_route(self, *_args) -> None:
         self.route_coordinator.current_key = self.current_route_key
@@ -739,7 +899,7 @@ class MainWindow(QMainWindow):
         for widget_type in (NumericLineEdit, QComboBox):
             for widget in self.findChildren(widget_type):
                 widget.setMinimumWidth(0)
-                widget.setMaximumWidth(320)
+                widget.setMaximumWidth(280)
 
     def open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -936,6 +1096,8 @@ class MainWindow(QMainWindow):
         self.scan_shape_label.setText("-")
         self.diffraction_shape_label.setText("-")
         self._refresh_tree_data_info()
+        self._update_status_datacube()
+        self._update_status_led("neutral", "Ready")
 
     def _configure_4d_controls(self, shape: tuple[int, ...]) -> None:
         self.rx_spin.blockSignals(True)
@@ -1049,6 +1211,8 @@ class MainWindow(QMainWindow):
         self.scan_shape_label.setText(str(scan_shape))
         self.diffraction_shape_label.setText(str(diffraction_shape))
         self._refresh_tree_data_info()
+        self._update_status_datacube()
+        self._update_status_led("ready", "DataCube loaded")
 
     def _handle_scan_image_clicked(self, x: int, y: int) -> None:
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:
@@ -1287,6 +1451,7 @@ class MainWindow(QMainWindow):
         self.diffraction_viewer.clear(base)
 
     def _project_state(self) -> ProjectState:
+        window_state = bytes(self.saveState().toBase64()).decode("ascii") if self.data_dock else None
         return self.project_coordinator.snapshot(
             file_path=self.current_file_path,
             selected_hdf5_path=self.selected_hdf5_path,
@@ -1294,6 +1459,7 @@ class MainWindow(QMainWindow):
             image_cmap=self.image_cmap,
             cuda_enabled=self.cuda_enabled,
             recent_export_dir=self.recent_export_dir,
+            window_state=window_state,
         )
 
     def _apply_project_state(self, state: ProjectState) -> None:
@@ -1319,6 +1485,9 @@ class MainWindow(QMainWindow):
                 self._handle_node_selected(state.selected_hdf5_path, node_kind)
             except Exception as exc:
                 self.log_panel.log(f"Saved HDF5 selection is unavailable: {exc}")
+        if state.window_state:
+            from PySide6.QtCore import QByteArray
+            self.restoreState(QByteArray.fromBase64(state.window_state.encode("ascii")))
 
     def _apply_page_params(self, page_params: dict[str, dict[str, object]]) -> None:
         self.project_coordinator.apply_page_params(page_params)

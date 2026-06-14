@@ -29,6 +29,7 @@ from app.services.bragg_strain_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
+from app.theme import Theme
 from app.widgets.image_viewer import ImageViewer
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
@@ -591,7 +592,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.current_process_name = process_name
         self.current_process_step = process_step
         # operation is a no-arg callable; wrap to accept the progress callback.
-        self._start_background(
+        started = self._start_background(
             process_name,
             lambda _cb: operation(),
             parameters={
@@ -605,6 +606,10 @@ class CalibrationPage(QWidget, WorkerRunner):
                 "transfer_target": self.transfer_target.currentText(),
             },
         )
+        if not started:
+            for button in self.buttons:
+                button.setEnabled(True)
+            self.apply_ellipse_button.setEnabled(self.service.pending_ellipse is not None)
 
     def _handle_result(self, result: CalibrationActionResult) -> None:
         quality = ", ".join(f"{key}={value:.4g}" if isinstance(value, float) else f"{key}={value}" for key, value in result.quality.items())
@@ -711,11 +716,11 @@ class CalibrationPage(QWidget, WorkerRunner):
             ("rotate", self.rotate_label, status.rotate, "rotate"),
         ]:
             if calstate_name in applied:
-                color = "#1f7a3f"
+                color = Theme.READY
             elif value == "missing":
-                color = "#b3261e" if key in self._required_corrections() else "#767676"
+                color = Theme.FAILED if key in self._required_corrections() else Theme.TEXT_DISABLED
             else:
-                color = "#9a6700"
+                color = Theme.STALE
             label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _refresh_decision_panel(self) -> None:
@@ -724,13 +729,13 @@ class CalibrationPage(QWidget, WorkerRunner):
         for key, label in self.decision_labels.items():
             if key in required:
                 text = "Required"
-                color = "#b3261e"
+                color = Theme.FAILED
             elif key in recommended:
                 text = "Recommended"
-                color = "#9a6700"
+                color = Theme.STALE
             else:
                 text = "Optional"
-                color = "#767676"
+                color = Theme.TEXT_DISABLED
             label.setText(text)
             label.setStyleSheet(f"color: {color}; font-weight: 600;")
 

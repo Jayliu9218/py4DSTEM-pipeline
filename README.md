@@ -42,10 +42,13 @@ Built with:
 - **Method Comparison**: side-by-side DPC and Ptychography result viewer
 
 ### Shared Infrastructure
+- **SEM/FIB-style dark-gray theme** with dark/light switchable via View menu; Fusion style base for cross-platform consistency
+- Centralized `app/theme.py` color constants and per-widget QSS (`theme.qss` / `theme_light.qss`) applied globally via `QApplication.setStyleSheet()`
 - Stage-based workflow with explicit review/accept gates and downstream staleness tracking
 - CPU/GPU execution choice with CUDA guidance
 - Thread-safe background calculations with live progress reporting
-- Project-state persistence (save/load `.pipeline` files)
+- Dockable UI panels (Data Browser, Controls, Output) with Layout menu toggles and persistent dock state in project files
+- Project-state persistence (save/load `.pipeline` files, version 4 with `window_state` for dock layout)
 - Scientific report generation
 - Result registry for export (NPZ, JSON, PNG, TIFF)
 
@@ -80,7 +83,10 @@ default.
 ```text
 main.py
 app/
-  main_window.py                          # Application shell, menu, dialogs
+  main_window.py                          # Application shell, menu, dialogs, theme switching
+  theme.py                                # Centralized color/style constants
+  theme.qss                               # Dark theme stylesheet
+  theme_light.qss                         # Light theme stylesheet
   controllers/
     application_pages.py                  # Page factory
     route_coordinator.py                  # Route module builder
@@ -125,9 +131,10 @@ app/
     image_viewer.py                       # Single-image QtGraph viewer
     log_panel.py                          # Calculation process log
     numeric_line_edit.py                  # Scientific-notation spin box
-    pipeline_shell.py                     # Navigation sidebar
+    pipeline_shell.py                     # Navigation sidebar & dock widgets
     progress_stream.py                    # Worker progress capture
     rgb_image_viewer.py                   # RGB composite viewer
+    worker_runner.py                      # Shared background-worker mixin
 packaging/
   py4dstem_pipeline.spec
   build_pyinstaller.ps1
@@ -213,6 +220,8 @@ kept free and open under a GPLv3 license.
 - Keep py4DSTEM algorithms inside `app/services/`.
 - UI pages should be thin: collect parameters, start workers, display results, and log status.
 - Use worker threads for expensive calculations so the UI remains responsive.
+- **Theme colors**: reference constants from `app/theme.py` instead of hard-coding hex strings. Dark/light QSS files live in `app/theme.qss` and `app/theme_light.qss`.
+- **Status colors**: use `Theme.READY`, `Theme.RUNNING`, `Theme.STALE`, `Theme.FAILED`, `Theme.NEUTRAL`, `Theme.TEXT_DISABLED` for semantic consistency across themes.
 - Add new pages to `app/controllers/application_pages.py` and add route modules in
   `app/controllers/route_coordinator.py`.
 - Add new workflow steps to `app/services/workflow_state.py`.

@@ -30,6 +30,7 @@ from app.services.phase_contrast_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
+from app.theme import Theme
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
@@ -311,10 +312,13 @@ class DPCPage(QWidget, WorkerRunner):
         )
 
     def _start_operation(self, name: str, operation) -> None:
-        for button in (self.segment_button, self.preprocess_button, self.reconstruct_button):
+        buttons = (self.segment_button, self.preprocess_button, self.reconstruct_button)
+        for button in buttons:
             button.setEnabled(False)
         # operation is a no-arg lambda; wrap to accept the progress callback.
-        self._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
+        started = self._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
+        if not started:
+            self._enable_available_buttons()
 
     def _handle_result(self, result: object) -> None:
         if isinstance(result, DPCStageResult):
@@ -681,7 +685,7 @@ class DPCPage(QWidget, WorkerRunner):
         }.get(self.stage_mode, WorkflowStep.DPC)
         if self.workflow_state.is_stale(step):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {Theme.STALE};")
 
     def _float_input(self, minimum, maximum, value, decimals=2, unit="") -> NumericLineEdit:
         return NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)

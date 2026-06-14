@@ -39,6 +39,12 @@ class RouteModule:
 class TechnicalRouteBar(QWidget):
     module_selected = Signal(str)
 
+    STATE_COLORS = {
+        "Completed": "#4caf50",
+        "Warning": "#ff9800",
+        "Ready": "#757575",
+    }
+
     def __init__(self) -> None:
         super().__init__()
         self.modules: list[RouteModule] = []
@@ -46,7 +52,7 @@ class TechnicalRouteBar(QWidget):
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(10, 6, 10, 6)
+        self.layout.setContentsMargins(6, 4, 6, 4)
         self.layout.setSpacing(5)
 
     def set_modules(self, modules: list[RouteModule]) -> None:
@@ -58,6 +64,7 @@ class TechnicalRouteBar(QWidget):
         self.modules = modules
         for index, module in enumerate(modules):
             button = QToolButton()
+            button.setObjectName("routeButton")
             button.setCheckable(True)
             button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -73,8 +80,17 @@ class TechnicalRouteBar(QWidget):
     def update_states(self, states: dict[str, str], current_key: str) -> None:
         for module in self.modules:
             button = self.buttons[module.key]
-            button.setText(module.title)
-            button.setChecked(module.key == current_key)
+            state = states.get(module.key, "Ready")
+            color = self.STATE_COLORS.get(state, self.STATE_COLORS["Ready"])
+            button.setText(f"●  {module.title}")
+            is_selected = module.key == current_key
+            # Non-selected buttons show status-colored text; selected buttons
+            # use the QSS white text so it's readable on the highlighted background.
+            if is_selected:
+                button.setStyleSheet("")
+            else:
+                button.setStyleSheet(f"QToolButton#routeButton {{ color: {color}; }}")
+            button.setChecked(is_selected)
 
 
 class DataStatePanel(QGroupBox):
@@ -135,9 +151,6 @@ class ModuleControlPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("moduleControlPanel")
-        self.setStyleSheet(
-            "QWidget#moduleControlPanel { border-left: 1px solid black; }"
-        )
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
         self.controls_stack = QStackedWidget()
@@ -146,7 +159,8 @@ class ModuleControlPanel(QWidget):
         self._placeholder.setWordWrap(True)
         self.controls_stack.addWidget(self._placeholder)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
         header = QHBoxLayout()
         header.addWidget(self.title, 1)
         layout.addLayout(header)
@@ -183,54 +197,15 @@ class ModuleControlPanel(QWidget):
         layout = content.layout() if content is not None else None
         if layout is None:
             return
-        layout.setSpacing(12)
+        layout.setSpacing(8)
         for table in content.findChildren(QTableWidget):
             table.setFixedHeight(180)
             table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            header_font = table.horizontalHeader().font()
-            header_font.setBold(True)
-            table.horizontalHeader().setFont(header_font)
-            table.setStyleSheet(
-                """
-                QHeaderView::section {
-                    background: #e7ebef;
-                    font-weight: bold;
-                    padding: 4px;
-                    border: 0;
-                    border-right: 1px solid #c8cdd3;
-                    border-bottom: 1px solid #c8cdd3;
-                }
-                QTableWidget {
-                    background: white;
-                    border: 1px solid #c8cdd3;
-                    gridline-color: #d8dde2;
-                }
-                """
-            )
         for index in range(layout.count()):
             widget = layout.itemAt(index).widget()
             if isinstance(widget, QGroupBox):
                 widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                widget.setStyleSheet(
-                    """
-                    QGroupBox {
-                        border: 1px solid #c8cdd3;
-                        border-radius: 6px;
-                        margin-top: 12px;
-                        padding: 8px;
-                        background: #fafbfc;
-                    }
-                    QGroupBox::title {
-                        subcontrol-origin: margin;
-                        subcontrol-position: top left;
-                        left: 10px;
-                        padding: 2px 6px;
-                        background: #eef1f4;
-                        border-radius: 3px;
-                    }
-                    """
-                )
                 widget.setMinimumHeight(0)
                 widget.setMaximumHeight(16777215)
                 natural_height = max(widget.sizeHint().height(), 1)
@@ -255,7 +230,7 @@ class ProjectToolbar(QWidget):
         self.structure.currentTextChanged.connect(self.structure_changed)
         self.goal.currentTextChanged.connect(self.goal_changed)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setContentsMargins(6, 4, 6, 4)
         layout.addStretch()
 
         layout.addWidget(QLabel("Analysis Route"), alignment=Qt.AlignRight)

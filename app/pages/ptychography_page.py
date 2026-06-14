@@ -20,6 +20,7 @@ from app.services.ptychography_service import (
 )
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
+from app.theme import Theme
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
@@ -584,7 +585,7 @@ class PtychographyPage(QWidget, WorkerRunner):
     def _refresh_stale_status(self) -> None:
         if self.workflow_state.is_stale(self.STAGE_STEPS[self.stage_mode]):
             self.status_label.setText(STALE_RESULTS_MESSAGE)
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {Theme.STALE};")
 
     def params_snapshot(self) -> dict[str, object]:
         profile = self._current_profile()
