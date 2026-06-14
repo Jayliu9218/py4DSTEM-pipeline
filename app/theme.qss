@@ -160,7 +160,7 @@ QHeaderView::section {
 
 /* --- Module control panel ------------------------------------------------ */
 QWidget#moduleControlPanel {
-    background: #2b2b2b;
+    background: #1e1e1e;
     border-left: 1px solid #5a5a5a;
 }
 QLabel#moduleTitle {
@@ -211,16 +211,29 @@ QGroupBox#paramForm::title {
     padding: 4px 8px;
     color: #e0e0e0;
 }
-/* Uniform fixed row height for inputs inside param-form boxes — gives the
-   aligned "Parameter | Value" table look. */
+/* Inputs inside param-form boxes: deep field with a visible border so they
+   stay distinct from the equally-dark panel background. */
 QGroupBox#paramForm QLineEdit,
 QGroupBox#paramForm QComboBox,
 QGroupBox#paramForm QSpinBox,
 QGroupBox#paramForm QDoubleSpinBox {
+    background: #1a1a1a;
+    border: 1px solid #555555;
     min-height: 20px;
     max-height: 20px;
     border-radius: 2px;
 }
+QGroupBox#paramForm QLineEdit:hover,
+QGroupBox#paramForm QComboBox:hover,
+QGroupBox#paramForm QSpinBox:hover,
+QGroupBox#paramForm QDoubleSpinBox:hover {
+    border: 1px solid #4a9eff;
+}
+QGroupBox#paramForm QComboBox::drop-down {
+    background: #2a2a2a;
+    border-left: 1px solid #555555;
+}
+QGroupBox#paramForm QComboBox::drop-down:hover { background: #333333; }
 /* Flat buttons inside param-form boxes. */
 QGroupBox#paramForm QPushButton {
     min-height: 20px;
