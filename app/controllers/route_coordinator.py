@@ -73,10 +73,6 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
                 "Completed strain analysis.",
                 "Filtered final results, quality maps, and diagnostics.",
                 WorkflowStep.STRAIN_MAP, "crystal_analysis"),
-            RouteModule("export", "Export", "crystalline_results",
-                "Reviewed crystalline results.",
-                "Result arrays, project state, and scientific report.",
-                prerequisite="crystalline_results"),
         ]
     if goal == "Orientation Mapping":
         return shared + [
@@ -88,10 +84,6 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
                 "Explicitly accepted single-pattern match review.",
                 "Orientation mapping and quality review.",
                 WorkflowStep.ORIENTATION_MATCH, "orientation_setup"),
-            RouteModule("export", "Export", "crystalline_results",
-                "Reviewed crystalline results.",
-                "Result arrays, project state, and scientific report.",
-                prerequisite="crystalline_results"),
         ]
     page = {
         "Orientation Mapping": "orientation",
@@ -111,14 +103,10 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
             "BraggVectors; ellipse and rotation references when required.",
             "Applied origin, ellipse, pixel-size, and rotation calibration.",
             WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
-        RouteModule("crystal_analysis", goal, page,
+        RouteModule("crystal_analysis", "Phase Analysis", page,
             "Calibrated BraggVectors and analysis-specific reference inputs.",
             f"{goal} result maps and quality diagnostics.",
             step, "calibration", goal != "Structural Phase Mapping"),
-        RouteModule("export", "Export", "overview",
-            "At least one registered result.",
-            "Result arrays, images, project state, or scientific report.",
-            prerequisite="crystal_analysis"),
     ]
 
 
@@ -136,10 +124,6 @@ def _amorphous_modules(common: RouteModule, goal: str) -> list[RouteModule]:
             "Validated radial profile and analysis-specific parameters.",
             f"{goal} maps and diagnostics.",
             prerequisite="radial_profile", implemented=False),
-        RouteModule("export", "Export", "overview",
-            "At least one registered result.",
-            "Result arrays, images, project state, or scientific report.",
-            prerequisite="amorphous_analysis"),
     ]
 
 
@@ -163,10 +147,6 @@ def _phase_retrieval_modules(common: RouteModule, goal: str) -> list[RouteModule
                 "Accepted CoM preprocessing review.",
                 "Integrated DPC potential, convergence, and stored iterations.",
                 WorkflowStep.DPC, "dpc_preprocess"),
-            RouteModule("export", "Export", "overview",
-                "At least one registered result.",
-                "Intermediate and final DPC results, project state, and report.",
-                prerequisite="dpc"),
         ]
     if goal == "Parallax":
         return [
@@ -185,10 +165,6 @@ def _phase_retrieval_modules(common: RouteModule, goal: str) -> list[RouteModule
                 "Accepted alignment review.",
                 "Optional subpixel reconstruction and expert aberration processing.",
                 WorkflowStep.PARALLAX_ADVANCED, "parallax_review"),
-            RouteModule("export", "Export", "parallax_export",
-                "Accepted core alignment or advanced reconstruction.",
-                "Registered results and an explicitly saved Parallax package.",
-                prerequisite="parallax_review"),
         ]
     if goal == "Ptychography":
         return [
@@ -217,9 +193,6 @@ def _phase_retrieval_modules(common: RouteModule, goal: str) -> list[RouteModule
                 "Accepted QC; optimization is optional.",
                 "Retained formal single-slice, constrained, or mixed-state reconstruction.",
                 WorkflowStep.PTYCHOGRAPHY_ADVANCED, "ptychography_review"),
-            RouteModule("export", "Export", "ptychography_export",
-                "Completed Advanced Reconstruction.", "NPZ, JSON, registered images, and optional native HDF5.",
-                WorkflowStep.PTYCHOGRAPHY_EXPORT, "ptychography_advanced"),
         ]
     return [
         common,
@@ -242,10 +215,6 @@ def _phase_retrieval_modules(common: RouteModule, goal: str) -> list[RouteModule
             "At least one retained DPC or Ptychography result.",
             "Side-by-side comparison of retained phase retrieval outputs.",
             WorkflowStep.METHOD_COMPARISON, "ptychography"),
-        RouteModule("export", "Export", "overview",
-            "At least one registered result.",
-            "Result arrays, images, project state, or scientific report.",
-            prerequisite="method_comparison"),
     ]
 
 

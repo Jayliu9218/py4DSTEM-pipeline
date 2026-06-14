@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-import matplotlib.pyplot as plt
 import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -364,6 +363,8 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
                 ) from exc
             tifffile.imwrite(path, np.asarray(self.result))
         elif path.suffix.lower() == ".png":
+            import matplotlib.pyplot as plt
+
             plt.imsave(path, np.asarray(self.result), cmap="gray")
         else:
             raise ValueError("Supported export formats are PNG, TIFF, and NPY.")

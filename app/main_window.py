@@ -172,11 +172,14 @@ class MainWindow(QMainWindow):
     braggvectors_by_datacube = property(lambda self: self.session.braggvectors_by_datacube)
     reference_braggvectors_cache = property(lambda self: self.session.reference_braggvectors_cache)
 
-    def __init__(self) -> None:
+    def __init__(self, progress_callback=None) -> None:
+        # Optional coarse progress reporter (used by the startup splash).
+        self._progress = progress_callback or (lambda _message: None)
         super().__init__()
         self.setWindowTitle("py4DSTEM Pipeline")
         self.resize(1600, 900)
 
+        self._progress("Initializing services…")
         self.hdf5_service = Hdf5Service()
         self.py4dstem_service = Py4DSTEMService()
         self.session = DataSessionController(self.hdf5_service, self.py4dstem_service)
@@ -197,6 +200,7 @@ class MainWindow(QMainWindow):
         self.diffraction_viewer = ImageViewer()
         self.log_panel = LogPanel()
         self.phase_retrieval_results: dict[str, PhaseContrastResult] = {}
+        self._progress("Building analysis pages…")
         page_objects, self.dpc_service, self.parallax_service = ApplicationPages.build_page_objects(
             providers={
                 "virtual_source": self._get_virtual_detector_source,
@@ -242,6 +246,7 @@ class MainWindow(QMainWindow):
         self.rx_spin.valueChanged.connect(self._refresh_current_4d_image)
         self.ry_spin.valueChanged.connect(self._refresh_current_4d_image)
 
+        self._progress("Laying out workspace…")
         self._build_menu()
         self._build_layout()
         self._build_status_bar()
@@ -337,6 +342,7 @@ class MainWindow(QMainWindow):
             report_service=self.report_service,
             log_panel=self.log_panel,
         )
+        self._progress("Wiring routes and signals…")
         self.route_coordinator = RouteCoordinator(
             toolbar=self.project_toolbar,
             route_bar=self.route_bar,
@@ -368,6 +374,7 @@ class MainWindow(QMainWindow):
         self._apply_image_scaling(self.image_scaling)
         self._apply_image_colormap(self.image_cmap)
         self._update_structure_route()
+        self._progress("Ready")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self._close_current_file()
@@ -421,9 +428,10 @@ class MainWindow(QMainWindow):
         self.theme_action_group = None
         self.dark_theme_action = self.view_menu.addAction("Dark Theme")
         self.dark_theme_action.setCheckable(True)
-        self.dark_theme_action.setChecked(True)
+        self.dark_theme_action.setChecked(False)
         self.light_theme_action = self.view_menu.addAction("Light Theme")
         self.light_theme_action.setCheckable(True)
+        self.light_theme_action.setChecked(True)
         self.theme_action_group = QActionGroup(self)
         self.theme_action_group.addAction(self.dark_theme_action)
         self.theme_action_group.addAction(self.light_theme_action)
@@ -699,6 +707,7 @@ class MainWindow(QMainWindow):
         self.export_controls = self._build_export_panel()
         self.project_toolbar.structure_changed.connect(self._update_structure_route)
         self.project_toolbar.goal_changed.connect(self._update_structure_route)
+        self.project_toolbar.export_clicked.connect(self._show_export_workspace)
         self.route_bar.module_selected.connect(self._select_route_module)
         self.crystalline_mode_action.triggered.connect(
             lambda: self.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
@@ -818,6 +827,20 @@ class MainWindow(QMainWindow):
         self.route_coordinator.select(key)
         self.current_route_key = self.route_coordinator.current_key
 
+    def _show_export_workspace(self) -> None:
+        """Switch the central viewer and control panel to the unified Export view.
+
+        Bypasses the route system so Export is reachable from any route via the
+        toolbar button, independent of the breadcrumb selection.
+        """
+        export_module = RouteModule(
+            key="export", title="Export", page_key="overview",
+            requirements="Registered results to export.",
+            output_target="Exported result files and project state.",
+        )
+        self.viewer_stack.setCurrentWidget(self.main_view)
+        self.module_panel.set_module(export_module, self.export_controls)
+
     def _refresh_pipeline_state(self) -> None:
         if not hasattr(self, "route_coordinator"):
             return
@@ -859,11 +882,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         export_button = QPushButton("Export Registered Result")
         export_button.clicked.connect(self.export_registered_result)
+        csv_button = QPushButton("Export Data to CSV")
+        csv_button.clicked.connect(self.export_results_to_csv)
         save_button = QPushButton("Save Project")
         save_button.clicked.connect(self.save_project)
         report_button = QPushButton("Generate Report")
         report_button.clicked.connect(self.generate_report)
         layout.addWidget(export_button)
+        layout.addWidget(csv_button)
         layout.addWidget(save_button)
         layout.addWidget(report_button)
         layout.addStretch(1)
@@ -876,24 +902,39 @@ class MainWindow(QMainWindow):
         if output_dir is not None:
             self.recent_export_dir = output_dir
 
-    def _populate_sidebar_controls(self) -> None:
-        for page in [
-            self.virtual_detector_page,
-            self.bragg_peaks_page,
-            self.calibration_page,
-            self.orientation_page,
-            self.strain_map_page,
-            self.phase_contrast_page,
-        ]:
-            self.sidebar_controls.addWidget(self._wrap_sidebar_panel(page.controls_panel))
+    def export_results_to_csv(self) -> None:
+        """Batch-export every registered numeric result to CSV files in a folder.
 
-    def _wrap_sidebar_panel(self, widget: QWidget) -> QWidget:
-        if isinstance(widget, QScrollArea):
-            return widget
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(widget)
-        return scroll
+        Each result is written as ``<category>_<name>.csv``. Arrays become
+        long-format tables (row/col/value); scalar dicts become key/value rows.
+        """
+        entries = self.result_registry.list_entries()
+        if not entries:
+            QMessageBox.information(
+                self, "Export to CSV", "No results have been registered yet. Run an analysis step first."
+            )
+            return
+        start_dir = str(self.recent_export_dir or self._default_output_dir())
+        directory = QFileDialog.getExistingDirectory(
+            self, "Export Registered Results to CSV", start_dir
+        )
+        if not directory:
+            return
+        output_dir = Path(directory)
+        succeeded, failed = 0, 0
+        for entry in entries:
+            safe_name = f"{entry.category}_{entry.name}".replace(" ", "_").replace("/", "_")
+            csv_path = output_dir / f"{safe_name}.csv"
+            try:
+                self.result_registry.export(entry.key, csv_path)
+                succeeded += 1
+            except Exception as exc:  # noqa: BLE001 - keep exporting remaining entries
+                failed += 1
+                self.log_panel.log(f"CSV export failed for {entry.key}: {exc}")
+        self.log_panel.log(
+            f"CSV export complete: {succeeded} succeeded, {failed} failed, in {output_dir}."
+        )
+        self.recent_export_dir = output_dir
 
     def _compact_input_controls(self) -> None:
         for widget_type in (NumericLineEdit, QComboBox):

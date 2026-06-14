@@ -4,8 +4,6 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.figure import Figure
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QLabel,
     QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
@@ -495,6 +493,9 @@ class ParallaxPage(QWidget, WorkerRunner):
 
     @staticmethod
     def _curve_rgb(x: np.ndarray, y: np.ndarray, xlabel: str, ylabel: str) -> np.ndarray:
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
         figure = Figure(figsize=(6, 4), dpi=100, tight_layout=True)
         canvas = FigureCanvasAgg(figure)
         axis = figure.subplots()

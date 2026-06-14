@@ -3,9 +3,6 @@ from __future__ import annotations
 from typing import Callable
 
 import numpy as np
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import hsv_to_rgb
-from matplotlib.figure import Figure
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -473,6 +470,9 @@ class DPCPage(QWidget, WorkerRunner):
         primary: np.ndarray,
         transpose: np.ndarray | None = None,
     ) -> np.ndarray:
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
         figure = Figure(figsize=(6, 4), dpi=100, tight_layout=True)
         canvas = FigureCanvasAgg(figure)
         axis = figure.subplots()
@@ -487,6 +487,8 @@ class DPCPage(QWidget, WorkerRunner):
 
     @staticmethod
     def _complex_rgb(image: np.ndarray) -> np.ndarray:
+        from matplotlib.colors import hsv_to_rgb
+
         array = np.asarray(image)
         amplitude = np.abs(array)
         high = float(np.nanpercentile(amplitude, 99)) if amplitude.size else 1.0
