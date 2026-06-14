@@ -224,10 +224,9 @@ class PtychographyWorkflowTests(unittest.TestCase):
         class ThreadAwarePage(PtychographyPage):
             completion_thread = None
 
-            @Slot(object)
-            def _handle_worker_finished(self, result) -> None:
+            def _handle_result(self, result) -> None:
                 self.completion_thread = QThread.currentThread()
-                super()._handle_worker_finished(result)
+                super()._handle_result(result)
 
         page = ThreadAwarePage(lambda: self.datacube, LogPanel(), WorkflowState(), stage_mode="preprocess")
         result = types.SimpleNamespace(images={"Result": np.ones((2, 2))}, metadata={}, elapsed_seconds=0.01)

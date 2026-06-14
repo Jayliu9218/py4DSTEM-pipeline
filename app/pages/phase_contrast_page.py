@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import re
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -32,29 +30,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class PhaseContrastWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                self.finished.emit(self.operation())
-            stream.flush()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class PhaseContrastPage(QWidget):
+class PhaseContrastPage(QWidget, WorkerRunner):
     phase_contrast_ready = Signal(object)
 
     def __init__(
@@ -70,8 +49,7 @@ class PhaseContrastPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.service = PhaseContrastService()
-        self.worker_thread: QThread | None = None
-        self.worker: PhaseContrastWorker | None = None
+        self._init_worker_runner()
         self.current_process_step = WorkflowStep.PHASE_CONTRAST
         self.result: PhaseContrastResult | None = None
 
@@ -268,37 +246,24 @@ class PhaseContrastPage(QWidget):
 
         method = self.method_combo.currentText()
         params = self._current_params()
-        self.status_label.setText(f"Running {method}...")
         self.run_button.setEnabled(False)
-
         self.log_panel.log(f"Phase contrast reconstruction started: {method}")
-        self.log_panel.process_started("Phase contrast", method)
-        self.log_panel.process_snapshot(
-            ProcessSnapshot(
-                step=method,
-                parameters={"method": method, "energy": params.energy},
-            )
-        )
 
         if method == PhaseContrastService.PTYCHOGRAPHY:
-            operation = lambda: self.service.run_ptychography(source, params)
+            operation = lambda _cb: self.service.run_ptychography(source, params)
         elif method == PhaseContrastService.PARALLAX:
-            operation = lambda: self.service.run_parallax(source, params)
+            operation = lambda _cb: self.service.run_parallax(source, params)
         else:
-            operation = lambda: self.service.run_dpc(source, params)
+            operation = lambda _cb: self.service.run_dpc(source, params)
 
-        self.worker_thread = QThread()
-        self.worker = PhaseContrastWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_finished)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.progress.connect(self._handle_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.start()
+        if not self._start_background(
+            "Phase contrast",
+            operation,
+            parameters={"method": method, "energy": params.energy},
+        ):
+            self.run_button.setEnabled(True)
 
-    def _handle_finished(self, result: PhaseContrastResult) -> None:
+    def _handle_result(self, result: PhaseContrastResult) -> None:
         self.result = result
         self.run_button.setEnabled(True)
         self.status_label.setText(f"Done in {result.elapsed_seconds:.1f}s")
@@ -316,18 +281,15 @@ class PhaseContrastPage(QWidget):
         self.phase_contrast_ready.emit(result)
         self.workflow_state.mark_completed(self.current_process_step)
 
-    def _handle_failed(self, error: str) -> None:
+    def _handle_error(self, error: str) -> None:
         self.run_button.setEnabled(True)
         self.status_label.setText("Failed")
         self.log_panel.log(f"Phase contrast failed: {error}")
         self.log_panel.process_finished("Phase contrast failed", error)
 
-    def _handle_progress(self, message: str) -> None:
+    def _handle_progress(self, message: str, fraction: float) -> None:
         self.log_panel.log(message)
-        m = re.search(r"(\d+)%", message)
-        if m:
-            pct = int(m.group(1))
-            self.log_panel.process_progress(f"Phase contrast {pct}%")
+        super()._handle_progress(message, fraction)
 
     def _refresh_stale_status(self) -> None:
         steps = [WorkflowStep.PHASE_CONTRAST]

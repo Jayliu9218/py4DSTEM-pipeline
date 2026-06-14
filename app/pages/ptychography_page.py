@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QLabel,
     QMessageBox, QPushButton, QVBoxLayout, QWidget,
@@ -24,35 +23,11 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class PtychographyWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                result = self.operation()
-            stream.flush()
-            self.finished.emit(result)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class PtychographyPage(QWidget):
+class PtychographyPage(QWidget, WorkerRunner):
     ptychography_result_ready = Signal(object)
-    operation_finished = Signal(object)
-    operation_failed = Signal(str)
-    operation_progress = Signal(str)
 
     STAGE_STEPS = {
         "data": WorkflowStep.PTYCHOGRAPHY_DATA,
@@ -79,11 +54,8 @@ class PtychographyPage(QWidget):
         self.service = service or PtychographyService()
         self.vacuum_probe_provider = vacuum_probe_provider or (lambda: None)
         self.stage_mode = stage_mode
-        self.worker_thread: QThread | None = None
-        self.worker: PtychographyWorker | None = None
-        self.pending_operation = ""
+        self._init_worker_runner()
         self.pending_step = self.STAGE_STEPS[stage_mode]
-        self._is_busy = False
         self.vacuum_probe_path: str | None = None
         self.custom_profile: PtychographyProfile | None = None
         self._synced_profile_id: int | None = None
@@ -95,9 +67,6 @@ class PtychographyPage(QWidget):
         self._build_layout()
         self._configure_stage()
         self._watch_parameters()
-        self.operation_finished.connect(self._handle_worker_finished, Qt.QueuedConnection)
-        self.operation_failed.connect(self._handle_worker_failed, Qt.QueuedConnection)
-        self.operation_progress.connect(self._handle_worker_progress, Qt.QueuedConnection)
         self.workflow_state.changed.connect(self._refresh_stale_status)
 
     def _create_controls(self) -> None:
@@ -420,52 +389,27 @@ class PtychographyPage(QWidget):
         self.status_label.setText(f"Saved {len(saved)} package files.")
 
     def _finish_sync(self, name: str, operation, step: str) -> None:
-        try:
-            result = operation()
-        except Exception as exc:
-            self._failed(str(exc))
-            return
-        self.pending_operation, self.pending_step = name, step
-        self._complete_result(result)
+        self.pending_step = step
+        super()._finish_sync(name, operation)
 
     def _start(self, name: str, operation, step: str) -> None:
-        if self._is_busy or self.worker_thread is not None:
-            self.status_label.setText("A Ptychography operation is already running.")
-            return
-        self.pending_operation, self.pending_step = name, step
-        self._is_busy = True
-        self.status_label.setText(f"Running {name}...")
-        self.refresh_stage()
-        self.log_panel.process_started(name, name)
-        self.log_panel.process_snapshot(ProcessSnapshot(step=name, parameters=self.params_snapshot()))
-        thread = QThread(self)
-        worker = PtychographyWorker(operation)
-        self.worker_thread, self.worker = thread, worker
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self.operation_finished.emit)
-        worker.failed.connect(self.operation_failed.emit)
-        worker.progress.connect(self.operation_progress.emit)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(self._clear_worker_refs, Qt.QueuedConnection)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
+        self.pending_step = step
+        # operation is a no-arg callable; wrap to accept the progress callback.
+        super()._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
 
-    @Slot(object)
-    def _handle_worker_finished(self, result) -> None:
+    def _handle_result(self, result) -> None:
         self._complete_result(result)
 
-    @Slot(str)
-    def _handle_worker_failed(self, error: str) -> None:
-        self._failed(error)
+    def _handle_error(self, message: str) -> None:
+        self._failed(message)
 
-    @Slot(str)
-    def _handle_worker_progress(self, message: str) -> None:
+    def _handle_progress(self, message: str, fraction: float) -> None:
         self.status_label.setText(message)
-        self.log_panel.process_progress(message)
+        super()._handle_progress(message, fraction)
+
+    def _clear_worker_refs(self) -> None:
+        super()._clear_worker_refs()
+        self.refresh_stage()
 
     def _complete_result(self, result: PtychographyStageResult | PhaseContrastResult) -> None:
         self._show_result(result)
@@ -509,18 +453,10 @@ class PtychographyPage(QWidget):
             QMessageBox.information(self, "Ptychography", "Load and assign a Target DataCube first.")
         return source
 
-    @Slot(str)
     def _failed(self, error: str) -> None:
         self.status_label.setText(f"Failed: {error}")
-        self.log_panel.log(f"Ptychography failed: {error}")
-        self.log_panel.process_finished(self.pending_operation or "Ptychography failed", error)
-        self.refresh_stage()
-
-    @Slot()
-    def _clear_worker_refs(self) -> None:
-        self.worker = None
-        self.worker_thread = None
-        self._is_busy = False
+        self.log_panel.log(f"{self.pending_operation or 'Ptychography'} failed: {error}")
+        self.log_panel.process_failed(self.pending_operation or "Ptychography", error)
         self.refresh_stage()
 
     def _setup_params(self) -> PtychographySetupParams:

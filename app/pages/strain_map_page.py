@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal, Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -31,34 +30,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class StrainMapWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, service: BraggStrainService, braggvectors, params: StrainMapParams) -> None:
-        super().__init__()
-        self.service = service
-        self.braggvectors = braggvectors
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                if self.service.strainmap is not None and hasattr(self.service.strainmap, "g1g2_map"):
-                    self.finished.emit(self.service.calculate_strain_from_stages(self.braggvectors, self.params))
-                else:
-                    self.finished.emit(self.service.compute_strain_map(self.braggvectors, self.params))
-            stream.flush()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class StrainMapPage(QWidget):
+class StrainMapPage(QWidget, WorkerRunner):
     def __init__(
         self,
         braggvectors_provider: Callable[[], object | None],
@@ -74,8 +49,7 @@ class StrainMapPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.result: StrainMapResult | None = None
-        self.worker_thread: QThread | None = None
-        self.worker: StrainMapWorker | None = None
+        self._init_worker_runner()
         self.roi_pick_points: list[tuple[int, int]] = []
 
         self.rotation_spin = self._float_input(-360, 360, -21.5, unit="deg")
@@ -150,46 +124,41 @@ class StrainMapPage(QWidget):
         warning = self._calibration_warning(braggvectors)
         if warning:
             self.log_panel.log(f"WARN  {warning}")
-            self.status_label.setText(warning)
-
-        self.status_label.setText(f"Running... {warning}" if warning else "Running...")
         self.run_button.setEnabled(False)
         self.export_button.setEnabled(False)
-        self.log_panel.log("Strain map calculation running...")
-        self.log_panel.process_started(
+        params = self._params()
+        service = self.service
+
+        def operation(_cb):
+            if service.strainmap is not None and hasattr(service.strainmap, "g1g2_map"):
+                return service.calculate_strain_from_stages(braggvectors, params)
+            return service.compute_strain_map(braggvectors, params)
+
+        self._start_background(
             "StrainMap",
-            f"reference={self._reference_mode()}, rotation={self.rotation_spin.value():g}",
-        )
-        self.log_panel.process_snapshot(
-            ProcessSnapshot(
-                step="Strain map",
-                parameters={
-                    "reference": self._reference_mode(),
-                    "roi": (
-                        self.roi_rx_start.value(),
-                        self.roi_rx_end.value(),
-                        self.roi_ry_start.value(),
-                        self.roi_ry_end.value(),
-                    ),
-                    "rotation": self.rotation_spin.value(),
-                    "max_peak_spacing": self.max_spacing_spin.value(),
-                },
-            )
+            operation,
+            parameters={
+                "reference": self._reference_mode(),
+                "roi": (
+                    self.roi_rx_start.value(),
+                    self.roi_rx_end.value(),
+                    self.roi_ry_start.value(),
+                    self.roi_ry_end.value(),
+                ),
+                "rotation": self.rotation_spin.value(),
+                "max_peak_spacing": self.max_spacing_spin.value(),
+            },
         )
 
-        self.worker_thread = QThread()
-        self.worker = StrainMapWorker(self.service, braggvectors, self._params())
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._handle_finished)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.progress.connect(self.log_panel.process_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
-        self.worker_thread.finished.connect(self._clear_worker)
-        self.worker_thread.start()
+    def _on_start(self, name: str) -> None:
+        super()._on_start(name)
+        warning = ""
+        braggvectors = self.braggvectors_provider()
+        if braggvectors is not None:
+            warning = self._calibration_warning(braggvectors)
+        self.status_label.setText(f"Running... {warning}" if warning else "Running...")
+        if warning:
+            self.log_panel.log(f"WARN  {warning}")
 
     def _calibration_warning(self, braggvectors) -> str:
         calstate = getattr(braggvectors, "calstate", {})
@@ -394,7 +363,7 @@ class StrainMapPage(QWidget):
     def _reference_mode(self) -> str:
         return str(self.reference_mode.currentData())
 
-    def _handle_finished(self, result: StrainMapResult) -> None:
+    def _handle_result(self, result: StrainMapResult) -> None:
         self.result = result
         self._display_result()
         self.status_label.setText(f"Done in {result.elapsed_seconds:.2f} s")
@@ -428,16 +397,15 @@ class StrainMapPage(QWidget):
                     metadata,
                 )
 
-    def _handle_failed(self, message: str) -> None:
+    def _handle_error(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.export_button.setEnabled(self.result is not None)
         self.log_panel.log(f"Strain map failed: {message}")
         self.log_panel.process_failed("StrainMap", message)
         QMessageBox.warning(self, "Strain Map", message)
 
-    def _clear_worker(self) -> None:
-        self.worker = None
-        self.worker_thread = None
+    def _clear_worker_refs(self) -> None:
+        super()._clear_worker_refs()
         self.run_button.setEnabled(True)
 
     def start_roi_pick(self) -> None:

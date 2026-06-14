@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal, Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,108 +35,10 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-def _run_with_progress(worker: QObject, operation) -> None:
-    stream = ProgressStream(worker.progress.emit)
-    with redirect_stdout(stream), redirect_stderr(stream):
-        operation()
-    stream.flush()
-
-
-class PeakDetectionWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, service: BraggStrainService, datacube, rx: int, ry: int, params: BraggDetectionParams) -> None:
-        super().__init__()
-        self.service = service
-        self.datacube = datacube
-        self.rx = rx
-        self.ry = ry
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            _run_with_progress(
-                self,
-                lambda: self.finished.emit(
-                    self.service.detect_peaks(self.datacube, self.rx, self.ry, self.params)
-                ),
-            )
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class BraggVectorsWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, service: BraggStrainService, datacube, params: BraggDetectionParams) -> None:
-        super().__init__()
-        self.service = service
-        self.datacube = datacube
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            _run_with_progress(
-                self,
-                lambda: self.finished.emit(self.service.compute_braggvectors(self.datacube, self.params)),
-            )
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class ProbeKernelWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, service: BraggStrainService, datacube, roi: tuple[int, int, int, int]) -> None:
-        super().__init__()
-        self.service = service
-        self.datacube = datacube
-        self.roi = roi
-
-    def run(self) -> None:
-        try:
-            _run_with_progress(
-                self,
-                lambda: self.finished.emit(self.service.prepare_probe_kernel(self.datacube, *self.roi)),
-            )
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class SelectedPeaksWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, service, datacube, positions, params) -> None:
-        super().__init__()
-        self.service = service
-        self.datacube = datacube
-        self.positions = positions
-        self.params = params
-
-    def run(self) -> None:
-        try:
-            _run_with_progress(
-                self,
-                lambda: self.finished.emit(
-                    self.service.detect_selected_positions(self.datacube, self.positions, self.params)
-                ),
-            )
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class BraggPeaksPage(QWidget):
+class BraggPeaksPage(QWidget, WorkerRunner):
     braggvectors_ready = Signal()
 
     def __init__(
@@ -159,8 +60,9 @@ class BraggPeaksPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.cuda_enabled = False
-        self.worker_thread: QThread | None = None
-        self.worker: QObject | None = None
+        self._init_worker_runner()
+        self._pending_result_handler: Callable[[object], None] | None = None
+        self._pending_status: str = ""
         self.roi_pick_points: list[tuple[int, int]] = []
 
         self.rx_spin = self._int_input(0, 100000, 0, unit="px")
@@ -287,7 +189,7 @@ class BraggPeaksPage(QWidget):
             self.roi_ry_end.value(),
         )
         self._start_worker(
-            ProbeKernelWorker(self.service, datacube, roi),
+            lambda cb: self.service.prepare_probe_kernel(datacube, *roi),
             self._handle_probe_kernel_result,
             "Preparing vacuum-probe kernel...",
         )
@@ -297,14 +199,9 @@ class BraggPeaksPage(QWidget):
         if datacube is None:
             QMessageBox.information(self, "Bragg Peaks", "Load a py4DSTEM DataCube first.")
             return
+        rx, ry, params = self.rx_spin.value(), self.ry_spin.value(), self._params()
         self._start_worker(
-            PeakDetectionWorker(
-                self.service,
-                datacube,
-                self.rx_spin.value(),
-                self.ry_spin.value(),
-                self._params(),
-            ),
+            lambda cb: self.service.detect_peaks(datacube, rx, ry, params),
             self._handle_peak_result,
             "Bragg peak detection running...",
         )
@@ -314,8 +211,9 @@ class BraggPeaksPage(QWidget):
         if datacube is None:
             QMessageBox.information(self, "BraggVectors", "Load a py4DSTEM DataCube first.")
             return
+        params = self._params()
         self._start_worker(
-            BraggVectorsWorker(self.service, datacube, self._params()),
+            lambda cb: self.service.compute_braggvectors(datacube, params),
             self._handle_braggvectors_result,
             "Full BraggVectors calculation running...",
         )
@@ -345,8 +243,9 @@ class BraggPeaksPage(QWidget):
                     rng.integers(shape[1] // 3, max(2 * shape[1] // 3, shape[1] // 3 + 1), size=6),
                 )
             ]
+        params = self._params()
         self._start_worker(
-            SelectedPeaksWorker(self.service, datacube, positions, self._params()),
+            lambda cb: self.service.detect_selected_positions(datacube, positions, params),
             self._handle_selected_result,
             "Checking selected scan positions...",
         )
@@ -476,49 +375,44 @@ class BraggPeaksPage(QWidget):
         self.gaussian_fallback_check.setChecked(False)
         self.status_label.setText("Applied editable 01_CBS Au Bragg-detection preset.")
 
-    def _start_worker(self, worker: QObject, finished_slot, status: str) -> None:
-        self.status_label.setText(status)
-        self.run_current_button.setEnabled(False)
-        self.run_full_button.setEnabled(False)
-        self.run_selected_button.setEnabled(False)
-        self.prepare_kernel_button.setEnabled(False)
-        self.pick_roi_button.setEnabled(False)
-        self.log_panel.log(status)
-        self.log_panel.process_started("Bragg calculation", status)
+    def _start_worker(self, operation, finished_slot, status: str) -> None:
+        for button in (
+            self.run_current_button, self.run_full_button, self.run_selected_button,
+            self.prepare_kernel_button, self.pick_roi_button,
+        ):
+            button.setEnabled(False)
+        self._pending_result_handler = finished_slot
+        self._pending_status = status
         params = self._params()
-        self.log_panel.process_snapshot(
-            ProcessSnapshot(
-                step="Bragg disk detection",
-                parameters={
-                    "minAbsoluteIntensity": params.min_absolute_intensity,
-                    "minRelativeIntensity": params.min_relative_intensity,
-                    "minPeakSpacing": params.min_peak_spacing,
-                    "edgeBoundary": params.edge_boundary,
-                    "maxNumPeaks": params.max_num_peaks,
-                    "template": "vacuum probe" if self.service.probe_kernel is not None else "explicit Gaussian fallback",
-                    "corrPower": params.corr_power,
-                    "sigma_dp": params.sigma_dp,
-                    "sigma_cc": params.sigma_cc,
-                    "upsample_factor": params.upsample_factor,
-                    "radial_background_subtraction": params.radial_background_subtraction,
-                    "CUDA": params.cuda,
-                },
-            )
+        self._start_background(
+            "Bragg calculation",
+            operation,
+            parameters={
+                "minAbsoluteIntensity": params.min_absolute_intensity,
+                "minRelativeIntensity": params.min_relative_intensity,
+                "minPeakSpacing": params.min_peak_spacing,
+                "edgeBoundary": params.edge_boundary,
+                "maxNumPeaks": params.max_num_peaks,
+                "template": "vacuum probe" if self.service.probe_kernel is not None else "explicit Gaussian fallback",
+                "corrPower": params.corr_power,
+                "sigma_dp": params.sigma_dp,
+                "sigma_cc": params.sigma_cc,
+                "upsample_factor": params.upsample_factor,
+                "radial_background_subtraction": params.radial_background_subtraction,
+                "CUDA": params.cuda,
+            },
         )
 
-        self.worker_thread = QThread()
-        self.worker = worker
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(finished_slot)
-        self.worker.failed.connect(self._handle_failed)
-        self.worker.progress.connect(self.log_panel.process_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
-        self.worker_thread.finished.connect(self._clear_worker)
-        self.worker_thread.start()
+    def _on_start(self, name: str) -> None:
+        status = getattr(self, "_pending_status", None) or f"Running {name}..."
+        self.status_label.setText(status)
+        self.log_panel.log(status)
+
+    def _handle_result(self, result) -> None:
+        handler = self._pending_result_handler
+        self._pending_result_handler = None
+        if handler is not None:
+            handler(result)
 
     def _handle_peak_result(self, result: PeakDetectionResult) -> None:
         self.table.setHorizontalHeaderLabels(["index", "qx", "qy", "intensity", "distance"])
@@ -648,7 +542,8 @@ class BraggPeaksPage(QWidget):
         ])
         self.workflow_state.mark_completed(WorkflowStep.BRAGG_SELECTED)
 
-    def _handle_failed(self, message: str) -> None:
+    def _handle_error(self, message: str) -> None:
+        self._pending_result_handler = None
         self.status_label.setText("Failed")
         self.log_panel.log(f"Bragg operation failed: {message}")
         self.log_panel.process_failed("Bragg calculation", message)
@@ -664,9 +559,8 @@ class BraggPeaksPage(QWidget):
                 self.table.setItem(row, col, QTableWidgetItem(text))
         self.table.resizeColumnsToContents()
 
-    def _clear_worker(self) -> None:
-        self.worker = None
-        self.worker_thread = None
+    def _clear_worker_refs(self) -> None:
+        super()._clear_worker_refs()
         self.run_current_button.setEnabled(True)
         self.run_full_button.setEnabled(True)
         self.run_selected_button.setEnabled(True)

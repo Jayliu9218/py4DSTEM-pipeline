@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QLabel, QLineEdit,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -20,30 +19,10 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class OrientationWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                result = self.operation()
-            stream.flush()
-            self.finished.emit(result)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class OrientationPage(QWidget):
+class OrientationPage(QWidget, WorkerRunner):
     STAGE_STEPS = {
         "plan": WorkflowStep.ORIENTATION_PLAN,
         "setup": WorkflowStep.ORIENTATION_REVIEW,
@@ -69,8 +48,7 @@ class OrientationPage(QWidget):
         self.service = service or OrientationService()
         self.stage_mode = stage_mode
         self.cuda_enabled = False
-        self.worker_thread: QThread | None = None
-        self.worker: OrientationWorker | None = None
+        self._init_worker_runner()
         self.pending_name = ""
         self.review_position_target: OrientationPage | None = None
         self.workspace = workspace or AdaptiveImageWorkspace()
@@ -242,22 +220,10 @@ class OrientationPage(QWidget):
         if name == "Full Orientation Map":
             self.workspace.lock_auto_layout()
         self.pending_name = name
-        self._notify(f"Running {name}...", "info")
-        self.log_panel.process_started(name)
-        self.log_panel.process_snapshot(ProcessSnapshot(step=name, parameters=self.params_snapshot()))
-        self.worker_thread = QThread()
-        self.worker = OrientationWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._finished)
-        self.worker.failed.connect(self._failed)
-        self.worker.progress.connect(self.log_panel.process_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self._clear_worker)
-        self.worker_thread.start()
+        # operation is a no-arg lambda; wrap to accept the progress callback.
+        self._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
 
-    def _finished(self, result: OrientationStageResult) -> None:
+    def _handle_result(self, result: OrientationStageResult) -> None:
         figures = [
             FigureResult(name, image, image_kind="rgb" if np.asarray(image).ndim == 3 else "intensity")
             for name, image in result.images.items()
@@ -314,13 +280,8 @@ class OrientationPage(QWidget):
         self.log_panel.process_failed(self.pending_name or "Orientation", message)
         QMessageBox.warning(self, "Orientation", message)
 
-    def _clear_worker(self) -> None:
-        if self.worker is not None:
-            self.worker.deleteLater()
-        if self.worker_thread is not None:
-            self.worker_thread.deleteLater()
-        self.worker = None
-        self.worker_thread = None
+    def _handle_error(self, message: str) -> None:
+        self._failed(message)
 
     def set_cuda_enabled(self, enabled: bool) -> None:
         self.cuda_enabled = enabled

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Signal, Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,29 +33,10 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
-from app.widgets.progress_stream import ProgressStream
+from app.widgets.worker_runner import WorkerRunner
 
 
-class CalibrationWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, operation) -> None:
-        super().__init__()
-        self.operation = operation
-
-    def run(self) -> None:
-        try:
-            stream = ProgressStream(self.progress.emit)
-            with redirect_stdout(stream), redirect_stderr(stream):
-                self.finished.emit(self.operation())
-            stream.flush()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class CalibrationPage(QWidget):
+class CalibrationPage(QWidget, WorkerRunner):
     def __init__(
         self,
         datacube_provider: Callable[[], object | None],
@@ -79,8 +59,7 @@ class CalibrationPage(QWidget):
         self.log_panel = log_panel
         self.workflow_state = workflow_state
         self.result_registry = result_registry
-        self.worker_thread: QThread | None = None
-        self.worker: CalibrationWorker | None = None
+        self._init_worker_runner()
         self.current_process_name = "Calibration step"
         self.current_process_step = WorkflowStep.CALIBRATION_APPLY
 
@@ -609,40 +588,25 @@ class CalibrationPage(QWidget):
             return
         for button in self.buttons:
             button.setEnabled(False)
-        self.status_label.setText("Running calibration step...")
         self.current_process_name = process_name
         self.current_process_step = process_step
-        self.log_panel.process_started(process_name)
-        self.log_panel.process_snapshot(
-            ProcessSnapshot(
-                step=process_name,
-                parameters={
-                    "analysis_target": self.analysis_target.currentText(),
-                    "ellipse_inner": self.ellipse_inner.value(),
-                    "ellipse_outer": self.ellipse_outer.value(),
-                    "sampling": self.sampling_spin.value(),
-                    "q_pixel_size": self.pixel_spin.value(),
-                    "qr_rotation": self.rotation_spin.value(),
-                    "transfer_correction": self.transfer_correction.currentText(),
-                    "transfer_target": self.transfer_target.currentText(),
-                },
-            )
+        # operation is a no-arg callable; wrap to accept the progress callback.
+        self._start_background(
+            process_name,
+            lambda _cb: operation(),
+            parameters={
+                "analysis_target": self.analysis_target.currentText(),
+                "ellipse_inner": self.ellipse_inner.value(),
+                "ellipse_outer": self.ellipse_outer.value(),
+                "sampling": self.sampling_spin.value(),
+                "q_pixel_size": self.pixel_spin.value(),
+                "qr_rotation": self.rotation_spin.value(),
+                "transfer_correction": self.transfer_correction.currentText(),
+                "transfer_target": self.transfer_target.currentText(),
+            },
         )
-        self.worker_thread = QThread()
-        self.worker = CalibrationWorker(operation)
-        self.worker.moveToThread(self.worker_thread)
-        self.worker_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self._finished)
-        self.worker.failed.connect(self._failed)
-        self.worker.progress.connect(self.log_panel.process_progress)
-        self.worker.finished.connect(self.worker_thread.quit)
-        self.worker.failed.connect(self.worker_thread.quit)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
-        self.worker_thread.finished.connect(self._clear_worker)
-        self.worker_thread.start()
 
-    def _finished(self, result: CalibrationActionResult) -> None:
+    def _handle_result(self, result: CalibrationActionResult) -> None:
         quality = ", ".join(f"{key}={value:.4g}" if isinstance(value, float) else f"{key}={value}" for key, value in result.quality.items())
         self.status_label.setText(
             f"{result.message} ({result.elapsed_seconds:.2f} s)"
@@ -679,15 +643,14 @@ class CalibrationPage(QWidget):
         self.refresh_status(show_histogram=False)
         self.workflow_state.mark_completed(self.current_process_step)
 
-    def _failed(self, message: str) -> None:
+    def _handle_error(self, message: str) -> None:
         self.status_label.setText("Failed")
         self.log_panel.log(f"Calibration failed: {message}")
         self.log_panel.process_failed(self.current_process_name, message)
         QMessageBox.warning(self, "Calibration", message)
 
-    def _clear_worker(self) -> None:
-        self.worker = None
-        self.worker_thread = None
+    def _clear_worker_refs(self) -> None:
+        super()._clear_worker_refs()
         for button in self.buttons:
             button.setEnabled(True)
         self.apply_ellipse_button.setEnabled(self.service.pending_ellipse is not None)
