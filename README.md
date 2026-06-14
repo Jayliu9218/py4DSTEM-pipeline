@@ -1,44 +1,53 @@
 # py4DSTEM Pipeline
 
-A minimal Windows desktop application for browsing py4DSTEM/HDF5 data and building an interactive 4D-STEM processing workflow.
+A Windows desktop application for browsing py4DSTEM/HDF5 data and running guided 4D-STEM processing workflows with stage-based review gates.
 
-The current app is an MVP built with:
+Built with:
 
-- PySide6 for the desktop UI
-- PyQtGraph for image display
-- h5py for raw HDF5/EMD browsing
-- py4DSTEM for DataCube, Bragg peak, calibration, virtual detector, and strain workflows
+- **PySide6** for the desktop UI
+- **PyQtGraph** for interactive image display
+- **h5py** for raw HDF5/EMD browsing
+- **py4DSTEM** for DataCube, Bragg peak, calibration, orientation, strain, and phase-retrieval algorithms
 
 ## Current Features
 
+### Data & Preprocessing
 - Open `.h5`, `.hdf5`, and `.emd` files
-- Browse HDF5 groups and datasets in a tree
-- Display 2D datasets
-- Browse 4D datasets and py4DSTEM DataCube objects
-- Select `rx / ry` scan coordinates and display diffraction patterns
-- Generate virtual detector images:
-  - Bright Field
-  - Annular Dark Field
-  - Custom Annular Detector
-- Measure probe center/radius from the mean diffraction pattern and use them as
-  virtual detector defaults
-- Prepare a sigmoid Bragg-detection kernel from a user-selected vacuum scan ROI
-- Run Bragg peak detection on the current diffraction pattern
-- Check a reproducible set of selected scan positions before running the full map
-- Run full BraggVectors calculation
-- Measure/fit origin and ellipticity, then set pixel size and QR rotation
-- Explicitly choose and apply calibration corrections before orientation or strain analysis
-- Track parameter-to-step dependencies across the workflow; when parameters or
-  upstream results change after downstream calculations have completed, affected
-  pages show: `Parameters have been updated, but the calculation update has not yet been completed.`
-- Adjust orientation-plan and orientation-match parameters independently, following
-  the corresponding groups in `py4dstem_final_complete_workflow_fixed.ipynb`
-- Use consistent left-control/right-drawing layouts for Bragg, calibration,
-  orientation, and strain stages
-- Mirror command-line calculation progress into the shared Calculation Process panel
-- Load CIF crystal structures, create orientation plans, and match orientation maps
-- Run StrainMap using automatic valid points or a selected reference ROI
-- Export virtual detector and strain map results
+- Browse HDF5 groups and datasets in a tree view
+- Display 2D datasets and browse 4D DataCube scan positions
+- Mean / max diffraction pattern diagnostics
+- Hot-pixel detection and correction
+
+### Virtual Imaging
+- Bright Field (BF), Annular Dark Field (ADF), and custom annular detectors
+- ROI virtual diffraction
+- Off-axis dark-field detector
+
+### Bragg & Calibration
+- Sigmoid probe-kernel preparation from a vacuum scan ROI
+- Bragg peak detection (single pattern, selected positions, or full map)
+- Subpixel refinement (poly, multicorr, pixel)
+- Origin fitting (max/CoM, plane/parabola/bezier_two); ellipse fitting; pixel-size and rotation calibration
+- CBS (convergent-beam) presets for common materials (e.g. Au)
+
+### Crystalline Workflows
+- **Orientation Mapping**: CIF or manual crystal setup, orientation plan, single-pattern acceptance gate, full orientation map
+- **Strain Mapping**: Bragg vector map → basis selection → reference selection → strain components and quality maps
+- **Crystalline Results**: unified results review, quality diagnostics, and export
+
+### Phase Retrieval Workflows
+- **DPC / CoM**: segmented virtual detector → CoM preprocessing with rotation/transpose correction → review/accept gate → integrated reconstruction
+- **Parallax**: BF disk definition → alignment (Fast/Notebook Quality/Custom presets) → review gate → subpixel refinement, aberration fitting/CTF diagnostics
+- **Ptychography**: data & probe setup → geometry calibration → preprocessing acceptance → Quick Reconstruction → QC review/accept → parameter optimization → Advanced Reconstruction → export
+- **Method Comparison**: side-by-side DPC and Ptychography result viewer
+
+### Shared Infrastructure
+- Stage-based workflow with explicit review/accept gates and downstream staleness tracking
+- CPU/GPU execution choice with CUDA guidance
+- Thread-safe background calculations with live progress reporting
+- Project-state persistence (save/load `.pipeline` files)
+- Scientific report generation
+- Result registry for export (NPZ, JSON, PNG, TIFF)
 
 ## Environments
 
@@ -71,23 +80,54 @@ default.
 ```text
 main.py
 app/
-  main_window.py
+  main_window.py                          # Application shell, menu, dialogs
+  controllers/
+    application_pages.py                  # Page factory
+    route_coordinator.py                  # Route module builder
+    project_coordinator.py                # Project save/load
+    data_session_controller.py            # HDF5 session state
   pages/
-    bragg_peaks_page.py
-    calibration_page.py
-    orientation_page.py
-    strain_map_page.py
-    virtual_detector_page.py
+    preprocessing_page.py                 # Hot-pixel detection/correction
+    virtual_detector_page.py              # BF/ADF/annular virtual imaging
+    bragg_peaks_page.py                   # Bragg peak detection
+    calibration_page.py                   # Origin, ellipse, pixel, rotation
+    orientation_page.py                   # Orientation mapping (setup + map stages)
+    strain_map_page.py                    # Strain map calculation
+    crystalline_results_page.py           # Unified results & quality review
+    dpc_page.py                           # DPC (segmented/preprocess/reconstruct)
+    parallax_page.py                      # Parallax (BF/alignment/advanced)
+    ptychography_page.py                  # Ptychography (all stages)
+    phase_contrast_page.py                # Legacy phase-contrast overview
+    method_comparison_page.py             # DPC vs Ptychography comparison
+    bf_df_preview_page.py                 # BF/DF quick preview
+    radial_profile_page.py, rdf_page.py,
+    fem_page.py, amorphous_strain_page.py # Amorphous routes (in development)
+    structural_phase_page.py              # Structural phase (in development)
   services/
-    bragg_strain_service.py
-    hdf5_service.py
-    orientation_service.py
-    py4dstem_service.py
-    virtual_detector_service.py
+    array_reduction.py                    # Streaming HDF5 reductions
+    bragg_strain_service.py               # Bragg detection, strain, calibration params
+    hdf5_service.py                       # HDF5 file I/O
+    orientation_service.py                # Orientation plan & match
+    parallax_service.py                   # Parallax workflow stages
+    phase_contrast_service.py             # DPC/legacy phase retrieval
+    preprocessing_service.py              # Hot-pixel correction
+    project_state_service.py              # .pipeline file persistence
+    ptychography_service.py               # Ptychography workflow stages
+    py4dstem_service.py                   # py4DSTEM version adapter
+    report_service.py                     # Scientific report generation
+    result_registry.py                    # Result registration & export
+    virtual_detector_service.py           # Virtual detector calculations
+    workflow_state.py                     # Step tracking & staleness
   widgets/
-    hdf5_tree_widget.py
-    image_viewer.py
-    log_panel.py
+    adaptive_image_workspace.py           # Multi-result figure workspace
+    hdf5_tree_widget.py                   # HDF5 tree browser
+    image_grid_viewer.py                  # Grid-based image display
+    image_viewer.py                       # Single-image QtGraph viewer
+    log_panel.py                          # Calculation process log
+    numeric_line_edit.py                  # Scientific-notation spin box
+    pipeline_shell.py                     # Navigation sidebar
+    progress_stream.py                    # Worker progress capture
+    rgb_image_viewer.py                   # RGB composite viewer
 packaging/
   py4dstem_pipeline.spec
   build_pyinstaller.ps1
@@ -96,6 +136,11 @@ packaging/
   build_nuitka.ps1
   README_packaging.md
 ```
+
+## py4DSTEM Resources
+
+- [py4DSTEM source repository](https://github.com/py4dstem/py4DSTEM)
+- [py4DSTEM tutorials](https://github.com/py4dstem/py4DSTEM_tutorials)
 
 ## Release Roadmap
 
@@ -154,15 +199,23 @@ Use Nuitka when a compiled distribution is preferred:
 
 See [packaging/README_packaging.md](packaging/README_packaging.md).
 
+## License
+
+This project is distributed under the **GNU General Public License version 3 (GPLv3)**.
+See [LICENSE](LICENSE) for the full text.
+
+py4DSTEM is open-source software distributed under a GPLv3 license. It is free
+to use, alter, or build on, provided that any work derived from py4DSTEM is also
+kept free and open under a GPLv3 license.
+
 ## Notes for Development
 
 - Keep py4DSTEM algorithms inside `app/services/`.
-- Keep UI pages thin: they should collect parameters, start workers, display results, and log status.
-- Qt Designer `.ui` files belong in `ui/`; use
-  `.\scripts\open_qt_designer.ps1` after activating `4dstem`. See
-  `docs/qt_designer_workflow.md` before migrating a page from Python-built
-  layouts to Designer-managed layouts.
-- Put expensive calculations in workers so the UI remains responsive.
-- Test and debug inside `4dstem`.
+- UI pages should be thin: collect parameters, start workers, display results, and log status.
+- Use worker threads for expensive calculations so the UI remains responsive.
+- Add new pages to `app/controllers/application_pages.py` and add route modules in
+  `app/controllers/route_coordinator.py`.
+- Add new workflow steps to `app/services/workflow_state.py`.
+- Test and debug inside the `4dstem` Conda environment.
 - Keep packaging-only tools and release builds inside
   `.conda\py4dstem-pipeline-packaging`.
