@@ -468,6 +468,10 @@ QDockWidget {
     titlebar-close-icon: none;
     titlebar-normal-icon: none;
 }
+/* Prominent separator between the Controls dock and the central figure grid. */
+QDockWidget#controlsDock {
+    border-left: 2px solid #7a7a7a;
+}
 QDockWidget::title {
     background: #1f1f1f;
     border-bottom: 2px solid #5a5a5a;
