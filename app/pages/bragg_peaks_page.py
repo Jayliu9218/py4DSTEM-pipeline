@@ -528,7 +528,6 @@ class BraggPeaksPage(QWidget, WorkerRunner):
                 "Probe Kernel Line Profiles (L=24, W=1)",
                 result.profile_plot,
                 image_kind="color",
-                flip_x=True,
             ),
         ])
         self.workflow_state.mark_completed(WorkflowStep.PROBE_KERNEL)
