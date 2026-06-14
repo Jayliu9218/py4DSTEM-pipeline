@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+import PySide6
 from PySide6.QtWidgets import QFormLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.services.preprocessing_service import HotPixelParams, HotPixelPreview, PreprocessingService
@@ -33,7 +34,7 @@ class PreprocessingPage(QWidget):
         self.preview_button = QPushButton("Preview Hot Pixels")
         self.apply_button = QPushButton("Apply Hot-Pixel Filter")
         self.apply_button.setEnabled(False)
-        self.diagnostics_button = QPushButton("Show Basic Diagnostics")
+        self.diagnostics_button = QPushButton("Show Datacube")
         self.show_selected_button = QPushButton("Show Selected Data")
         self.status = QLabel("Load and assign a Target DataCube.")
         self.status.setWordWrap(True)
@@ -48,8 +49,16 @@ class PreprocessingPage(QWidget):
         form.addRow("hot-pixel threshold", self.threshold)
         control_layout = QVBoxLayout()
         control_layout.addWidget(controls)
+        
+        """      
         control_layout.addWidget(self.diagnostics_button)
         control_layout.addWidget(self.show_selected_button)
+        """
+        button_row = PySide6.QtWidgets.QHBoxLayout()
+        button_row.addWidget(self.diagnostics_button)
+        button_row.addWidget(self.show_selected_button)
+        control_layout.addLayout(button_row)
+        
         control_layout.addWidget(self.preview_button)
         control_layout.addWidget(self.apply_button)
         control_layout.addWidget(self.status)

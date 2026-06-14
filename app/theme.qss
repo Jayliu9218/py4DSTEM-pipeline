@@ -161,7 +161,7 @@ QHeaderView::section {
 /* --- Module control panel ------------------------------------------------ */
 QWidget#moduleControlPanel {
     background: #2b2b2b;
-    border-left: 1px solid #3c3c3c;
+    border-left: 1px solid #5a5a5a;
 }
 QLabel#moduleTitle {
     font-size: 10pt;
@@ -451,14 +451,14 @@ QScrollArea {
 /* --- Dock widgets -------------------------------------------------------- */
 QDockWidget {
     color: #e0e0e0;
-    border: 1px solid #3c3c3c;
+    border: 1px solid #5a5a5a;
     titlebar-close-icon: none;
     titlebar-normal-icon: none;
 }
 QDockWidget::title {
     background: #1f1f1f;
-    border-bottom: 1px solid #4a4a4a;
-    padding: 4px 8px;
+    border-bottom: 2px solid #5a5a5a;
+    padding: 5px 8px;
     text-align: left;
     color: #e0e0e0;
     font-weight: bold;

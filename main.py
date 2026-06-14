@@ -15,8 +15,8 @@ _SPLASH_MIN_MS = 2500
 
 
 def _load_stylesheet() -> str:
-    # Light theme is the application default; users can switch to dark via View menu.
-    qss_path = Path(__file__).parent / "app" / "theme_light.qss"
+    # Dark theme is the application default; users can switch to light via View menu.
+    qss_path = Path(__file__).parent / "app" / "theme.qss"
     try:
         return qss_path.read_text(encoding="utf-8")
     except OSError:
