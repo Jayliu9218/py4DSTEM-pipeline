@@ -168,6 +168,15 @@ QWidget#moduleControlPanel {
     background: #1e1e1e;
     border-left: 2px solid #7a7a7a;
 }
+QStackedWidget#moduleControlsSurface {
+    background: #1e1e1e;
+    border: 1px solid #3c3c3c;
+}
+QScrollArea#moduleControlsScroll,
+QScrollArea#moduleControlsScroll > QWidget > QWidget,
+QWidget#moduleControlsContent {
+    background: #1e1e1e;
+}
 QLabel#moduleTitle {
     font-size: 10pt;
     font-weight: bold;

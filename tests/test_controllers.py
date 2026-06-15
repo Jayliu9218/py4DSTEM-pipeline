@@ -74,15 +74,17 @@ class ControllerTests(unittest.TestCase):
         page.workspace.clear_results = Mock(wraps=page.workspace.clear_results)
         default = QWidget()
         parallax = QWidget()
+        dpc = QWidget()
         pages = ApplicationPages(
             viewer_pages={"one": page, "alias": page},
             route_controls={"data_setup": default},
             crystal_controls={},
             amorphous_controls={},
-            dpc_controls={},
+            dpc_controls={"default": dpc},
             export_controls={"Parallax": parallax, "default": default},
         )
         self.assertIs(pages.controls_for_route("export", "Parallax"), parallax)
+        self.assertIs(pages.controls_for_route("dpc", "Method Comparison"), dpc)
         pages.clear_workspaces()
         page.workspace.clear_results.assert_called_once()
 

@@ -178,8 +178,10 @@ class ModuleControlPanel(QWidget):
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
         self.controls_stack = QStackedWidget()
+        self.controls_stack.setObjectName("moduleControlsSurface")
         self._controls: dict[int, QWidget] = {}
         self._placeholder = QLabel("Select a module to inspect its parameters.")
+        self._placeholder.setObjectName("moduleControlsContent")
         self._placeholder.setWordWrap(True)
         self.controls_stack.addWidget(self._placeholder)
         layout = QVBoxLayout(self)
@@ -200,11 +202,16 @@ class ModuleControlPanel(QWidget):
         if identity not in self._controls:
             if isinstance(controls, QScrollArea):
                 scroll = controls
+                content = scroll.widget()
             else:
                 scroll = QScrollArea()
                 controls.setMinimumSize(0, 0)
                 controls.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
                 scroll.setWidget(controls)
+                content = controls
+            scroll.setObjectName("moduleControlsScroll")
+            if content is not None and not content.objectName():
+                content.setObjectName("moduleControlsContent")
             scroll.setWidgetResizable(True)
             scroll.setMinimumSize(0, 0)
             scroll.setFrameShape(QFrame.NoFrame)
@@ -250,13 +257,11 @@ class ModuleControlPanel(QWidget):
             form.setHorizontalSpacing(0)
         group.setObjectName("paramForm")
 
-        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Keep groups compact, but allow wrapped status/warning labels to grow
+        # after a calculation updates their text.
+        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         group.setMinimumHeight(0)
         group.setMaximumHeight(16777215)
-        natural_height = max(group.sizeHint().height(), 1)
-
-        group.setMinimumHeight(natural_height)
-        group.setMaximumHeight(natural_height)
 
 
 

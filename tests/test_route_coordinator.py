@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import Mock
 
-from app.controllers.route_coordinator import GOALS_BY_STRUCTURE, build_route_modules
+from app.controllers.route_coordinator import GOALS_BY_STRUCTURE, RouteCoordinator, build_route_modules
+from app.services.workflow_state import WorkflowState, WorkflowStep
 
 
 class RouteDefinitionTests(unittest.TestCase):
@@ -57,6 +59,43 @@ class RouteDefinitionTests(unittest.TestCase):
             ["data_setup", "virtual_imaging", "bragg_detection", "calibration",
              "crystal_analysis", "crystalline_results", "export"],
         )
+
+    def test_route_states_enforce_data_and_completed_prerequisites(self) -> None:
+        ready = [False]
+        workflow_state = WorkflowState()
+        coordinator = RouteCoordinator(
+            toolbar=Mock(),
+            route_bar=Mock(),
+            module_panel=Mock(),
+            viewer_stack=Mock(),
+            viewer_pages={},
+            workflow_state=workflow_state,
+            controls_provider=Mock(),
+            workspace_provider=Mock(),
+            style_refresher=Mock(),
+            data_ready_provider=lambda: ready[0],
+        )
+        coordinator.modules = build_route_modules("Phase Retrieval / Ptychography", "DPC / CoM")
+
+        states = coordinator.states()
+        self.assertEqual(states["data_setup"], "Ready")
+        self.assertEqual(states["bf_df_preview"], "Disabled")
+        self.assertEqual(states["dpc"], "Disabled")
+        self.assertEqual(states["export"], "Disabled")
+
+        ready[0] = True
+        states = coordinator.states()
+        self.assertEqual(states["bf_df_preview"], "Ready")
+        self.assertEqual(states["dpc_preprocess"], "Ready")
+        self.assertEqual(states["dpc"], "Disabled")
+
+        workflow_state.mark_completed(WorkflowStep.DPC_REVIEW)
+        self.assertEqual(coordinator.states()["dpc"], "Ready")
+        workflow_state.mark_completed(WorkflowStep.DPC)
+        self.assertEqual(coordinator.states()["export"], "Ready")
+
+        workflow_state.parameters_updated(WorkflowStep.DPC_REVIEW)
+        self.assertEqual(coordinator.states()["dpc"], "Disabled")
 
 
 if __name__ == "__main__":

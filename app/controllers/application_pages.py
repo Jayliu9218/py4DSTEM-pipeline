@@ -216,7 +216,7 @@ class ApplicationPages:
         if key == "amorphous_analysis":
             return self.amorphous_controls.get(goal)
         if key == "dpc":
-            return self.dpc_controls.get(goal)
+            return self.dpc_controls.get(goal, self.dpc_controls.get("default"))
         if key == "export":
             return self.export_controls.get(goal, self.export_controls.get("default"))
         return self.route_controls.get(key)

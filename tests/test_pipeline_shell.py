@@ -105,6 +105,18 @@ class PipelineShellTests(unittest.TestCase):
             self.window.crystalline_results_page,
         )
 
+    def test_phase_retrieval_export_routes_use_dedicated_pages(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        for goal, page in (
+            ("Parallax", self.window.parallax_export_page),
+            ("Ptychography", self.window.ptychography_export_page),
+        ):
+            self.window.project_toolbar.goal.setCurrentText(goal)
+            export = self.window.route_modules[-1]
+            self.assertEqual(export.page_key, f"{goal.lower()}_export")
+            self.window._select_route_module("export")
+            self.assertIs(self.window.viewer_stack.currentWidget(), page)
+
     def test_structure_and_goal_change_rebuilds_route(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
         self.window.project_toolbar.goal.setCurrentText("FEM")
@@ -137,6 +149,21 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(segmented.prerequisite, "data_setup")
         self.assertEqual(preprocess.prerequisite, "data_setup")
         self.assertEqual(dpc.prerequisite, "dpc_preprocess")
+
+    def test_route_buttons_follow_data_and_completed_prerequisites(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertTrue(window.route_bar.buttons["data_setup"].isEnabled())
+            self.assertFalse(window.route_bar.buttons["virtual_imaging"].isEnabled())
+            window.route_coordinator.data_ready_provider = lambda: True
+            window._refresh_pipeline_state()
+            self.assertTrue(window.route_bar.buttons["virtual_imaging"].isEnabled())
+            self.assertFalse(window.route_bar.buttons["bragg_detection"].isEnabled())
+
+            window.workflow_state.mark_completed(WorkflowStep.VIRTUAL_DETECTOR)
+            self.assertTrue(window.route_bar.buttons["bragg_detection"].isEnabled())
+        finally:
+            window.close()
 
     def test_dpc_stages_have_independent_workspaces(self) -> None:
         pages = [
@@ -546,8 +573,22 @@ class PipelineShellTests(unittest.TestCase):
         for index in range(controls.layout().count()):
             widget = controls.layout().itemAt(index).widget()
             if isinstance(widget, QGroupBox):
-                self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Fixed)
-                self.assertEqual(widget.minimumHeight(), widget.maximumHeight())
+                self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Preferred)
+                self.assertLess(widget.minimumHeight(), widget.maximumHeight())
+
+    def test_dynamic_parameter_group_grows_for_multiline_warnings(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.goal.setCurrentText("Ptychography")
+        self.window._select_route_module("ptychography_data")
+        page = self.window.ptychography_data_page
+        group = page.groups["data"]
+        before = group.sizeHint().height()
+
+        page.suitability_label.setText("\n".join(["Long suitability warning " * 8] * 3))
+        self.app.processEvents()
+
+        self.assertGreater(group.sizeHint().height(), before)
+        self.assertGreaterEqual(group.maximumHeight(), group.sizeHint().height())
 
     def test_data_setup_does_not_double_shared_workspace_margin(self) -> None:
         margins = self.window.main_view.layout().contentsMargins()
@@ -596,6 +637,15 @@ class PipelineShellTests(unittest.TestCase):
         self.assertTrue(
             all(button.sizePolicy().horizontalPolicy() == QSizePolicy.Ignored for button in self.window.route_bar.buttons.values())
         )
+
+    def test_controls_parameters_share_a_framed_content_surface(self) -> None:
+        self.window._select_route_module("calibration")
+        surface = self.window.module_panel.controls_stack
+        scroll = surface.currentWidget()
+
+        self.assertEqual(surface.objectName(), "moduleControlsSurface")
+        self.assertEqual(scroll.objectName(), "moduleControlsScroll")
+        self.assertEqual(scroll.widget().objectName(), "moduleControlsContent")
 
     def test_parameter_form_labels_do_not_use_zebra_backgrounds(self) -> None:
         self.window._select_route_module("calibration")
