@@ -13,10 +13,13 @@ class Hdf5TreeWidget(QTreeWidget):
         self.setHeaderLabels(["HDF5 tree"])
         self.setTextElideMode(Qt.ElideMiddle)
         self.currentItemChanged.connect(self._emit_selected_node)
+        self.itemExpanded.connect(self._load_group_children)
         self.info_root_item: QTreeWidgetItem | None = None
+        self._hdf5_file: h5py.File | None = None
 
     def populate(self, hdf5_file: h5py.File) -> None:
         self.clear()
+        self._hdf5_file = hdf5_file
         root_item = QTreeWidgetItem(["/"])
         root_item.setToolTip(0, "/")
         root_item.setData(0, 256, "/")
@@ -24,6 +27,7 @@ class Hdf5TreeWidget(QTreeWidget):
         self.addTopLevelItem(root_item)
 
         self._add_children(root_item, hdf5_file, "/")
+        root_item.setData(0, 258, True)
         root_item.setExpanded(True)
         spacer = QTreeWidgetItem([""])
         spacer.setFlags(Qt.NoItemFlags)
@@ -53,7 +57,30 @@ class Hdf5TreeWidget(QTreeWidget):
             parent_item.addChild(item)
 
             if isinstance(node, h5py.Group):
-                self._add_children(item, node, node_path)
+                item.setData(0, 258, False)
+                if len(node):
+                    placeholder = QTreeWidgetItem(["Loading..."])
+                    placeholder.setFlags(Qt.NoItemFlags)
+                    item.addChild(placeholder)
+
+    def _load_group_children(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, 257) != "group" or bool(item.data(0, 258)):
+            return
+        if self._hdf5_file is None:
+            return
+        path = item.data(0, 256)
+        try:
+            group = self._hdf5_file[str(path)]
+            if not isinstance(group, h5py.Group):
+                return
+            item.takeChildren()
+            self._add_children(item, group, str(path))
+            item.setData(0, 258, True)
+        except (KeyError, OSError, RuntimeError):
+            item.takeChildren()
+            error = QTreeWidgetItem(["Unable to load group"])
+            error.setFlags(Qt.NoItemFlags)
+            item.addChild(error)
 
     def _emit_selected_node(self, item: QTreeWidgetItem | None, *_args) -> None:
         if item is None:

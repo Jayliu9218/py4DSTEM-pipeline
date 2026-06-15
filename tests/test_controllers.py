@@ -46,6 +46,45 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_data_session_reuses_recent_diffraction_slices(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "diffraction_cache.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("data", data=np.ones((2, 2, 3, 4)))
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        try:
+            source = session.open_file(path)
+            dataset = source["data"]
+            session.hdf5_service.read_4d_diffraction_pattern = Mock(
+                wraps=session.hdf5_service.read_4d_diffraction_pattern
+            )
+
+            first = session.diffraction_pattern("/data", dataset, 1, 1)
+            second = session.diffraction_pattern("/data", dataset, 1, 1)
+
+            self.assertIs(first, second)
+            self.assertEqual(session.hdf5_service.read_4d_diffraction_pattern.call_count, 1)
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
+    def test_hdf5_preview_description_is_metadata_only(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "preview_description.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("slice", data=np.ones((3, 4)))
+            cube = output.create_group("cube")
+            cube.create_dataset("data", data=np.ones((2, 3, 4, 5)))
+        service = Hdf5Service()
+        try:
+            with h5py.File(path, "r") as source:
+                self.assertEqual(service.describe_preview(source["slice"])["kind"], "Diffraction slice")
+                description = service.describe_preview(source["cube"])
+                self.assertEqual(description, {"kind": "DataCube", "shape": (2, 3, 4, 5)})
+                self.assertEqual(service.resolve_4d_dataset(source["cube"]).name, "/cube/data")
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_data_session_role_assignment_preserves_initial_preprocess_workspace(self) -> None:
         session = DataSessionController(Hdf5Service(), Py4DSTEMService())
         state = WorkflowState()

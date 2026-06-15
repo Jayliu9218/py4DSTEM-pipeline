@@ -11,7 +11,7 @@ from app.widgets.splash import SplashScreen
 
 # Minimum splash visibility (ms) so the window finishes laying out underneath
 # before the splash hides, avoiding a flash of an unready UI.
-_SPLASH_MIN_MS = 2500
+_SPLASH_MIN_MS = 750
 
 
 def _load_stylesheet() -> str:

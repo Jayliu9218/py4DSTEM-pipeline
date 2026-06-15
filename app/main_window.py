@@ -195,6 +195,9 @@ class MainWindow(QMainWindow):
         self.current_route_key = "data_setup"
         self.route_modules: list[RouteModule] = []
         self._initial_layout_applied = False
+        self.selected_preview_kind = "Not displayable"
+        self.selected_preview_shape: tuple[int, ...] | None = None
+        self.preview_status = "Not rendered"
 
         self.tree = Hdf5TreeWidget()
         self.scan_viewer = ImageViewer()
@@ -244,8 +247,11 @@ class MainWindow(QMainWindow):
 
         self.rx_spin = NumericLineEdit(0, 100000, 0, decimals=0, unit="px", integer=True)
         self.ry_spin = NumericLineEdit(0, 100000, 0, decimals=0, unit="px", integer=True)
-        self.rx_spin.valueChanged.connect(self._refresh_current_4d_image)
-        self.ry_spin.valueChanged.connect(self._refresh_current_4d_image)
+        self.rx_spin.valueChanged.connect(lambda _value: self._refresh_tree_data_info())
+        self.ry_spin.valueChanged.connect(lambda _value: self._refresh_tree_data_info())
+        self.preview_button = QPushButton("Preview Selected")
+        self.preview_button.setEnabled(False)
+        self.preview_button.clicked.connect(self._preview_selected_node)
 
         self._progress("Laying out workspace…")
         self._build_menu()
@@ -612,6 +618,16 @@ class MainWindow(QMainWindow):
         data_browser_layout.setContentsMargins(0, 0, 0, 0)
         data_browser_layout.setSpacing(0)
         data_browser_layout.addWidget(self.tree, 1)
+        preview_bar = QWidget()
+        preview_layout = QHBoxLayout(preview_bar)
+        preview_layout.setContentsMargins(3, 3, 3, 3)
+        preview_layout.setSpacing(3)
+        preview_layout.addWidget(QLabel("rx"))
+        preview_layout.addWidget(self.rx_spin)
+        preview_layout.addWidget(QLabel("ry"))
+        preview_layout.addWidget(self.ry_spin)
+        preview_layout.addWidget(self.preview_button)
+        data_browser_layout.addWidget(preview_bar)
         self.tree.setFrameShape(QFrame.NoFrame)
 
         self.main_view = MultiViewWorkspace(self.scan_viewer, self.diffraction_viewer)
@@ -1020,85 +1036,61 @@ class MainWindow(QMainWindow):
         self.log_panel.log(f"Selected {node_kind}: {hdf5_path}")
         self.selected_hdf5_path = hdf5_path
         self.selected_node_kind = node_kind
-        self.current_dataset_path = None
-        self.current_dataset_shape = None
-        self.current_4d_source = None
-        self._clear_raw_scan_image_cache()
-        self._set_index_controls_visible(False)
+        self.selected_preview_kind = "Not displayable"
+        self.selected_preview_shape = None
+        self.preview_status = "Not rendered"
 
         try:
             node = self.current_file[hdf5_path]
             info = self.hdf5_service.describe_node(node, hdf5_path)
             self._show_node_info(info)
-
-            if node_kind == "group":
-                if self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
-                    return
-                displayed = self._try_display_first_dataset(node, hdf5_path)
-                if not displayed:
-                    self._set_preview_empty("Select a 4D dataset or py4DSTEM DataCube group.")
-                    self._clear_datacube_info()
-                return
-
-            if node_kind != "dataset":
-                self._set_preview_empty("Select a displayable dataset from the HDF5 tree.")
-                return
-
-            self.current_dataset_path = hdf5_path
-            shape = tuple(int(dim) for dim in node.shape)
-            self.current_dataset_shape = shape
-
-            if len(shape) == 2:
-                image = self.hdf5_service.read_2d_dataset(node)
-                self.scan_viewer.clear()
-                self.diffraction_viewer.set_image(image)
-                self._clear_datacube_info()
-                self.log_panel.log(f"Displayed 2D image: {hdf5_path} shape={shape}")
-            elif len(shape) == 4:
-                if not self._try_load_py4dstem_datacube(hdf5_path, show_warning=False):
-                    self._load_raw_4d_dataset(hdf5_path, shape)
-                self._configure_4d_controls(shape)
-                self._display_4d_slice(rx=0, ry=0)
-            else:
-                self._set_preview_empty("This dataset is not displayable as a 2D image or 4D DataCube.")
-                self._clear_datacube_info()
-                self.log_panel.log(f"Dataset is not displayable as an image: shape={shape}")
+            preview = self.hdf5_service.describe_preview(node)
+            self.selected_preview_kind = str(preview["kind"])
+            shape = preview.get("shape")
+            self.selected_preview_shape = tuple(shape) if isinstance(shape, tuple) else None
+            self._configure_4d_controls(self.selected_preview_shape)
+            self.preview_button.setEnabled(self.selected_preview_kind != "Not displayable")
+            self._refresh_tree_data_info()
+            self.log_panel.log(
+                f"Selection ready for lazy preview: {hdf5_path} ({self.selected_preview_kind})."
+            )
         except Exception as exc:
-            self._set_preview_empty("Could not display this node.")
+            self.preview_button.setEnabled(False)
             self.log_panel.log(f"Failed to inspect node: {exc}")
 
-    def _try_display_first_dataset(self, group: h5py.Group, group_path: str) -> bool:
-        for name in sorted(group.keys()):
-            child_path = f"{group_path}/{name}" if group_path != "/" else f"/{name}"
-            child = group[name]
-            if not isinstance(child, h5py.Dataset):
-                continue
-            shape = tuple(int(dim) for dim in child.shape)
-            if len(shape) == 2:
-                try:
-                    image = self.hdf5_service.read_2d_dataset(child)
-                except Exception:
-                    continue
-                self.scan_viewer.clear()
+    def _preview_selected_node(self) -> None:
+        if self.current_file is None or self.selected_hdf5_path is None:
+            return
+        try:
+            node = self.current_file[self.selected_hdf5_path]
+            if self.selected_preview_kind == "Diffraction slice":
+                if not isinstance(node, h5py.Dataset):
+                    raise ValueError("The selected diffraction slice is not a dataset.")
+                image = self.hdf5_service.read_2d_dataset(node)
                 self.diffraction_viewer.set_image(image)
-                self._clear_datacube_info()
-                self.current_dataset_path = child_path
-                self.current_dataset_shape = shape
-                self.selected_hdf5_path = child_path
-                self.selected_node_kind = "dataset"
-                self.log_panel.log(f"Auto-displayed 2D dataset: {child_path} shape={shape}")
-                return True
-            if len(shape) == 4:
-                if self._try_load_py4dstem_datacube(child_path, show_warning=True):
-                    return True
-                try:
-                    self._load_raw_4d_dataset(child_path, shape)
-                    self._configure_4d_controls(shape)
-                    self._display_4d_slice(rx=0, ry=0)
-                    return True
-                except Exception:
-                    continue
-        return False
+                self.preview_status = "Rendered diffraction slice"
+            elif self.selected_preview_kind == "DataCube":
+                self.scan_viewer.clear("Scan overview deferred until a workflow requests it.")
+                if not self._try_load_py4dstem_datacube(
+                    self.selected_hdf5_path,
+                    show_warning=False,
+                    render_overview=False,
+                ):
+                    dataset = self.hdf5_service.resolve_4d_dataset(node)
+                    self._load_raw_4d_dataset(dataset.name, tuple(dataset.shape), render_scan_image=False)
+                self._display_4d_slice(self.rx_spin.value(), self.ry_spin.value())
+                self.preview_status = (
+                    f"Rendered DataCube diffraction slice [{self.rx_spin.value()}, {self.ry_spin.value()}]"
+                )
+            else:
+                return
+            self._refresh_tree_data_info()
+            self.log_panel.log(f"{self.preview_status}: {self.selected_hdf5_path}")
+        except Exception as exc:
+            self.preview_status = f"Preview failed: {exc}"
+            self._refresh_tree_data_info()
+            self.log_panel.log(self.preview_status)
+            QMessageBox.warning(self, "Preview error", str(exc))
 
     def _show_node_info(self, info: dict[str, object]) -> None:
         self.path_label.setText(str(info.get("path", "-")))
@@ -1132,6 +1124,10 @@ class MainWindow(QMainWindow):
         self.selected_hdf5_path = None
         self.selected_node_kind = None
         self.current_attrs = {}
+        self.selected_preview_kind = "Not displayable"
+        self.selected_preview_shape = None
+        self.preview_status = "Not rendered"
+        self.preview_button.setEnabled(False)
         self._refresh_tree_data_info()
 
     def _clear_datacube_info(self) -> None:
@@ -1142,27 +1138,21 @@ class MainWindow(QMainWindow):
         self._update_status_datacube()
         self._update_status_led("neutral", "Ready")
 
-    def _configure_4d_controls(self, shape: tuple[int, ...]) -> None:
+    def _configure_4d_controls(self, shape: tuple[int, ...] | None) -> None:
+        is_4d = shape is not None and len(shape) == 4
         self.rx_spin.blockSignals(True)
         self.ry_spin.blockSignals(True)
-        self.rx_spin.setMaximum(max(shape[0] - 1, 0))
-        self.ry_spin.setMaximum(max(shape[1] - 1, 0))
+        self.rx_spin.setMaximum(max(shape[0] - 1, 0) if is_4d else 0)
+        self.ry_spin.setMaximum(max(shape[1] - 1, 0) if is_4d else 0)
         self.rx_spin.setValue(0)
         self.ry_spin.setValue(0)
         self.rx_spin.blockSignals(False)
         self.ry_spin.blockSignals(False)
-        self._set_index_controls_visible(True)
+        self._set_index_controls_visible(is_4d)
 
     def _set_index_controls_visible(self, visible: bool) -> None:
         self.rx_spin.setEnabled(visible)
         self.ry_spin.setEnabled(visible)
-
-    def _refresh_current_4d_image(self) -> None:
-        if self.current_dataset_path is None or self.current_dataset_shape is None:
-            return
-        if len(self.current_dataset_shape) != 4:
-            return
-        self._display_4d_slice(self.rx_spin.value(), self.ry_spin.value())
 
     def _display_4d_slice(self, rx: int, ry: int) -> None:
         try:
@@ -1176,7 +1166,7 @@ class MainWindow(QMainWindow):
                 if self.current_file is None or self.current_dataset_path is None:
                     return
                 dataset = self.current_file[self.current_dataset_path]
-                image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
+                image = self.session.diffraction_pattern(self.current_dataset_path, dataset, rx, ry)
                 self.diffraction_viewer.set_image(image)
                 self.log_panel.log(
                     f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
@@ -1188,7 +1178,12 @@ class MainWindow(QMainWindow):
             self.log_panel.log(f"Failed to display diffraction pattern: {exc}")
             QMessageBox.warning(self, "Diffraction pattern error", str(exc))
 
-    def _try_load_py4dstem_datacube(self, hdf5_path: str, show_warning: bool = True) -> bool:
+    def _try_load_py4dstem_datacube(
+        self,
+        hdf5_path: str,
+        show_warning: bool = True,
+        render_overview: bool = True,
+    ) -> bool:
         try:
             info = self.py4dstem_service.load_datacube(hdf5_path)
             self.bragg_strain_service.braggvectors = None
@@ -1196,23 +1191,26 @@ class MainWindow(QMainWindow):
             self.bragg_strain_service.strain_result = None
             self.bragg_strain_service.probe_kernel = None
             self.workflow_state.data_source_updated()
-            scan_image = self.py4dstem_service.get_scan_image()
-            self.scan_viewer.set_image(scan_image)
+            if render_overview:
+                scan_image = self.py4dstem_service.get_scan_image()
+                self.scan_viewer.set_image(scan_image)
             self.current_4d_source = "py4dstem"
             self.current_dataset_path = hdf5_path
             self.current_dataset_shape = info.shape
             self._restore_current_braggvectors()
             self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
-            try:
-                geometry = self.py4dstem_service.measure_probe_geometry()
-                self.log_panel.log(
-                    "Measured probe geometry: "
-                    f"radius={geometry.radius:.3g}, center=({geometry.center_x:.3g}, {geometry.center_y:.3g})."
-                )
-            except Py4DSTEMServiceError as exc:
-                self.log_panel.log(str(exc))
+            if render_overview:
+                try:
+                    geometry = self.py4dstem_service.measure_probe_geometry()
+                    self.log_panel.log(
+                        "Measured probe geometry: "
+                        f"radius={geometry.radius:.3g}, center=({geometry.center_x:.3g}, {geometry.center_y:.3g})."
+                    )
+                except Py4DSTEMServiceError as exc:
+                    self.log_panel.log(str(exc))
             self._configure_4d_controls(info.shape)
-            self._display_4d_slice(0, 0)
+            if render_overview:
+                self._display_4d_slice(0, 0)
             self.virtual_detector_page.refresh_defaults_from_datacube()
             self.bragg_peaks_page.refresh_from_datacube()
             self.calibration_page.refresh_status()
@@ -1227,15 +1225,22 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "py4DSTEM", str(exc))
             return False
 
-    def _load_raw_4d_dataset(self, hdf5_path: str, shape: tuple[int, ...]) -> None:
+    def _load_raw_4d_dataset(
+        self,
+        hdf5_path: str,
+        shape: tuple[int, ...],
+        *,
+        render_scan_image: bool = True,
+    ) -> None:
         if self.current_file is None:
             return
 
         dataset = self.current_file[hdf5_path]
         info = self.py4dstem_service.load_raw_4d_array(dataset, hdf5_path)
         self.workflow_state.data_source_updated()
-        scan_image = self._raw_scan_image(hdf5_path, dataset)
-        self.scan_viewer.set_image(scan_image)
+        if render_scan_image:
+            scan_image = self._raw_scan_image(hdf5_path, dataset)
+            self.scan_viewer.set_image(scan_image)
         self.current_4d_source = "hdf5"
         self.current_dataset_path = hdf5_path
         self.current_dataset_shape = shape
@@ -1400,6 +1405,15 @@ class MainWindow(QMainWindow):
         self.session.clear_raw_scan_image_cache()
 
     def _get_probe_geometry(self):
+        if self.py4dstem_service.probe_geometry is None and self.current_4d_source == "py4dstem":
+            try:
+                geometry = self.py4dstem_service.measure_probe_geometry()
+                self.log_panel.log(
+                    "Measured probe geometry on demand: "
+                    f"radius={geometry.radius:.3g}, center=({geometry.center_x:.3g}, {geometry.center_y:.3g})."
+                )
+            except Py4DSTEMServiceError as exc:
+                self.log_panel.log(str(exc))
         return self.py4dstem_service.probe_geometry
 
     def _store_current_braggvectors(self) -> None:
@@ -1476,6 +1490,8 @@ class MainWindow(QMainWindow):
                 "Type": self.type_label.text(),
                 "Shape": self.shape_label.text(),
                 "Dtype": self.dtype_label.text(),
+                "Preview type": self.selected_preview_kind,
+                "Preview status": self.preview_status,
                 "rx": self.rx_spin.value() if self.rx_spin.isEnabled() else "-",
                 "ry": self.ry_spin.value() if self.ry_spin.isEnabled() else "-",
             },

@@ -80,6 +80,73 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.assertEqual(self.window.tree.textElideMode(), Qt.ElideMiddle)
         self.assertEqual(target_item.toolTip(0), target_item.text(0))
 
+    def test_tree_selection_is_metadata_only_until_preview_is_requested(self) -> None:
+        self.window._open_file_path(str(self.path))
+        target_item = self.window.tree.topLevelItem(0).child(0)
+
+        with patch.object(self.window.hdf5_service, "read_4d_scan_image") as read_scan:
+            with patch.object(
+                self.window.hdf5_service,
+                "read_4d_diffraction_pattern",
+                wraps=self.window.hdf5_service.read_4d_diffraction_pattern,
+            ) as read_slice:
+                self.window.tree.setCurrentItem(target_item)
+                self.assertEqual(self.window.selected_preview_kind, "DataCube")
+                self.assertEqual(self.window.preview_status, "Not rendered")
+                read_scan.assert_not_called()
+                read_slice.assert_not_called()
+
+                self.window.rx_spin.setValue(1)
+                self.window.ry_spin.setValue(1)
+                read_slice.assert_not_called()
+
+                self.window._preview_selected_node()
+                read_scan.assert_not_called()
+                read_slice.assert_called_once()
+                self.assertIn("[1, 1]", self.window.preview_status)
+
+    def test_two_dimensional_selection_renders_only_after_preview(self) -> None:
+        path = self.path.parent / "diffraction_slice.h5"
+        with h5py.File(path, "w") as output:
+            output.create_dataset("slice", data=np.arange(16).reshape(4, 4))
+        try:
+            self.window._open_file_path(str(path))
+            item = self.window.tree.topLevelItem(0).child(0)
+            with patch.object(
+                self.window.hdf5_service,
+                "read_2d_dataset",
+                wraps=self.window.hdf5_service.read_2d_dataset,
+            ) as read_slice:
+                self.window.tree.setCurrentItem(item)
+                read_slice.assert_not_called()
+                self.assertEqual(self.window.selected_preview_kind, "Diffraction slice")
+
+                self.window._preview_selected_node()
+                read_slice.assert_called_once()
+                self.assertEqual(self.window.preview_status, "Rendered diffraction slice")
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
+    def test_nested_hdf5_groups_load_children_on_expansion(self) -> None:
+        path = self.path.parent / "lazy_tree.h5"
+        with h5py.File(path, "w") as output:
+            nested = output.create_group("outer/inner")
+            nested.create_dataset("slice", data=np.ones((3, 3)))
+        try:
+            self.window._open_file_path(str(path))
+            outer = self.window.tree.topLevelItem(0).child(0)
+            self.assertEqual(outer.child(0).text(0), "Loading...")
+
+            outer.setExpanded(True)
+            self.app.processEvents()
+            inner = outer.child(0)
+            self.assertTrue(inner.text(0).startswith("inner"))
+            self.assertEqual(inner.child(0).text(0), "Loading...")
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
     def test_internal_datacube_data_dataset_resolves_to_parent_group(self) -> None:
         path = self.path.parent / "canonical_datacube.h5"
         with h5py.File(path, "w") as output:
@@ -94,11 +161,14 @@ class FileOpenAndRolesTests(unittest.TestCase):
         try:
             with patch.object(service, "_py4dstem", return_value=module):
                 info = service.load_datacube("/root/datacube/data")
+                cached = service.load_datacube("/root/datacube")
         finally:
             path.unlink(missing_ok=True)
 
         self.assertEqual(info.datapath, "/root/datacube")
+        self.assertIs(cached, info)
         self.assertEqual(module.read.call_args.kwargs["datapath"], "/root/datacube")
+        self.assertEqual(module.read.call_count, 1)
 
     def test_raw_4d_dataset_skips_py4dstem_read(self) -> None:
         module = Mock()
