@@ -6,7 +6,11 @@ import sys
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 
-datas = []
+datas = [
+    ("..\\app\\theme.qss", "app"),
+    ("..\\app\\theme_light.qss", "app"),
+    ("..\\images\\py4DSTEM_logo.png", "images"),
+]
 binaries = [(str(Path(sys.prefix) / "Library" / "bin" / "libexpat.dll"), ".")]
 hiddenimports = []
 

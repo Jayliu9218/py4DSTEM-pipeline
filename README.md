@@ -11,6 +11,57 @@ Built with:
 - **h5py** for raw HDF5/EMD browsing
 - **py4DSTEM** for DataCube, Bragg peak, calibration, orientation, strain, and phase-retrieval algorithms
 
+## How to Use
+
+### First-Time Setup On A New Windows Machine
+
+Install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and
+[Git for Windows](https://git-scm.com/download/win), clone this repository, then
+run the progressive setup script from PowerShell:
+
+```powershell
+.\scripts\setup_dev_env.ps1
+```
+
+The default `All` stage checks prerequisites, creates the repository-local
+`.conda\py4dstem-pipeline-dev` Python 3.11 environment, installs the pinned
+runtime dependencies, confirms the py4DSTEM Git source, and validates the
+environment. The script is idempotent and can be run again after pulling
+updates.
+
+Useful follow-up commands:
+
+```powershell
+# Check whether Conda and Git are available
+.\scripts\setup_dev_env.ps1 -Stage Check
+
+# Refresh dependencies without recreating the environment
+.\scripts\setup_dev_env.ps1 -Stage Install
+
+# Validate dependencies and the py4DSTEM source
+.\scripts\setup_dev_env.ps1 -Stage Validate
+
+# Run the complete unit-test and compile verification
+.\scripts\setup_dev_env.ps1 -Stage Test
+
+# Validate the environment and launch the application
+.\scripts\setup_dev_env.ps1 -Stage Validate -Launch
+```
+
+To run the application directly after setup:
+
+```powershell
+& .\.conda\py4dstem-pipeline-dev\python.exe .\main.py
+```
+
+### Basic Workflow
+
+1. Open an HDF5/EMD file and select a DataCube in the Data Browser.
+2. Click **Show Data** to activate and assign it as the Target DataCube.
+3. Select the Analysis Route and Target from the top toolbar.
+4. Complete stages from left to right, reviewing warnings and accepting required gates.
+5. Export registered results, CSV data, the project state, or a generated report.
+
 ## Current Features
 
 ### Data & Preprocessing
@@ -114,13 +165,12 @@ including batch CSV output for numerical inspection.
 
 ## Environments
 
-Use the existing `4dstem` Conda environment for development:
+Use the progressive setup script to create or refresh the repository-local
+development environment:
 
 ```powershell
-conda activate 4dstem
-pip install -r requirements.txt
-python .\scripts\check_runtime_dependencies.py
-python .\main.py
+.\scripts\setup_dev_env.ps1
+& .\.conda\py4dstem-pipeline-dev\python.exe .\main.py
 ```
 
 Use the separate repository-local `.conda\py4dstem-pipeline-packaging`
@@ -216,11 +266,11 @@ packaging/
 
 ### 1. Development
 
-Run directly inside the independent development environment:
+Create, validate, and run the independent development environment:
 
 ```powershell
-conda activate 4dstem
-python .\main.py
+.\scripts\setup_dev_env.ps1
+& .\.conda\py4dstem-pipeline-dev\python.exe .\main.py
 ```
 
 ### 2. MVP Testing
@@ -296,6 +346,6 @@ kept free and open under a GPLv3 license.
 - Add new pages to `app/controllers/application_pages.py` and add route modules in
   `app/controllers/route_coordinator.py`.
 - Add new workflow steps to `app/services/workflow_state.py`.
-- Test and debug inside the `4dstem` Conda environment.
+- Test and debug inside `.conda\py4dstem-pipeline-dev`.
 - Keep packaging-only tools and release builds inside
   `.conda\py4dstem-pipeline-packaging`.
