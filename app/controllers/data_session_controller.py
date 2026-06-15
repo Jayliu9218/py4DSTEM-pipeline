@@ -103,20 +103,25 @@ class DataSessionController:
         return self.virtual_detector_source()
 
     def target_bright_field_image(self) -> np.ndarray | None:
-        try:
-            if self.current_4d_source == "py4dstem":
-                return self.py4dstem_service.get_scan_image()
-            if (
-                self.current_4d_source == "hdf5"
-                and self.current_file is not None
-                and self.current_dataset_path
-            ):
-                node = self.current_file[self.current_dataset_path]
-                if isinstance(node, h5py.Dataset) and len(tuple(node.shape)) == 4:
-                    return self.raw_scan_image(self.current_dataset_path, node)
-        except Exception:
-            return None
+        if self.current_dataset_path == self.raw_scan_image_cache_path:
+            return self.raw_scan_image_cache
         return None
+
+    def cache_scan_overview(self, source: Any, image: np.ndarray) -> bool:
+        if self.current_dataset_path is None:
+            return False
+        active = self.virtual_detector_source()
+        active_data = getattr(active, "data", active)
+        source_data = getattr(source, "data", source)
+        same_hdf5_path = (
+            isinstance(source_data, h5py.Dataset)
+            and source_data.name == self.current_dataset_path
+        )
+        if source is not active and source_data is not active_data and not same_hdf5_path:
+            return False
+        self.raw_scan_image_cache_path = self.current_dataset_path
+        self.raw_scan_image_cache = np.asarray(image)
+        return True
 
     def current_4d_shape(self) -> tuple[int, int, int, int] | None:
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:

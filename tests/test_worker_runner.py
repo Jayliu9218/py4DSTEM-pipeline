@@ -30,6 +30,7 @@ class _RunnerPage(QWidget, WorkerRunner):
         self._init_worker_runner()
         self.results: list[Any] = []
         self.errors: list[str] = []
+        self.cancelled = False
         self.completion_thread: QThread | None = None
         self.progress_lines: list[tuple[str, float]] = []
 
@@ -45,6 +46,10 @@ class _RunnerPage(QWidget, WorkerRunner):
     def _handle_progress(self, message: str, fraction: float) -> None:
         self.progress_lines.append((message, fraction))
         super()._handle_progress(message, fraction)
+
+    def _handle_cancelled(self) -> None:
+        self.cancelled = True
+        super()._handle_cancelled()
 
 
 class BackgroundWorkerTests(unittest.TestCase):
@@ -122,6 +127,16 @@ class BackgroundWorkerTests(unittest.TestCase):
             sys.stdout = original
         self.assertIn("should-not-leak", "".join(captured))
         self.assertEqual(progresses, [("done", 1.0)])
+
+    def test_cancel_request_stops_cooperative_operation(self) -> None:
+        worker = BackgroundWorker(lambda emit: emit("step", 0.5), capture_stdout=False)
+        cancelled: list[bool] = []
+        worker.cancelled.connect(lambda: cancelled.append(True))
+
+        worker.cancel()
+        worker.run()
+
+        self.assertEqual(cancelled, [True])
 
 
 class WorkerRunnerTests(unittest.TestCase):
@@ -208,6 +223,13 @@ class WorkerRunnerTests(unittest.TestCase):
         self._run_until_thread_finishes(page)
         self.assertEqual(page.results, ["first"])
         self.assertFalse(page._is_busy)
+
+    def test_cancel_background_requests_cooperative_stop(self) -> None:
+        page = _RunnerPage(LogPanel())
+        page.worker = BackgroundWorker(lambda _emit: None)
+
+        self.assertTrue(page.cancel_background())
+        self.assertTrue(page.worker._cancel_requested.is_set())
 
     def test_text_only_progress_forwarded_without_fraction(self) -> None:
         page = _RunnerPage(LogPanel())

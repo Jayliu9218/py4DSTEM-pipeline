@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Callable
 
@@ -16,6 +17,10 @@ Operation = Callable[[ProgressCallback], Any]
 TEXT_ONLY = float("nan")
 
 
+class OperationCancelled(RuntimeError):
+    """Raised when a cooperative background operation is cancelled."""
+
+
 class BackgroundWorker(QObject):
     """Single worker moved to a QThread; runs an operation off the GUI thread.
 
@@ -29,12 +34,22 @@ class BackgroundWorker(QObject):
 
     finished = Signal(object)
     failed = Signal(str)
+    cancelled = Signal()
     progress = Signal(str, float)
 
     def __init__(self, operation: Operation, capture_stdout: bool = True) -> None:
         super().__init__()
         self._operation = operation
         self._capture_stdout = capture_stdout
+        self._cancel_requested = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+
+    def _emit_progress(self, message: str, fraction: float) -> None:
+        if self._cancel_requested.is_set():
+            raise OperationCancelled("Operation cancelled.")
+        self.progress.emit(message, fraction)
 
     @Slot()
     def run(self) -> None:
@@ -42,16 +57,20 @@ class BackgroundWorker(QObject):
             if self._capture_stdout:
                 stream = ProgressStream(self._stdout_progress)
                 with redirect_stdout(stream), redirect_stderr(stream):
-                    result = self._operation(self.progress.emit)
+                    result = self._operation(self._emit_progress)
                 stream.flush()
             else:
-                result = self._operation(self.progress.emit)
+                result = self._operation(self._emit_progress)
+            if self._cancel_requested.is_set():
+                raise OperationCancelled("Operation cancelled.")
             self.finished.emit(result)
+        except OperationCancelled:
+            self.cancelled.emit()
         except Exception as exc:  # noqa: BLE001 - surface any worker failure to the UI
             self.failed.emit(str(exc))
 
     def _stdout_progress(self, message: str) -> None:
-        self.progress.emit(message, TEXT_ONLY)
+        self._emit_progress(message, TEXT_ONLY)
 
 
 class WorkerRunner:
@@ -77,6 +96,13 @@ class WorkerRunner:
 
     def _is_running(self) -> bool:
         return self._is_busy or self.worker_thread is not None
+
+    def cancel_background(self) -> bool:
+        if self.worker is None:
+            return False
+        self.worker.cancel()
+        self.log_panel.process_progress(f"Cancelling {self.pending_operation}...")
+        return True
 
     def _start_background(
         self,
@@ -110,11 +136,14 @@ class WorkerRunner:
         thread.started.connect(worker.run)
         worker.finished.connect(self._handle_result)
         worker.failed.connect(self._handle_error)
+        worker.cancelled.connect(self._handle_cancelled)
         worker.progress.connect(self._handle_progress)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
+        worker.cancelled.connect(worker.deleteLater)
         thread.finished.connect(self._clear_worker_refs, Qt.QueuedConnection)
         thread.finished.connect(thread.deleteLater)
         thread.start()
@@ -183,6 +212,14 @@ class WorkerRunner:
             status_label.setText(f"Failed: {name}")
         self.log_panel.log(f"{name} failed: {message}")
         self.log_panel.process_failed(name, message)
+
+    def _handle_cancelled(self) -> None:
+        name = self.pending_operation
+        status_label = getattr(self, "status_label", None)
+        if status_label is not None:
+            status_label.setText(f"Cancelled: {name}")
+        self.log_panel.log(f"{name} cancelled.")
+        self.log_panel.process(f"CANCELLED {name}")
 
     def _handle_progress(self, message: str, fraction: float) -> None:
         if math.isnan(fraction):

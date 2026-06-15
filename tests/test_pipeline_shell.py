@@ -623,6 +623,14 @@ class PipelineShellTests(unittest.TestCase):
             all(button.sizePolicy().horizontalPolicy() == QSizePolicy.Ignored for button in self.window.route_bar.buttons.values())
         )
 
+    def test_preprocessing_uses_one_automatic_show_data_action(self) -> None:
+        page = self.window.preprocessing_page
+
+        self.assertEqual(page.show_data_button.text(), "Show Data")
+        self.assertFalse(hasattr(page, "diagnostics_button"))
+        self.assertFalse(hasattr(page, "show_selected_button"))
+        self.assertGreaterEqual(page.memory_budget_mb.value(), 8)
+
     def test_controls_parameters_share_a_framed_content_surface(self) -> None:
         self.window._select_route_module("calibration")
         surface = self.window.module_panel.controls_stack

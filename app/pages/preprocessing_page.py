@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 import PySide6
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.services.preprocessing_service import HotPixelParams, HotPixelPreview, PreprocessingService
@@ -11,9 +12,12 @@ from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.worker_runner import WorkerRunner
 
 
-class PreprocessingPage(QWidget):
+class PreprocessingPage(QWidget, WorkerRunner):
+    scan_overview_ready = Signal(object, object)
+
     def __init__(
         self,
         source_provider: Callable[[], object | None],
@@ -29,34 +33,35 @@ class PreprocessingPage(QWidget):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.service = PreprocessingService()
+        self._init_worker_runner()
         self.preview: HotPixelPreview | None = None
+        self._show_data_source = None
         self.threshold = NumericLineEdit(1.01, 1000, 8, decimals=2, unit="x")
         self.preview_button = QPushButton("Preview Hot Pixels")
         self.apply_button = QPushButton("Apply Hot-Pixel Filter")
         self.apply_button.setEnabled(False)
-        self.diagnostics_button = QPushButton("Show Datacube")
-        self.show_selected_button = QPushButton("Show Selected Data")
+        self.show_data_button = QPushButton("Show Data")
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setEnabled(False)
+        self.memory_budget_mb = NumericLineEdit(8, 1024, 64, decimals=0, unit="MB", integer=True)
         self.status = QLabel("Load and assign a Target DataCube.")
         self.status.setWordWrap(True)
         self.workspace = AdaptiveImageWorkspace()
         self.preview_button.clicked.connect(self.preview_hot_pixels)
         self.apply_button.clicked.connect(self.apply_hot_pixels)
-        self.diagnostics_button.clicked.connect(self.show_diagnostics)
-        self.show_selected_button.clicked.connect(self.show_selected_data)
+        self.show_data_button.clicked.connect(self.show_data)
+        self.cancel_button.clicked.connect(self.cancel_background)
         self.threshold.valueChanged.connect(self._threshold_changed)
         controls = QWidget()
         form = QFormLayout(controls)
         form.addRow("hot-pixel threshold", self.threshold)
+        form.addRow("reduction memory budget", self.memory_budget_mb)
         control_layout = QVBoxLayout()
         control_layout.addWidget(controls)
         
-        """      
-        control_layout.addWidget(self.diagnostics_button)
-        control_layout.addWidget(self.show_selected_button)
-        """
         button_row = PySide6.QtWidgets.QHBoxLayout()
-        button_row.addWidget(self.diagnostics_button)
-        button_row.addWidget(self.show_selected_button)
+        button_row.addWidget(self.show_data_button)
+        button_row.addWidget(self.cancel_button)
         control_layout.addLayout(button_row)
         
         """
@@ -76,33 +81,58 @@ class PreprocessingPage(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self.workspace)
 
-    def show_selected_data(self) -> None:
+    def show_data(self) -> None:
         source = self.selected_source_provider()
         if source is None:
             source = self.source_provider()
         if source is None:
             QMessageBox.information(self, "Preprocess", "Select or assign a displayable data object first.")
             return
-        try:
-            images = self.service.display_data(source)
-        except Exception as exc:
-            QMessageBox.warning(self, "Preprocess", str(exc))
-            return
-        self.workspace.append_results([FigureResult(name, image) for name, image in images.items()])
-        self.status.setText("Selected data display ready.")
+        budget = int(self.memory_budget_mb.value()) * 1024 * 1024
+        self._show_data_source = source
+        self._start_background(
+            "Show Data",
+            lambda progress: self.service.show_data(
+                source,
+                memory_budget_bytes=budget,
+                progress_callback=progress,
+            ),
+            capture_stdout=False,
+            parameters={"memory_budget_mb": int(self.memory_budget_mb.value())},
+        )
 
-    def show_diagnostics(self) -> None:
-        source = self.source_provider()
-        if source is None:
-            QMessageBox.information(self, "Preprocess", "Load a Target DataCube first.")
-            return
-        try:
-            images = self.service.basic_diagnostics(source)
-        except Exception as exc:
-            QMessageBox.warning(self, "Preprocess", str(exc))
-            return
-        self.workspace.append_results([FigureResult(name, image) for name, image in images.items()])
-        self.status.setText("Basic DataCube diagnostics ready.")
+    def _on_start(self, name: str) -> None:
+        super()._on_start(name)
+        self.show_data_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+
+    def _handle_result(self, result) -> None:
+        if self.pending_operation == "Show Data":
+            self.workspace.append_results([
+                FigureResult(name, image) for name, image in result.items()
+            ])
+            self.status.setText("Data display ready.")
+            scan_overview = result.get("Scan overview")
+            if scan_overview is not None:
+                self.scan_overview_ready.emit(self._show_data_source, scan_overview)
+            self.log_panel.process_finished(self.pending_operation)
+        else:
+            super()._handle_result(result)
+        self.show_data_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self._show_data_source = None
+
+    def _handle_error(self, message: str) -> None:
+        super()._handle_error(message)
+        self.show_data_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self._show_data_source = None
+
+    def _handle_cancelled(self) -> None:
+        super()._handle_cancelled()
+        self.show_data_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self._show_data_source = None
 
     def preview_hot_pixels(self) -> None:
         source = self.source_provider()
@@ -149,8 +179,13 @@ class PreprocessingPage(QWidget):
         self.workflow_state.parameters_updated(WorkflowStep.PREPROCESS_APPLY)
 
     def params_snapshot(self) -> dict[str, object]:
-        return {"hot_pixel_threshold": self.threshold.value()}
+        return {
+            "hot_pixel_threshold": self.threshold.value(),
+            "reduction_memory_budget_mb": int(self.memory_budget_mb.value()),
+        }
 
     def apply_params_snapshot(self, params: dict[str, object]) -> None:
         if "hot_pixel_threshold" in params:
             self.threshold.setValue(float(params["hot_pixel_threshold"]))
+        if "reduction_memory_budget_mb" in params:
+            self.memory_budget_mb.setValue(int(params["reduction_memory_budget_mb"]))

@@ -35,30 +35,58 @@ def iter_scan_blocks(
         yield selection, np.asarray(source[selection, :, :, :])
 
 
-def mean_diffraction(source: Any) -> np.ndarray:
+def mean_diffraction(
+    source: Any,
+    *,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
     shape = shape_4d(source)
     total = np.zeros(shape[2:], dtype=np.float64)
-    for _selection, block in iter_scan_blocks(source):
+    emit = progress_callback or (lambda _message, _fraction: None)
+    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
         total += np.sum(block, axis=(0, 1), dtype=np.float64)
+        emit("Calculating mean diffraction", selection.stop / max(shape[0], 1))
     return total / max(shape[0] * shape[1], 1)
 
 
-def max_diffraction(source: Any) -> np.ndarray:
+def max_diffraction(
+    source: Any,
+    *,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
+    shape = shape_4d(source)
     maximum: np.ndarray | None = None
-    for _selection, block in iter_scan_blocks(source):
+    emit = progress_callback or (lambda _message, _fraction: None)
+    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
         block_maximum = np.max(block, axis=(0, 1))
         maximum = block_maximum if maximum is None else np.maximum(maximum, block_maximum)
+        emit("Calculating maximum diffraction", selection.stop / max(shape[0], 1))
     if maximum is None:
         raise ValueError("Cannot reduce empty 4D data.")
     return maximum
 
 
 def scan_sum(source: Any, *, dtype: np.dtype[Any] | type | None = None) -> np.ndarray:
+    return scan_sum_with_progress(source, dtype=dtype)
+
+
+def scan_sum_with_progress(
+    source: Any,
+    *,
+    dtype: np.dtype[Any] | type | None = None,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
     shape = shape_4d(source)
     output_dtype = np.dtype(dtype) if dtype is not None else _sum_dtype(source)
     result = np.empty(shape[:2], dtype=output_dtype)
-    for selection, block in iter_scan_blocks(source):
+    emit = progress_callback or (lambda _message, _fraction: None)
+    emit("Preparing scan overview", 0.0)
+    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
         result[selection, :] = np.sum(block, axis=(2, 3), dtype=output_dtype)
+        emit("Reducing scan overview", selection.stop / max(shape[0], 1))
     return result
 
 
