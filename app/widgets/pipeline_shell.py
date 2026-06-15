@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.theme import PARAM_GROUP_MAX_HEIGHT
+from app.theme import (
+    ACTION_BUTTON_MIN_HEIGHT,
+    GROUP_SPACING,
+    PANEL_MARGIN,
+    PANEL_MARGIN_TIGHT,
+    PARAM_TABLE_HEIGHT,
+)
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.image_viewer import ImageViewer
 
@@ -40,6 +46,7 @@ class RouteModule:
 
 class TechnicalRouteBar(QWidget):
     module_selected = Signal(str)
+    SHOW_ROUTE_ARROWS = False
 
     STATE_COLORS = {
         "Completed": "#4caf50",
@@ -55,8 +62,8 @@ class TechnicalRouteBar(QWidget):
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(6, 4, 6, 4)
-        self.layout.setSpacing(5)
+        self.layout.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT)
+        self.layout.setSpacing(GROUP_SPACING)
 
     def set_modules(self, modules: list[RouteModule]) -> None:
         while self.layout.count():
@@ -69,8 +76,10 @@ class TechnicalRouteBar(QWidget):
             button = QToolButton()
             button.setObjectName("routeButton")
             button.setCheckable(True)
-            button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            # Long workflow names must shrink with the central workspace instead
+            # of forcing neighbouring route buttons and arrows to overlap.
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             # Surface stub modules (implemented=False) as greyed-out and non-clickable.
             if not module.implemented:
                 button.setProperty("implemented", "false")
@@ -84,7 +93,7 @@ class TechnicalRouteBar(QWidget):
             self.group.addButton(button)
             self.buttons[module.key] = button
             self.layout.addWidget(button, 1)
-            if index < len(modules) - 1:
+            if self.SHOW_ROUTE_ARROWS and index < len(modules) - 1:
                 arrow = QLabel("›")
                 arrow.setObjectName("routeArrow")
                 self.layout.addWidget(arrow)
@@ -174,8 +183,8 @@ class ModuleControlPanel(QWidget):
         self._placeholder.setWordWrap(True)
         self.controls_stack.addWidget(self._placeholder)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN)
+        layout.setSpacing(GROUP_SPACING)
         header = QHBoxLayout()
         header.addWidget(self.title, 1)
         layout.addLayout(header)
@@ -212,11 +221,14 @@ class ModuleControlPanel(QWidget):
         layout = content.layout() if content is not None else None
         if layout is None:
             return
-        layout.setSpacing(8)
+        layout.setSpacing(GROUP_SPACING)
         for table in content.findChildren(QTableWidget):
-            table.setFixedHeight(180)
+            table.setFixedHeight(PARAM_TABLE_HEIGHT)
             table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        for button in content.findChildren(QPushButton):
+            button.setMinimumHeight(ACTION_BUTTON_MIN_HEIGHT)
+            button.setMaximumHeight(ACTION_BUTTON_MIN_HEIGHT)
         for index in range(layout.count()):
             widget = layout.itemAt(index).widget()
             if isinstance(widget, QGroupBox):
@@ -224,39 +236,18 @@ class ModuleControlPanel(QWidget):
 
     @staticmethod
     def _apply_table_form(parent_layout, index: int, group: QGroupBox) -> None:
-        """Make a parameter group box fixed-height, internally scrollable, and
-        table-like (aligned label/value columns, uniform row height, zero gaps).
+        """Make a parameter group fixed-height and table-like.
 
-        Every form layout inside the box gets flat table policies so label/value
-        pairs align into columns. If the box's natural height exceeds
-        ``PARAM_GROUP_MAX_HEIGHT``, the whole group is wrapped in a vertical
-        ``QScrollArea`` (preserving any nested sub-layouts) so long parameter
-        lists wheel-scroll in place without overflowing the panel.
+        The module panel owns the single vertical scroll area, so groups stay
+        intact and page-specific form policies remain unchanged.
         """
         # Apply table-like layout policies to every QFormLayout in this box.
         for form in group.findChildren(QFormLayout):
-            form.setRowWrapPolicy(QFormLayout.DontWrapRows)
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
             form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
             form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             form.setVerticalSpacing(0)
             form.setHorizontalSpacing(0)
-            # Zebra striping: tag each row's label widget with an alternating
-            # object name so QSS can give every second row pair a subtle
-            # contrasting background on the label side. Rows are grouped in
-            # pairs (rows 0/1, 2/3, ... share a shade). Only labels are tinted
-            # so input controls keep their native styling.
-            for row in range(form.rowCount()):
-                pair = (row // 2) % 2
-                if pair != 1:
-                    continue  # leave default background on the base shade
-                item = form.itemAt(row, QFormLayout.LabelRole)
-                label = item.widget() if item is not None else None
-                if label is not None:
-                    label.setObjectName("paramRowOdd")
-                    # autoFillBackground ensures the QSS background color
-                    # actually fills the label area (QLabel defaults off).
-                    label.setAutoFillBackground(True)
         group.setObjectName("paramForm")
 
         group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -264,27 +255,9 @@ class ModuleControlPanel(QWidget):
         group.setMaximumHeight(16777215)
         natural_height = max(group.sizeHint().height(), 1)
 
-        if natural_height <= PARAM_GROUP_MAX_HEIGHT:
-            # Fits comfortably — pin to its natural height.
-            group.setMinimumHeight(natural_height)
-            group.setMaximumHeight(natural_height)
-            return
+        group.setMinimumHeight(natural_height)
+        group.setMaximumHeight(natural_height)
 
-        # Box is too tall: replace it in the parent layout with a scroll area
-        # that hosts the (intact) group, then cap the scroll area's height so
-        # the rows wheel-scroll inside the fixed-height slot.
-        parent_layout.removeWidget(group)
-        group.setParent(None)
-        scroll = QScrollArea()
-        scroll.setObjectName("paramFormScroll")
-        scroll.setWidget(group)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        scroll.setFixedHeight(PARAM_GROUP_MAX_HEIGHT)
-        parent_layout.insertWidget(index, scroll)
 
 
 class ProjectToolbar(QWidget):
@@ -304,13 +277,13 @@ class ProjectToolbar(QWidget):
         self.structure.currentTextChanged.connect(self.structure_changed)
         self.goal.currentTextChanged.connect(self.goal_changed)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT)
         layout.addStretch()
 
         layout.addWidget(QLabel("Analysis Route"), alignment=Qt.AlignRight)
         layout.addWidget(self.structure)
 
-        layout.addSpacing(20)
+        layout.addSpacing(12)
 
         layout.addWidget(QLabel("Target"), alignment=Qt.AlignRight)
         layout.addWidget(self.goal)

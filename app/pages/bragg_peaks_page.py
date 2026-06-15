@@ -309,15 +309,6 @@ class BraggPeaksPage(QWidget, WorkerRunner):
         left_layout.addWidget(self.count_label)
         left_layout.addWidget(self.quality_label)
         left_layout.addWidget(self.table)
-        for button in [
-            self.prepare_kernel_button,
-            self.pick_roi_button,
-            self.run_current_button,
-            self.run_selected_button,
-            self.run_full_button,
-        ]:
-            button.setMinimumHeight(30)
-
         left = QWidget()
         left.setLayout(left_layout)
         self.controls_panel = left

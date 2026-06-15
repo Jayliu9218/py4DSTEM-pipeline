@@ -400,8 +400,6 @@ class CalibrationPage(QWidget, WorkerRunner):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setSizeConstraint(QLayout.SetNoConstraint)
-        for button in self.buttons:
-            button.setMinimumHeight(30)
         for group in [
             status_group,
             origin_group,

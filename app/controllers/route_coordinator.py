@@ -39,12 +39,23 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
         "Validated roles, DataCube diagnostics, and an explicitly preprocessed working DataCube.",
     )
     if crystalline_route:
-        return _crystalline_modules(common, goal)
-    if structure == "Amorphous / Diffuse-scattering":
-        return _amorphous_modules(common, goal)
-    if structure == "Phase Retrieval / Ptychography":
-        return _phase_retrieval_modules(common, goal)
-    return [common]
+        modules = _crystalline_modules(common, goal)
+    elif structure == "Amorphous / Diffuse-scattering":
+        modules = _amorphous_modules(common, goal)
+    elif structure == "Phase Retrieval / Ptychography":
+        modules = _phase_retrieval_modules(common, goal)
+    else:
+        return [common]
+    return modules + [
+        RouteModule(
+            "export",
+            "Export",
+            modules[-1].page_key,
+            "Registered workflow results.",
+            "Saved project, report, or exported result files.",
+            prerequisite=modules[-1].key,
+        )
+    ]
 
 
 def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:

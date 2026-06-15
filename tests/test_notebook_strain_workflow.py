@@ -80,7 +80,7 @@ class NotebookStrainWorkflowTests(unittest.TestCase):
                 calibration=types.SimpleNamespace(get_probe_size=lambda _probe: (1.0, 2.0, 2.0))
             )
         )
-        result = service.prepare_probe_kernel(datacube, 0, 1, 0, 1)
+        result = service.prepare_probe_kernel(datacube, 0, 2, 0, 2)
         np.testing.assert_array_equal(result.kernel, display_kernel)
         np.testing.assert_array_equal(service.probe_kernel, display_kernel)
         self.assertEqual(result.centered_kernel.ndim, 2)
