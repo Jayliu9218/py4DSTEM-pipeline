@@ -46,11 +46,15 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
         modules = _phase_retrieval_modules(common, goal)
     else:
         return [common]
+    export_page = {
+        "Parallax": "parallax_export",
+        "Ptychography": "ptychography_export",
+    }.get(goal, modules[-1].page_key)
     return modules + [
         RouteModule(
             "export",
             "Export",
-            modules[-1].page_key,
+            export_page,
             "Registered workflow results.",
             "Saved project, report, or exported result files.",
             prerequisite=modules[-1].key,
@@ -270,14 +274,34 @@ class RouteCoordinator:
 
     def states(self) -> dict[str, str]:
         states: dict[str, str] = {}
+        modules_by_key = {module.key: module for module in self.modules}
         for module in self.modules:
-            if module.state_step and self.workflow_state.is_stale(module.state_step):
+            if not self._prerequisite_is_ready(module, modules_by_key):
+                states[module.key] = "Disabled"
+            elif module.state_step and self.workflow_state.is_stale(module.state_step):
                 states[module.key] = "Warning"
             elif module.state_step and self.workflow_state.is_completed(module.state_step):
                 states[module.key] = "Completed"
             else:
                 states[module.key] = "Ready"
         return states
+
+    def _prerequisite_is_ready(
+        self,
+        module: RouteModule,
+        modules_by_key: dict[str, RouteModule],
+    ) -> bool:
+        if module.prerequisite is None:
+            return True
+        if module.prerequisite == "data_setup":
+            return self.data_ready_provider()
+        prerequisite = modules_by_key.get(module.prerequisite)
+        if prerequisite is None or not prerequisite.implemented or prerequisite.state_step is None:
+            return False
+        return (
+            self.workflow_state.is_completed(prerequisite.state_step)
+            and not self.workflow_state.is_stale(prerequisite.state_step)
+        )
 
     def select(self, key: str) -> None:
         self.current_key = key
