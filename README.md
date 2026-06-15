@@ -61,6 +61,46 @@ directly to Advanced Reconstruction.
 Detailed route notes and screenshots are available in
 [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
 
+## Interface Gallery
+
+### Data Setup
+
+The Data Browser keeps HDF5 navigation lazy, while **Show Data** activates the
+selected DataCube and prepares it for downstream workflows.
+
+![Data setup and lazy DataCube activation](docs/ptychography%20data%20setup.png)
+
+### Ptychography
+
+Quick Reconstruction provides an inexpensive diagnostic pass before QC.
+Advanced Reconstruction retains the formal result after QC acceptance and
+optional parameter optimization.
+
+| Quick Reconstruction | Advanced Reconstruction |
+| --- | --- |
+| ![Ptychography quick reconstruction](docs/ptychography%20quick%20reconstruction.png) | ![Ptychography advanced reconstruction](docs/ptychography%20advanced%20reconstruction.png) |
+
+### DPC / CoM
+
+| CoM Preprocessing And Review | Integrated Reconstruction |
+| --- | --- |
+| ![CoM preprocessing and review](docs/Com%20Prerocessing%20review.png) | ![DPC integrated reconstruction](docs/integrated%20reconstruction.png) |
+
+### Strain Mapping
+
+| Calibration | Strain Analysis |
+| --- | --- |
+| ![Strain calibration](docs/strain%20calibration.png) | ![Strain analysis](docs/strain%20analysis.png) |
+
+### Export
+
+Registered results can be exported through the compact Export controls,
+including batch CSV output for numerical inspection.
+
+| Export Controls | Exported CSV Results |
+| --- | --- |
+| ![Export controls](docs/data%20export.png) | ![Exported CSV results](docs/data%20csv.png) |
+
 ### Shared Infrastructure
 - **Industrial light theme** by default, with a dark instrument theme available from the View menu
 - Centralized `app/theme.py` color constants and per-widget QSS (`theme.qss` / `theme_light.qss`) applied globally via `QApplication.setStyleSheet()`

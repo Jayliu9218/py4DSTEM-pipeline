@@ -38,6 +38,8 @@ Probe modes are transferred directly to Advanced Reconstruction. The optimized
 value is a self-consistency candidate, not proof that it is the physically
 correct parameter.
 
+![Ptychography advanced reconstruction](ptychography%20advanced%20reconstruction.png)
+
 ## DPC / CoM
 
 Review the measured and fitted CoM fields, accept preprocessing, then run the
@@ -57,6 +59,15 @@ the final strain map.
 ![Strain calibration](strain%20calibration.png)
 
 ![Strain analysis](strain%20analysis.png)
+
+## Export
+
+Use the final Export route to export registered results, write numerical arrays
+to CSV, save the project state, or generate a report.
+
+![Export controls](data%20export.png)
+
+![Exported CSV results](data%20csv.png)
 
 ## Performance And Safety
 
