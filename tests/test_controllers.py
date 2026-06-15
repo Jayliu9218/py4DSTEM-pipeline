@@ -68,6 +68,31 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_target_bright_field_never_triggers_implicit_reduction(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "overview_cache.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("data", data=np.ones((2, 2, 3, 4)))
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        try:
+            source = session.open_file(path)
+            dataset = source["data"]
+            session.current_4d_source = "hdf5"
+            session.current_dataset_path = "/data"
+            session.current_dataset_shape = tuple(dataset.shape)
+            session.hdf5_service.read_4d_scan_image = Mock(
+                wraps=session.hdf5_service.read_4d_scan_image
+            )
+
+            self.assertIsNone(session.target_bright_field_image())
+            session.hdf5_service.read_4d_scan_image.assert_not_called()
+            overview = np.ones(dataset.shape[:2])
+            self.assertTrue(session.cache_scan_overview(dataset, overview))
+            self.assertIs(session.target_bright_field_image(), session.raw_scan_image_cache)
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
     def test_hdf5_preview_description_is_metadata_only(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "preview_description.h5"
         path.parent.mkdir(exist_ok=True)

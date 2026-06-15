@@ -372,6 +372,7 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page.braggvectors_ready.connect(self.calibration_page.show_braggvectors_histogram)
         self.virtual_detector_page.virtual_image_ready.connect(self.bragg_peaks_page.set_virtual_image)
         self.virtual_detector_page.virtual_image_ready.connect(self._show_virtual_image_in_scan_viewer)
+        self.preprocessing_page.scan_overview_ready.connect(self._cache_scan_overview)
         self.workflow_state.changed.connect(self._refresh_pipeline_state)
         self.workflow_state.changed.connect(self._update_status_for_workflow)
         self.dpc_reconstruction_page.dpc_result_ready.connect(self._store_dpc_result)
@@ -1182,7 +1183,7 @@ class MainWindow(QMainWindow):
         self,
         hdf5_path: str,
         show_warning: bool = True,
-        render_overview: bool = True,
+        render_overview: bool = False,
     ) -> bool:
         try:
             info = self.py4dstem_service.load_datacube(hdf5_path)
@@ -1230,7 +1231,7 @@ class MainWindow(QMainWindow):
         hdf5_path: str,
         shape: tuple[int, ...],
         *,
-        render_scan_image: bool = True,
+        render_scan_image: bool = False,
     ) -> None:
         if self.current_file is None:
             return
@@ -1397,6 +1398,11 @@ class MainWindow(QMainWindow):
 
     def _get_target_bright_field_image(self) -> np.ndarray | None:
         return self.session.target_bright_field_image()
+
+    def _cache_scan_overview(self, source, image) -> None:
+        if self.session.cache_scan_overview(source, image):
+            self.scan_viewer.set_image(np.asarray(image))
+            self.log_panel.log("Cached scan overview for downstream workflows.")
 
     def _raw_scan_image(self, hdf5_path: str, dataset: h5py.Dataset) -> np.ndarray:
         return self.session.raw_scan_image(hdf5_path, dataset)

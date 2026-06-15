@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from app.services.array_reduction import max_diffraction, mean_diffraction
+from app.services.array_reduction import max_diffraction, mean_diffraction, scan_sum_with_progress
 
 
 class PreprocessingServiceError(Exception):
@@ -46,6 +46,46 @@ class PreprocessingService:
         raise PreprocessingServiceError(
             f"Selected data must be a 4D DataCube or 2D DiffractionSlice, got shape {shape}."
         )
+
+    def show_data(
+        self,
+        source: Any,
+        *,
+        memory_budget_bytes: int,
+        progress_callback=None,
+    ) -> dict[str, np.ndarray]:
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        shape = tuple(int(value) for value in getattr(data, "shape", ()))
+        if len(shape) == 2:
+            return self.display_data(source)
+        if len(shape) != 4:
+            raise PreprocessingServiceError(
+                f"Selected data must be a 4D DataCube or 2D DiffractionSlice, got shape {shape}."
+            )
+        emit = progress_callback or (lambda _message, _fraction: None)
+        rx, ry = shape[0] // 2, shape[1] // 2
+        qx, qy = shape[2] // 2, shape[3] // 2
+        results = {
+            "Central diffraction pattern": np.asarray(data[rx, ry]),
+            "Central real-space slice": np.asarray(data[:, :, qx, qy]),
+        }
+        results["Scan overview"] = scan_sum_with_progress(
+            data,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=lambda message, fraction: emit(message, fraction * 0.6),
+        )
+        results["Mean diffraction pattern"] = mean_diffraction(
+            data,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=lambda message, fraction: emit(message, 0.6 + fraction * 0.2),
+        )
+        results["Maximum diffraction pattern"] = max_diffraction(
+            data,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=lambda message, fraction: emit(message, 0.8 + fraction * 0.2),
+        )
+        emit("Data display ready", 1.0)
+        return results
 
     def preview_hot_pixels(self, source: Any, params: HotPixelParams) -> HotPixelPreview:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
