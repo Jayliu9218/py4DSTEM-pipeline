@@ -89,7 +89,10 @@ QHeaderView::section {
     font-weight: bold;
 }
 
-QWidget#moduleControlPanel { background: #ffffff; border-left: 1px solid #a8aeb4; }
+/* Separator between the Controls dock and the central figure grid is drawn
+   on this content widget, not on the QDockWidget frame (which is covered by
+   its content). Mirrors the Data Browser's inner-border approach. */
+QWidget#moduleControlPanel { background: #ffffff; border-left: 2px solid #80868c; }
 QLabel#moduleTitle { font-size: 10pt; font-weight: bold; color: #212121; padding: 2px 0; }
 QLabel#sectionTitle { font-size: 9pt; font-weight: bold; color: #424242; }
 
@@ -274,10 +277,9 @@ QDockWidget {
     color: #212121;
     border: 1px solid #a8aeb4;
 }
-/* Prominent separator between the Controls dock and the central figure grid. */
-QDockWidget#controlsDock {
-    border-left: 2px solid #80868c;
-}
+/* The Controls/figure-grid separator is intentionally drawn on
+   #moduleControlPanel (the content widget), not here — see that rule. */
+
 QDockWidget::title {
     background: #c8cdd3;
     border-bottom: 2px solid #98a0a8;

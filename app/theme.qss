@@ -158,10 +158,15 @@ QHeaderView::section {
     font-weight: bold;
 }
 
-/* --- Module control panel ------------------------------------------------ */
+/* --- Module control panel ------------------------------------------------
+   The separator between the Controls dock and the central figure grid is
+   drawn HERE, on the content widget, not on the QDockWidget itself: the dock
+   frame is fully covered by its content and never paints a visible border.
+   This mirrors how the Data Browser dock relies on its inner QTreeWidget
+   border rather than the dock frame. */
 QWidget#moduleControlPanel {
     background: #1e1e1e;
-    border-left: 1px solid #5a5a5a;
+    border-left: 2px solid #7a7a7a;
 }
 QLabel#moduleTitle {
     font-size: 10pt;
@@ -468,10 +473,10 @@ QDockWidget {
     titlebar-close-icon: none;
     titlebar-normal-icon: none;
 }
-/* Prominent separator between the Controls dock and the central figure grid. */
-QDockWidget#controlsDock {
-    border-left: 2px solid #7a7a7a;
-}
+/* Note: a separator between the Controls dock and the central figure grid is
+   intentionally drawn on #moduleControlPanel (the dock's content widget) rather
+   than here — the QDockWidget frame is covered by its content and does not
+   paint a visible border. See #moduleControlPanel above. */
 QDockWidget::title {
     background: #1f1f1f;
     border-bottom: 2px solid #5a5a5a;
