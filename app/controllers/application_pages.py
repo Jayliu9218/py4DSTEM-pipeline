@@ -70,7 +70,7 @@ class ApplicationPages:
         )
         pages["preprocessing_page"] = PreprocessingPage(
             source_provider=providers["datacube"],
-            selected_source_provider=providers["selected_source"],
+            selected_source_provider=providers["show_data_source"],
             **common,
         )
         pages["bragg_peaks_page"] = BraggPeaksPage(

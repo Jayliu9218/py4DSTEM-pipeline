@@ -157,6 +157,15 @@ class Py4DSTEMService:
             return None
         return None
 
+    def is_py4dstem_node_path(self, datapath: str) -> bool:
+        if self.file_path is None:
+            return False
+        try:
+            with h5py.File(self.file_path, "r") as source:
+                return self._python_class(source[datapath]) is not None
+        except (KeyError, OSError, ValueError):
+            return False
+
     @staticmethod
     def _python_class(node: h5py.Group | h5py.Dataset) -> str | None:
         value = node.attrs.get("python_class")
@@ -167,6 +176,10 @@ class Py4DSTEMService:
     def read_datapath(self, datapath: str) -> Any:
         if self.file_path is None:
             raise Py4DSTEMServiceError("No file is open.")
+        if not self.is_py4dstem_node_path(datapath):
+            raise Py4DSTEMServiceError(
+                f"Selected node {datapath} is not a py4DSTEM object."
+            )
         py4DSTEM = self._py4dstem()
         try:
             return py4DSTEM.read(

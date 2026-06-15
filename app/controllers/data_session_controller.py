@@ -91,15 +91,17 @@ class DataSessionController:
                     return node
             except Exception:
                 pass
-            try:
-                return self.py4dstem_service.read_datapath(selected_path)
-            except Exception:
-                pass
+            if self.py4dstem_service.is_py4dstem_node_path(selected_path):
+                try:
+                    return self.py4dstem_service.read_datapath(selected_path)
+                except Exception:
+                    pass
         if target_path and target_path != selected_path:
-            try:
-                return self.py4dstem_service.read_datapath(target_path)
-            except Exception:
-                pass
+            if self.py4dstem_service.is_py4dstem_node_path(target_path):
+                try:
+                    return self.py4dstem_service.read_datapath(target_path)
+                except Exception:
+                    pass
         return self.virtual_detector_source()
 
     def target_bright_field_image(self) -> np.ndarray | None:

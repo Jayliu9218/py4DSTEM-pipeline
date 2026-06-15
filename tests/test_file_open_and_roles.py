@@ -105,6 +105,45 @@ class FileOpenAndRolesTests(unittest.TestCase):
                 read_slice.assert_called_once()
                 self.assertIn("[1, 1]", self.window.preview_status)
 
+    def test_show_data_activates_and_assigns_selected_raw_datacube(self) -> None:
+        self.window._open_file_path(str(self.path))
+        target_item = self.window.tree.topLevelItem(0).child(0)
+        self.window.tree.setCurrentItem(target_item)
+
+        source = self.window._get_show_data_source()
+
+        self.assertIsInstance(source, h5py.Dataset)
+        self.assertEqual(source.name, "/target")
+        self.assertEqual(self.window.current_4d_source, "hdf5")
+        self.assertEqual(self.window.current_dataset_path, "/target")
+        self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/target")
+
+    def test_show_data_activates_py4dstem_datacube_without_preview(self) -> None:
+        path = self.path.parent / "show_data_datacube.h5"
+        with h5py.File(path, "w") as output:
+            group = output.create_group("cube")
+            group.attrs["python_class"] = "DataCube"
+            group.create_dataset("data", data=np.ones((2, 2, 4, 4)))
+        datacube = Mock(shape=(2, 2, 4, 4), name="cube")
+        module = Mock()
+        module.read.return_value = datacube
+        try:
+            self.window._open_file_path(str(path))
+            self.window._handle_node_selected("/cube", "group")
+            with (
+                patch.object(self.window.py4dstem_service, "_py4dstem", return_value=module),
+                patch.object(self.window.calibration_page, "refresh_status"),
+            ):
+                source = self.window._get_show_data_source()
+
+            self.assertIs(source, datacube)
+            self.assertIs(self.window._get_py4dstem_datacube(), datacube)
+            self.assertEqual(self.window.current_dataset_path, "/cube")
+            self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/cube")
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
     def test_two_dimensional_selection_renders_only_after_preview(self) -> None:
         path = self.path.parent / "diffraction_slice.h5"
         with h5py.File(path, "w") as output:
@@ -178,6 +217,22 @@ class FileOpenAndRolesTests(unittest.TestCase):
         with patch.object(service, "_py4dstem", return_value=module):
             with self.assertRaisesRegex(Py4DSTEMServiceError, "not a py4DSTEM DataCube"):
                 service.load_datacube("/target")
+
+        module.read.assert_not_called()
+
+    def test_plain_hdf5_group_skips_py4dstem_reference_read(self) -> None:
+        path = self.path.parent / "plain_metadata_group.h5"
+        with h5py.File(path, "w") as output:
+            output.create_group("4DSTEM_simulation/metadatabundle")
+        module = Mock()
+        service = Py4DSTEMService()
+        service.defer_open_file(path)
+        try:
+            with patch.object(service, "_py4dstem", return_value=module):
+                with self.assertRaisesRegex(Py4DSTEMServiceError, "not a py4DSTEM object"):
+                    service.read_datapath("/4DSTEM_simulation/metadatabundle")
+        finally:
+            path.unlink(missing_ok=True)
 
         module.read.assert_not_called()
 
