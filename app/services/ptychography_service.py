@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import inspect
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
 from time import perf_counter
@@ -160,6 +160,8 @@ class PtychographyContext:
     qc_result: PtychographyStageResult | None = None
     qc_accepted: bool = False
     optimization_result: PtychographyStageResult | None = None
+    rebuild_preprocessing_for_advanced: bool = False
+    advanced_parameter_overrides: dict[str, object] = field(default_factory=dict)
     advanced_ptycho: Any | None = None
     advanced_result: PhaseContrastResult | None = None
     active_profile: PtychographyProfile = field(default_factory=lambda: BUILTIN_PROFILES["Safe CPU"])
@@ -544,6 +546,33 @@ class PtychographyService:
         self.context.revision += 1
         return result
 
+    def apply_optimization_value(self, parameter: str, value: float) -> None:
+        if self.context.optimization_result is None:
+            raise PtychographyServiceError("Run parameter optimization before applying its best value.")
+        if parameter == "Reciprocal sampling":
+            geometry = self.context.geometry_params or PtychographyGeometryParams()
+            self.context.geometry_params = replace(geometry, reciprocal_sampling=value)
+            self.context.rebuild_preprocessing_for_advanced = True
+        elif parameter == "Defocus":
+            setup = self.context.setup_params or PtychographySetupParams()
+            self.context.setup_params = replace(setup, defocus=value)
+            self.context.rebuild_preprocessing_for_advanced = True
+        elif parameter == "Rotation":
+            geometry = self.context.geometry_params or PtychographyGeometryParams()
+            self.context.geometry_params = replace(geometry, com_rotation=value)
+            self.context.rebuild_preprocessing_for_advanced = True
+        elif parameter == "Batch size":
+            self.context.advanced_parameter_overrides["max_batch_size"] = int(round(value))
+        elif parameter == "Fix probe":
+            self.context.advanced_parameter_overrides["fix_probe"] = value >= 0.5
+        elif parameter == "Probe modes":
+            self.context.advanced_parameter_overrides["num_probe_modes"] = int(round(value))
+        else:
+            raise PtychographyServiceError(f"Unsupported optimization parameter: {parameter}")
+        self.context.advanced_ptycho = None
+        self.context.advanced_result = None
+        self.context.revision += 1
+
     def advanced_reconstruct(self, params: PtychographyReconstructionParams) -> PhaseContrastResult:
         result, ptycho = self._run_reconstruction(params, "advanced reconstruction", require_qc=True)
         self.context.advanced_ptycho = ptycho
@@ -628,10 +657,11 @@ class PtychographyService:
         return result, ptycho
 
     def _independent_preprocessed_ptycho(self) -> tuple[Any, str]:
-        try:
-            return copy.deepcopy(self.context.preprocessed_ptycho), "deepcopy"
-        except Exception:
-            pass
+        if not self.context.rebuild_preprocessing_for_advanced:
+            try:
+                return copy.deepcopy(self.context.preprocessed_ptycho), "deepcopy"
+            except Exception:
+                pass
         if self.context.datacube is None:
             raise PtychographyServiceError(
                 "The accepted preprocessing object cannot be copied and the source DataCube is unavailable."
@@ -647,7 +677,12 @@ class PtychographyService:
                 "The accepted py4DSTEM preprocessing object cannot be copied, and rebuilding an "
                 f"independent preprocessing instance failed: {exc}"
             ) from exc
-        return ptycho, "rebuild_from_accepted_parameters"
+        strategy = (
+            "rebuild_with_applied_optimization"
+            if self.context.rebuild_preprocessing_for_advanced
+            else "rebuild_from_accepted_parameters"
+        )
+        return ptycho, strategy
 
     def _load_probe(self, path: str | None) -> np.ndarray | None:
         if not path:

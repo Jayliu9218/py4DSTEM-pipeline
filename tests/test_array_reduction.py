@@ -67,6 +67,23 @@ class ArrayReductionTests(unittest.TestCase):
             self.assertIsInstance(first_axis, slice)
             self.assertLess(first_axis.stop - first_axis.start, self.data.shape[0])
 
+    def test_show_data_respects_memory_budget_and_reports_progress(self) -> None:
+        source = RecordingDataset(self.data)
+        progress: list[tuple[str, float]] = []
+
+        results = PreprocessingService().show_data(
+            source,
+            memory_budget_bytes=1,
+            progress_callback=lambda message, fraction: progress.append((message, fraction)),
+        )
+
+        self.assertIn("Scan overview", results)
+        self.assertIn("Mean diffraction pattern", results)
+        self.assertIn("Maximum diffraction pattern", results)
+        self.assertTrue(progress)
+        self.assertEqual(progress[-1], ("Data display ready", 1.0))
+        self.assertTrue(all(0 <= fraction <= 1 for _message, fraction in progress))
+
     def test_hdf5_service_workflows_match_numpy(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "block_reduction_sample.h5"
         path.parent.mkdir(exist_ok=True)

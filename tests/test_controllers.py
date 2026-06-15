@@ -46,6 +46,89 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_data_session_reuses_recent_diffraction_slices(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "diffraction_cache.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("data", data=np.ones((2, 2, 3, 4)))
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        try:
+            source = session.open_file(path)
+            dataset = source["data"]
+            session.hdf5_service.read_4d_diffraction_pattern = Mock(
+                wraps=session.hdf5_service.read_4d_diffraction_pattern
+            )
+
+            first = session.diffraction_pattern("/data", dataset, 1, 1)
+            second = session.diffraction_pattern("/data", dataset, 1, 1)
+
+            self.assertIs(first, second)
+            self.assertEqual(session.hdf5_service.read_4d_diffraction_pattern.call_count, 1)
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
+    def test_target_bright_field_never_triggers_implicit_reduction(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "overview_cache.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("data", data=np.ones((2, 2, 3, 4)))
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        try:
+            source = session.open_file(path)
+            dataset = source["data"]
+            session.current_4d_source = "hdf5"
+            session.current_dataset_path = "/data"
+            session.current_dataset_shape = tuple(dataset.shape)
+            session.hdf5_service.read_4d_scan_image = Mock(
+                wraps=session.hdf5_service.read_4d_scan_image
+            )
+
+            self.assertIsNone(session.target_bright_field_image())
+            session.hdf5_service.read_4d_scan_image.assert_not_called()
+            overview = np.ones(dataset.shape[:2])
+            self.assertTrue(session.cache_scan_overview(dataset, overview))
+            self.assertIs(session.target_bright_field_image(), session.raw_scan_image_cache)
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
+    def test_hdf5_preview_description_is_metadata_only(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "preview_description.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_dataset("slice", data=np.ones((3, 4)))
+            cube = output.create_group("cube")
+            cube.create_dataset("data", data=np.ones((2, 3, 4, 5)))
+        service = Hdf5Service()
+        try:
+            with h5py.File(path, "r") as source:
+                self.assertEqual(service.describe_preview(source["slice"])["kind"], "Diffraction slice")
+                description = service.describe_preview(source["cube"])
+                self.assertEqual(description, {"kind": "DataCube", "shape": (2, 3, 4, 5)})
+                self.assertEqual(service.resolve_4d_dataset(source["cube"]).name, "/cube/data")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_plain_hdf5_group_is_not_read_as_py4dstem_reference(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "plain_group.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_group("4DSTEM_simulation/metadatabundle")
+        service = Py4DSTEMService()
+        session = DataSessionController(Hdf5Service(), service)
+        service.read_datapath = Mock()
+        try:
+            session.open_file(path)
+
+            source = session.selected_display_source("/4DSTEM_simulation/metadatabundle", None)
+
+            self.assertIsNone(source)
+            service.read_datapath.assert_not_called()
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
     def test_data_session_role_assignment_preserves_initial_preprocess_workspace(self) -> None:
         session = DataSessionController(Hdf5Service(), Py4DSTEMService())
         state = WorkflowState()
@@ -74,15 +157,17 @@ class ControllerTests(unittest.TestCase):
         page.workspace.clear_results = Mock(wraps=page.workspace.clear_results)
         default = QWidget()
         parallax = QWidget()
+        dpc = QWidget()
         pages = ApplicationPages(
             viewer_pages={"one": page, "alias": page},
             route_controls={"data_setup": default},
             crystal_controls={},
             amorphous_controls={},
-            dpc_controls={},
+            dpc_controls={"default": dpc},
             export_controls={"Parallax": parallax, "default": default},
         )
         self.assertIs(pages.controls_for_route("export", "Parallax"), parallax)
+        self.assertIs(pages.controls_for_route("dpc", "Method Comparison"), dpc)
         pages.clear_workspaces()
         page.workspace.clear_results.assert_called_once()
 

@@ -2,6 +2,8 @@
 
 A Windows desktop application for browsing py4DSTEM/HDF5 data and running guided 4D-STEM processing workflows with stage-based review gates.
 
+![Ptychography quick reconstruction](docs/ptychography%20quick%20reconstruction.png)
+
 Built with:
 
 - **PySide6** for the desktop UI
@@ -13,8 +15,9 @@ Built with:
 
 ### Data & Preprocessing
 - Open `.h5`, `.hdf5`, and `.emd` files
-- Browse HDF5 groups and datasets in a tree view
-- Display 2D datasets and browse 4D DataCube scan positions
+- Browse HDF5 groups and datasets lazily in a tree view
+- Select a DataCube and click **Show Data** to activate it as the Target DataCube
+- Preview selected 2D diffraction slices and individual 4D scan positions without calculating a full scan overview
 - Mean / max diffraction pattern diagnostics
 - Hot-pixel detection and correction
 
@@ -38,11 +41,68 @@ Built with:
 ### Phase Retrieval Workflows
 - **DPC / CoM**: segmented virtual detector → CoM preprocessing with rotation/transpose correction → review/accept gate → integrated reconstruction
 - **Parallax**: BF disk definition → alignment (Fast/Notebook Quality/Custom presets) → review gate → subpixel refinement, aberration fitting/CTF diagnostics
-- **Ptychography**: data & probe setup → geometry calibration → preprocessing acceptance → Quick Reconstruction → QC review/accept → parameter optimization → Advanced Reconstruction → export
+- **Ptychography**: data & probe setup → geometry calibration → preprocessing acceptance → Quick Reconstruction → QC review/accept → optional parameter optimization → Advanced Reconstruction → export
 - **Method Comparison**: side-by-side DPC and Ptychography result viewer
 
+After QC is explicitly accepted, **Apply Best Self-Consistency Value** keeps
+Advanced Reconstruction ready. Upstream optimized values are applied by
+rebuilding the preprocessing instance inside the background Advanced task;
+advanced-only values such as batch size, fix probe, and probe modes are passed
+directly to Advanced Reconstruction.
+
+## Guided Workflow
+
+1. Open an HDF5/EMD file and select a DataCube in the Data Browser.
+2. Click **Show Data** to activate and assign it as the Target DataCube.
+3. Choose an Analysis Route and Target from the top toolbar.
+4. Move through the route from left to right, reviewing and accepting scientific gates.
+5. Use the Output panel for progress, activity, and warnings; export retained results at the final stage.
+
+Detailed route notes and screenshots are available in
+[docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+
+## Interface Gallery
+
+### Data Setup
+
+The Data Browser keeps HDF5 navigation lazy, while **Show Data** activates the
+selected DataCube and prepares it for downstream workflows.
+
+![Data setup and lazy DataCube activation](docs/ptychography%20data%20setup.png)
+
+### Ptychography
+
+Quick Reconstruction provides an inexpensive diagnostic pass before QC.
+Advanced Reconstruction retains the formal result after QC acceptance and
+optional parameter optimization.
+
+| Quick Reconstruction | Advanced Reconstruction |
+| --- | --- |
+| ![Ptychography quick reconstruction](docs/ptychography%20quick%20reconstruction.png) | ![Ptychography advanced reconstruction](docs/ptychography%20advanced%20reconstruction.png) |
+
+### DPC / CoM
+
+| CoM Preprocessing And Review | Integrated Reconstruction |
+| --- | --- |
+| ![CoM preprocessing and review](docs/Com%20Prerocessing%20review.png) | ![DPC integrated reconstruction](docs/integrated%20reconstruction.png) |
+
+### Strain Mapping
+
+| Calibration | Strain Analysis |
+| --- | --- |
+| ![Strain calibration](docs/strain%20calibration.png) | ![Strain analysis](docs/strain%20analysis.png) |
+
+### Export
+
+Registered results can be exported through the compact Export controls,
+including batch CSV output for numerical inspection.
+
+| Export Controls | Exported CSV Results |
+| --- | --- |
+| ![Export controls](docs/data%20export.png) | ![Exported CSV results](docs/data%20csv.png) |
+
 ### Shared Infrastructure
-- **SEM/FIB-style dark-gray theme** with dark/light switchable via View menu; Fusion style base for cross-platform consistency
+- **Industrial light theme** by default, with a dark instrument theme available from the View menu
 - Centralized `app/theme.py` color constants and per-widget QSS (`theme.qss` / `theme_light.qss`) applied globally via `QApplication.setStyleSheet()`
 - Stage-based workflow with explicit review/accept gates and downstream staleness tracking
 - CPU/GPU execution choice with CUDA guidance

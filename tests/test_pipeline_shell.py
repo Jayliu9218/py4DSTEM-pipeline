@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGroupBox,
+    QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -17,6 +18,13 @@ from PySide6.QtWidgets import (
 )
 
 from app.main_window import MainWindow
+from app.theme import (
+    ACTION_BUTTON_MIN_HEIGHT,
+    GROUP_SPACING,
+    PANEL_MARGIN,
+    PANEL_MARGIN_TIGHT,
+    PARAM_TABLE_HEIGHT,
+)
 from app.services.bragg_strain_service import CalibrationActionResult
 from app.services.phase_contrast_service import DPCStageResult, PhaseContrastResult
 from app.services.workflow_state import WorkflowStep
@@ -96,6 +104,18 @@ class PipelineShellTests(unittest.TestCase):
             self.window.viewer_stack.currentWidget(),
             self.window.crystalline_results_page,
         )
+
+    def test_phase_retrieval_export_routes_use_dedicated_pages(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        for goal, page in (
+            ("Parallax", self.window.parallax_export_page),
+            ("Ptychography", self.window.ptychography_export_page),
+        ):
+            self.window.project_toolbar.goal.setCurrentText(goal)
+            export = self.window.route_modules[-1]
+            self.assertEqual(export.page_key, f"{goal.lower()}_export")
+            self.window._select_route_module("export")
+            self.assertIs(self.window.viewer_stack.currentWidget(), page)
 
     def test_structure_and_goal_change_rebuilds_route(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
@@ -303,6 +323,26 @@ class PipelineShellTests(unittest.TestCase):
             self.window._select_route_module(route)
             self.app.processEvents()
             self.assertEqual(self.window.viewer_stack.height(), expected_viewer_height)
+
+    def test_initial_dock_layout_matches_reset_layout(self) -> None:
+        window = MainWindow()
+        window.resize(1600, 900)
+        window.show()
+        self.app.processEvents()
+        initial = tuple(
+            (dock.geometry().x(), dock.geometry().y(), dock.width(), dock.height())
+            for dock in (window.data_dock, window.controls_dock, window.output_dock)
+        )
+
+        window._reset_layout(silent=True)
+        self.app.processEvents()
+        reset = tuple(
+            (dock.geometry().x(), dock.geometry().y(), dock.width(), dock.height())
+            for dock in (window.data_dock, window.controls_dock, window.output_dock)
+        )
+
+        self.assertEqual(initial, reset)
+        window.close()
 
     def test_console_is_compact_without_redundant_labels(self) -> None:
         labels = [label.text() for label in self.window.log_panel.findChildren(type(self.window.path_label))]
@@ -514,12 +554,26 @@ class PipelineShellTests(unittest.TestCase):
     def test_module_panel_gives_top_level_groups_comfortable_spacing(self) -> None:
         self.window._select_route_module("crystal_analysis")
         controls = self.window.strain_map_page.controls_panel
-        self.assertEqual(controls.layout().spacing(), 8)
+        self.assertEqual(controls.layout().spacing(), GROUP_SPACING)
         for index in range(controls.layout().count()):
             widget = controls.layout().itemAt(index).widget()
             if isinstance(widget, QGroupBox):
-                self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Fixed)
-                self.assertEqual(widget.minimumHeight(), widget.maximumHeight())
+                self.assertEqual(widget.sizePolicy().verticalPolicy(), QSizePolicy.Preferred)
+                self.assertLess(widget.minimumHeight(), widget.maximumHeight())
+
+    def test_dynamic_parameter_group_grows_for_multiline_warnings(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.goal.setCurrentText("Ptychography")
+        self.window._select_route_module("ptychography_data")
+        page = self.window.ptychography_data_page
+        group = page.groups["data"]
+        before = group.sizeHint().height()
+
+        page.suitability_label.setText("\n".join(["Long suitability warning " * 8] * 3))
+        self.app.processEvents()
+
+        self.assertGreater(group.sizeHint().height(), before)
+        self.assertGreaterEqual(group.maximumHeight(), group.sizeHint().height())
 
     def test_data_setup_does_not_double_shared_workspace_margin(self) -> None:
         margins = self.window.main_view.layout().contentsMargins()
@@ -543,8 +597,55 @@ class PipelineShellTests(unittest.TestCase):
         self.window.project_toolbar.goal.setCurrentText("Orientation Mapping")
         self.window._select_route_module("orientation_setup")
         table = self.window.orientation_setup_page.atom_table
-        self.assertEqual(table.height(), 180)
+        self.assertEqual(table.height(), PARAM_TABLE_HEIGHT)
         self.assertEqual(table.verticalScrollBarPolicy(), Qt.ScrollBarAsNeeded)
+
+    def test_shared_shell_uses_compact_industrial_density(self) -> None:
+        self.window._select_route_module("calibration")
+        route_margins = self.window.route_bar.layout.contentsMargins()
+        self.assertEqual(
+            (route_margins.left(), route_margins.top(), route_margins.right(), route_margins.bottom()),
+            (PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT),
+        )
+        panel_margins = self.window.module_panel.layout().contentsMargins()
+        self.assertEqual(
+            (panel_margins.left(), panel_margins.top(), panel_margins.right(), panel_margins.bottom()),
+            (PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN),
+        )
+        self.assertTrue(
+            all(
+                button.minimumHeight() == ACTION_BUTTON_MIN_HEIGHT
+                and button.maximumHeight() == ACTION_BUTTON_MIN_HEIGHT
+                for button in self.window.calibration_page.buttons
+            )
+        )
+        self.assertTrue(
+            all(button.sizePolicy().horizontalPolicy() == QSizePolicy.Ignored for button in self.window.route_bar.buttons.values())
+        )
+
+    def test_preprocessing_uses_one_automatic_show_data_action(self) -> None:
+        page = self.window.preprocessing_page
+
+        self.assertEqual(page.show_data_button.text(), "Show Data")
+        self.assertFalse(hasattr(page, "diagnostics_button"))
+        self.assertFalse(hasattr(page, "show_selected_button"))
+        self.assertGreaterEqual(page.memory_budget_mb.value(), 8)
+
+    def test_controls_parameters_share_a_framed_content_surface(self) -> None:
+        self.window._select_route_module("calibration")
+        surface = self.window.module_panel.controls_stack
+        scroll = surface.currentWidget()
+
+        self.assertEqual(surface.objectName(), "moduleControlsSurface")
+        self.assertEqual(scroll.objectName(), "moduleControlsScroll")
+        self.assertEqual(scroll.widget().objectName(), "moduleControlsContent")
+
+    def test_parameter_form_labels_do_not_use_zebra_backgrounds(self) -> None:
+        self.window._select_route_module("calibration")
+        labels = self.window.calibration_page.controls_panel.findChildren(QLabel)
+
+        self.assertFalse(any(label.objectName() == "paramRowOdd" for label in labels))
+        self.assertFalse(any(label.autoFillBackground() for label in labels))
 
     def test_orientation_rgb_map_click_returns_to_single_pattern_review(self) -> None:
         target = self.window.orientation_setup_page

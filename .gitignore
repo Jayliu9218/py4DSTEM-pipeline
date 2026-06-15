@@ -28,7 +28,10 @@ notebooks/
 target.md
 TARGET.md
 
-docs/
+docs/*
+!docs/*.md
+!docs/*.png
+!docs/*.jpg
 
 scripts/
 images/

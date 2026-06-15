@@ -354,23 +354,33 @@ class PtychographyPage(QWidget, WorkerRunner):
             return
         value = float(result.metadata["best_value"])
         parameter = self.optimization_parameter.currentText()
-        if parameter == "Reciprocal sampling":
-            self.reciprocal_sampling.setValue(value)
-            self.use_reciprocal_sampling.setChecked(True)
-        elif parameter == "Defocus":
-            self.defocus.setValue(value)
-        elif parameter == "Rotation":
-            self.force_rotation.setValue(value)
-            self.use_force_rotation.setChecked(True)
-        elif parameter == "Batch size":
-            self.batch_size.setValue(value)
-        elif parameter == "Fix probe":
-            self.fix_probe.setChecked(value >= 0.5)
-        elif parameter == "Probe modes":
-            self.probe_modes.setValue(value)
-        self.service.invalidate_from("preprocess")
-        self.workflow_state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_GEOMETRY)
-        self.status_label.setText(f"Applied {parameter}: {value:.6g}. Re-run and re-accept downstream stages.")
+        self._syncing = True
+        try:
+            if parameter == "Reciprocal sampling":
+                self.reciprocal_sampling.setValue(value)
+                self.use_reciprocal_sampling.setChecked(True)
+            elif parameter == "Defocus":
+                self.defocus.setValue(value)
+            elif parameter == "Rotation":
+                self.force_rotation.setValue(value)
+                self.use_force_rotation.setChecked(True)
+            elif parameter == "Batch size":
+                self.batch_size.setValue(value)
+            elif parameter == "Fix probe":
+                self.fix_probe.setChecked(value >= 0.5)
+            elif parameter == "Probe modes":
+                self.probe_modes.setValue(value)
+        finally:
+            self._syncing = False
+        try:
+            self.service.apply_optimization_value(parameter, value)
+        except Exception as exc:
+            self._failed(str(exc))
+            return
+        self.workflow_state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION)
+        self.status_label.setText(
+            f"Applied {parameter}: {value:.6g}. Advanced Reconstruction is ready."
+        )
         self.refresh_stage()
 
     def run_advanced(self) -> None:
@@ -492,11 +502,12 @@ class PtychographyPage(QWidget, WorkerRunner):
         )
 
     def _advanced_params(self) -> PtychographyReconstructionParams:
-        return PtychographyReconstructionParams(
+        params = PtychographyReconstructionParams(
             int(self.num_iter.value()), int(self.batch_size.value()), self.object_type.currentText(),
             self.object_positivity.isChecked(), self.fix_probe.isChecked(), int(self.seed.value()),
             int(self.probe_modes.value()),
         )
+        return replace(params, **self.service.context.advanced_parameter_overrides)
 
     def _optimization_params(self) -> PtychographyOptimizationParams:
         return PtychographyOptimizationParams(
@@ -550,6 +561,20 @@ class PtychographyPage(QWidget, WorkerRunner):
                                    (self.probe_source, setup.probe_source)):
                 control.blockSignals(True); control.setCurrentText(value); control.blockSignals(False)
             self.vacuum_probe_path = setup.vacuum_probe_path
+        overrides = self.service.context.advanced_parameter_overrides
+        for control, value in (
+            (self.batch_size, overrides.get("max_batch_size")),
+            (self.fix_probe, overrides.get("fix_probe")),
+            (self.probe_modes, overrides.get("num_probe_modes")),
+        ):
+            if value is None:
+                continue
+            control.blockSignals(True)
+            if isinstance(control, QCheckBox):
+                control.setChecked(bool(value))
+            else:
+                control.setValue(value)
+            control.blockSignals(False)
 
     def set_cuda_enabled(self, _enabled: bool) -> None:
         # CUDA availability is exposed as a choice; profiles never switch compute mode silently.
