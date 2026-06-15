@@ -25,6 +25,9 @@ try {
         --windows-console-mode=disable `
         --enable-plugin=pyside6 `
         --include-package=app `
+        --include-data-file=app/theme.qss=app/theme.qss `
+        --include-data-file=app/theme_light.qss=app/theme_light.qss `
+        --include-data-file=images/py4DSTEM_logo.png=images/py4DSTEM_logo.png `
         --include-package=py4DSTEM `
         --include-package=emdfile `
         --include-package=pyqtgraph `
