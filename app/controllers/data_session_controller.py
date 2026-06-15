@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ class DataSessionController:
         self.current_attrs: dict[str, object] = {}
         self.raw_scan_image_cache_path: str | None = None
         self.raw_scan_image_cache: np.ndarray | None = None
+        self.diffraction_cache: OrderedDict[tuple[str, int, int], np.ndarray] = OrderedDict()
+        self.diffraction_cache_limit = 16
         self.braggvectors_by_datacube: dict[str, object] = {}
         self.reference_braggvectors_cache: dict[str, object] = {}
 
@@ -44,6 +47,25 @@ class DataSessionController:
     def clear_raw_scan_image_cache(self) -> None:
         self.raw_scan_image_cache_path = None
         self.raw_scan_image_cache = None
+
+    def diffraction_pattern(
+        self,
+        hdf5_path: str,
+        dataset: h5py.Dataset,
+        rx: int,
+        ry: int,
+    ) -> np.ndarray:
+        key = (hdf5_path, rx, ry)
+        cached = self.diffraction_cache.get(key)
+        if cached is not None:
+            self.diffraction_cache.move_to_end(key)
+            return cached
+        image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
+        self.diffraction_cache[key] = image
+        self.diffraction_cache.move_to_end(key)
+        while len(self.diffraction_cache) > self.diffraction_cache_limit:
+            self.diffraction_cache.popitem(last=False)
+        return image
 
     def virtual_detector_source(self) -> Any | None:
         if self.current_4d_source == "py4dstem":
@@ -69,32 +91,39 @@ class DataSessionController:
                     return node
             except Exception:
                 pass
-            try:
-                return self.py4dstem_service.read_datapath(selected_path)
-            except Exception:
-                pass
+            if self.py4dstem_service.is_py4dstem_node_path(selected_path):
+                try:
+                    return self.py4dstem_service.read_datapath(selected_path)
+                except Exception:
+                    pass
         if target_path and target_path != selected_path:
-            try:
-                return self.py4dstem_service.read_datapath(target_path)
-            except Exception:
-                pass
+            if self.py4dstem_service.is_py4dstem_node_path(target_path):
+                try:
+                    return self.py4dstem_service.read_datapath(target_path)
+                except Exception:
+                    pass
         return self.virtual_detector_source()
 
     def target_bright_field_image(self) -> np.ndarray | None:
-        try:
-            if self.current_4d_source == "py4dstem":
-                return self.py4dstem_service.get_scan_image()
-            if (
-                self.current_4d_source == "hdf5"
-                and self.current_file is not None
-                and self.current_dataset_path
-            ):
-                node = self.current_file[self.current_dataset_path]
-                if isinstance(node, h5py.Dataset) and len(tuple(node.shape)) == 4:
-                    return self.raw_scan_image(self.current_dataset_path, node)
-        except Exception:
-            return None
+        if self.current_dataset_path == self.raw_scan_image_cache_path:
+            return self.raw_scan_image_cache
         return None
+
+    def cache_scan_overview(self, source: Any, image: np.ndarray) -> bool:
+        if self.current_dataset_path is None:
+            return False
+        active = self.virtual_detector_source()
+        active_data = getattr(active, "data", active)
+        source_data = getattr(source, "data", source)
+        same_hdf5_path = (
+            isinstance(source_data, h5py.Dataset)
+            and source_data.name == self.current_dataset_path
+        )
+        if source is not active and source_data is not active_data and not same_hdf5_path:
+            return False
+        self.raw_scan_image_cache_path = self.current_dataset_path
+        self.raw_scan_image_cache = np.asarray(image)
+        return True
 
     def current_4d_shape(self) -> tuple[int, int, int, int] | None:
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:
@@ -138,6 +167,7 @@ class DataSessionController:
         self.current_dataset_shape = None
         self.current_4d_source = None
         self.clear_raw_scan_image_cache()
+        self.diffraction_cache.clear()
         self.py4dstem_service.close()
         self.braggvectors_by_datacube.clear()
         self.reference_braggvectors_cache.clear()

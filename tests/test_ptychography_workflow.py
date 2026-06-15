@@ -14,7 +14,7 @@ from app.pages.ptychography_page import PtychographyPage
 from app.services.ptychography_service import (
     BUILTIN_PROFILES, COMPUTE_PRESETS, PtychographyAdapter, PtychographyGeometryParams,
     PtychographyPreprocessParams, PtychographyReconstructionParams, PtychographyService,
-    PtychographyServiceError, PtychographySetupParams,
+    PtychographyServiceError, PtychographySetupParams, PtychographyStageResult,
 )
 from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.log_panel import LogPanel
@@ -195,6 +195,65 @@ class PtychographyWorkflowTests(unittest.TestCase):
         state.mark_completed(WorkflowStep.PTYCHOGRAPHY_ADVANCED)
         state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION)
         self.assertFalse(state.is_stale(WorkflowStep.PTYCHOGRAPHY_ADVANCED))
+
+    def test_apply_best_upstream_value_keeps_advanced_ready_and_rebuilds(self) -> None:
+        self._preprocessed()
+        self.service.quick_reconstruct()
+        self.service.review_qc()
+        self.service.accept_qc()
+        self.service.context.optimization_result = PtychographyStageResult(
+            "optimization", {}, {"best_value": 0.02}, 0.01
+        )
+        page = PtychographyPage(
+            lambda: self.datacube,
+            LogPanel(),
+            WorkflowState(),
+            service=self.service,
+            stage_mode="optimization",
+        )
+        advanced = PtychographyPage(
+            lambda: self.datacube,
+            LogPanel(),
+            page.workflow_state,
+            service=self.service,
+            stage_mode="advanced",
+        )
+
+        page.apply_best_value()
+        advanced.refresh_stage()
+        result = self.service.advanced_reconstruct(PtychographyReconstructionParams())
+
+        self.assertTrue(self.service.context.qc_accepted)
+        self.assertTrue(advanced.advanced_button.isEnabled())
+        self.assertEqual(self.service.context.geometry_params.reciprocal_sampling, 0.02)
+        self.assertEqual(
+            result.metadata["preprocessed_instance_strategy"],
+            "rebuild_with_applied_optimization",
+        )
+
+    def test_apply_best_advanced_value_propagates_across_stage_pages(self) -> None:
+        self._preprocessed()
+        self.service.quick_reconstruct()
+        self.service.review_qc()
+        self.service.accept_qc()
+        self.service.context.optimization_result = PtychographyStageResult(
+            "optimization", {}, {"best_value": 96}, 0.01
+        )
+        state = WorkflowState()
+        optimization = PtychographyPage(
+            lambda: self.datacube, LogPanel(), state, service=self.service, stage_mode="optimization"
+        )
+        optimization.optimization_parameter.setCurrentText("Batch size")
+        advanced = PtychographyPage(
+            lambda: self.datacube, LogPanel(), state, service=self.service, stage_mode="advanced"
+        )
+
+        optimization.apply_best_value()
+        advanced.refresh_stage()
+
+        self.assertEqual(advanced.batch_size.value(), 96)
+        self.assertEqual(advanced._advanced_params().max_batch_size, 96)
+        self.assertTrue(advanced.advanced_button.isEnabled())
 
     def test_optimization_reuses_accepted_probe_geometry_without_none_values(self) -> None:
         captured = {}

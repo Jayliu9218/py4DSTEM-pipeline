@@ -3,11 +3,14 @@ import types
 import unittest
 
 import numpy as np
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel
 
 sys.modules.setdefault("py4DSTEM", types.SimpleNamespace())
 
+from main import _load_stylesheet
 from app.main_window import MainWindow
+from app.qt_utils import WheelEventFilter
 from app.services.project_state_service import ProjectState
 from app.services.bragg_strain_service import BraggDetectionParams, BraggStrainService
 from app.services.orientation_service import OrientationPlanParams, OrientationService
@@ -72,6 +75,25 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertNotIn("Setting", file_actions)
         self.assertFalse(hasattr(window, "setting_menu"))
 
+    def test_industrial_light_theme_is_default_and_dark_remains_available(self) -> None:
+        window = MainWindow()
+
+        self.assertTrue(window.light_theme_action.isChecked())
+        self.assertFalse(window.dark_theme_action.isChecked())
+        self.assertIn("Compact industrial-light instrument theme", _load_stylesheet())
+
+        window._apply_theme("dark")
+        self.assertIn("SEM/FIB dark-gray instrument theme", self.app.styleSheet())
+        window._apply_theme("light")
+        self.assertIn("Compact industrial-light instrument theme", self.app.styleSheet())
+
+    def test_combo_wheel_changes_are_blocked_without_affecting_other_widgets(self) -> None:
+        event_filter = WheelEventFilter()
+        wheel_event = QEvent(QEvent.Wheel)
+
+        self.assertTrue(event_filter.eventFilter(QComboBox(), wheel_event))
+        self.assertFalse(event_filter.eventFilter(QLabel(), wheel_event))
+
     def test_help_menu_actions_are_descriptive_and_have_complete_content(self) -> None:
         window = MainWindow()
         actions = [action.text().replace("&", "") for action in window.help_menu.actions()]
@@ -83,6 +105,10 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertIn("Current situation", window.ABOUT_HTML)
         self.assertIn("Current improvements", window.ABOUT_HTML)
         self.assertIn("GNU General Public License version 3", window.LICENSE_HTML)
+        self.assertIn("Show Data", window.TUTORIAL_HTML)
+        self.assertIn("Apply Best Self-Consistency Value", window.TUTORIAL_HTML)
+        self.assertIn("accepted QC remains valid", window.TUTORIAL_HTML)
+        self.assertIn("cancellable background tasks", window.TUTORIAL_HTML)
         for workflow in (
             "Orientation Mapping", "Strain Mapping", "Structural Phase Mapping",
             "DPC / CoM", "Parallax", "Ptychography", "Method Comparison",
