@@ -12,6 +12,19 @@ try {
         throw "Packaged application not found. Run packaging\build_pyinstaller.ps1 first."
     }
 
+    $bundleRoot = Split-Path $absoluteExePath -Parent
+    $resourceRoot = Join-Path $bundleRoot "_internal"
+    foreach ($relativePath in @(
+        "app\theme.qss",
+        "app\theme_light.qss",
+        "images\py4DSTEM_logo.png"
+    )) {
+        $resourcePath = Join-Path $resourceRoot $relativePath
+        if (-not (Test-Path $resourcePath)) {
+            throw "Packaged visual resource is missing: $resourcePath"
+        }
+    }
+
     $process = Start-Process -FilePath $absoluteExePath -PassThru
     Start-Sleep -Seconds $WaitSeconds
 

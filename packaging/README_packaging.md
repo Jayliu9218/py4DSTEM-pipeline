@@ -42,6 +42,18 @@ The spec explicitly packages `libexpat.dll` from the dedicated packaging
 environment. This avoids accidentally collecting an incompatible DLL from the
 system Miniconda installation.
 
+The PyInstaller spec and Nuitka command also explicitly include the application's
+visual resources:
+
+- `app/theme_light.qss`
+- `app/theme.qss`
+- `images/py4DSTEM_logo.png`
+
+These files must remain bundled. If they are missing, the frozen application
+can still launch but falls back to the unstyled Qt/Fusion interface, making it
+look different from `python main.py`. The packaged-application launch test
+checks these resources before starting the executable.
+
 ## 2. MVP Testing: PyInstaller onedir
 
 ```powershell
