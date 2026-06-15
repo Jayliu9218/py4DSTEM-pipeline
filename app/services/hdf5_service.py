@@ -44,6 +44,30 @@ class Hdf5Service:
         self._ensure_numeric(dataset)
         return np.asarray(dataset[...])
 
+    def describe_preview(self, node: h5py.Group | h5py.Dataset) -> dict[str, object]:
+        if isinstance(node, h5py.Dataset):
+            shape = tuple(int(value) for value in node.shape)
+            if len(shape) == 2 and np.issubdtype(node.dtype, np.number):
+                return {"kind": "Diffraction slice", "shape": shape}
+            if len(shape) == 4 and np.issubdtype(node.dtype, np.number):
+                return {"kind": "DataCube", "shape": shape}
+            return {"kind": "Not displayable", "shape": shape}
+        try:
+            dataset = self.resolve_4d_dataset(node)
+            return {"kind": "DataCube", "shape": tuple(int(value) for value in dataset.shape)}
+        except ValueError:
+            return {"kind": "Not displayable", "shape": None}
+
+    def resolve_4d_dataset(self, node: h5py.Group | h5py.Dataset) -> h5py.Dataset:
+        if isinstance(node, h5py.Dataset):
+            if node.ndim == 4 and np.issubdtype(node.dtype, np.number):
+                return node
+            raise ValueError("Selected node is not a numeric 4D dataset.")
+        data = node.get("data")
+        if isinstance(data, h5py.Dataset) and data.ndim == 4 and np.issubdtype(data.dtype, np.number):
+            return data
+        raise ValueError("Selected group does not contain a numeric 4D 'data' dataset.")
+
     def read_4d_diffraction_pattern(self, dataset: h5py.Dataset, rx: int = 0, ry: int = 0) -> np.ndarray:
         if dataset.ndim != 4:
             raise ValueError(f"Expected a 4D dataset, got shape {dataset.shape}.")

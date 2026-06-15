@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ class DataSessionController:
         self.current_attrs: dict[str, object] = {}
         self.raw_scan_image_cache_path: str | None = None
         self.raw_scan_image_cache: np.ndarray | None = None
+        self.diffraction_cache: OrderedDict[tuple[str, int, int], np.ndarray] = OrderedDict()
+        self.diffraction_cache_limit = 16
         self.braggvectors_by_datacube: dict[str, object] = {}
         self.reference_braggvectors_cache: dict[str, object] = {}
 
@@ -44,6 +47,25 @@ class DataSessionController:
     def clear_raw_scan_image_cache(self) -> None:
         self.raw_scan_image_cache_path = None
         self.raw_scan_image_cache = None
+
+    def diffraction_pattern(
+        self,
+        hdf5_path: str,
+        dataset: h5py.Dataset,
+        rx: int,
+        ry: int,
+    ) -> np.ndarray:
+        key = (hdf5_path, rx, ry)
+        cached = self.diffraction_cache.get(key)
+        if cached is not None:
+            self.diffraction_cache.move_to_end(key)
+            return cached
+        image = self.hdf5_service.read_4d_diffraction_pattern(dataset, rx=rx, ry=ry)
+        self.diffraction_cache[key] = image
+        self.diffraction_cache.move_to_end(key)
+        while len(self.diffraction_cache) > self.diffraction_cache_limit:
+            self.diffraction_cache.popitem(last=False)
+        return image
 
     def virtual_detector_source(self) -> Any | None:
         if self.current_4d_source == "py4dstem":
@@ -138,6 +160,7 @@ class DataSessionController:
         self.current_dataset_shape = None
         self.current_4d_source = None
         self.clear_raw_scan_image_cache()
+        self.diffraction_cache.clear()
         self.py4dstem_service.close()
         self.braggvectors_by_datacube.clear()
         self.reference_braggvectors_cache.clear()

@@ -90,6 +90,12 @@ class Py4DSTEMService:
                 "This node is not a py4DSTEM DataCube. "
                 "Raw 4D HDF5 datasets remain available for browsing."
             )
+        if (
+            self.datacube is not None
+            and self.datacube_info is not None
+            and self.datacube_info.datapath == canonical_datapath
+        ):
+            return self.datacube_info
         py4DSTEM = self._py4dstem()
 
         try:
