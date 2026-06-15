@@ -1133,7 +1133,6 @@ class MainWindow(QMainWindow):
         self.selected_node_kind = None
         self.current_attrs = {}
         self._refresh_tree_data_info()
-        self._refresh_pipeline_state()
 
     def _clear_datacube_info(self) -> None:
         self.datacube_name_label.setText("-")
@@ -1217,7 +1216,6 @@ class MainWindow(QMainWindow):
             self.virtual_detector_page.refresh_defaults_from_datacube()
             self.bragg_peaks_page.refresh_from_datacube()
             self.calibration_page.refresh_status()
-            self._refresh_pipeline_state()
             self.log_panel.log(f"Loaded py4DSTEM DataCube: {info.name} at {hdf5_path}")
             return True
         except Py4DSTEMServiceError as exc:
@@ -1244,7 +1242,6 @@ class MainWindow(QMainWindow):
         self._restore_current_braggvectors()
         self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
         self.virtual_detector_page.refresh_defaults_from_datacube()
-        self._refresh_pipeline_state()
         self.log_panel.log(f"Loaded raw 4D HDF5 dataset: {hdf5_path}")
 
     def _show_datacube_info(
