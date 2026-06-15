@@ -33,7 +33,11 @@ docs/*
 !docs/*.png
 !docs/*.jpg
 
-scripts/
+scripts/*
+!scripts/setup_dev_env.ps1
 images/
+!images/
+images/*
+!images/py4DSTEM_logo.png
 
 .idea/
