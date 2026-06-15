@@ -59,8 +59,16 @@ class PreprocessingPage(QWidget):
         button_row.addWidget(self.show_selected_button)
         control_layout.addLayout(button_row)
         
+        """
         control_layout.addWidget(self.preview_button)
         control_layout.addWidget(self.apply_button)
+        """
+        
+        button_row = PySide6.QtWidgets.QHBoxLayout()
+        button_row.addWidget(self.preview_button)
+        button_row.addWidget(self.apply_button)
+        control_layout.addLayout(button_row)
+        
         control_layout.addWidget(self.status)
         control_layout.addStretch(1)
         self.controls_panel = QWidget()

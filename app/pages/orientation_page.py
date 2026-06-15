@@ -144,13 +144,13 @@ class OrientationPage(QWidget, WorkerRunner):
         ])
         self.groups["review"] = self._group("Single-Pattern Match Review", [
             ("Scan x", self.scan_x), ("Scan y", self.scan_y), ("Candidates", self.review_matches),
-            ("Minimum candidate angle", self.review_min_angle), ("Minimum peaks", self.review_min_peaks),
+            ("Min candidate angle", self.review_min_angle), ("Min peaks", self.review_min_peaks),
             ("Simulation sigma", self.simulation_sigma), ("", self.review_inversion),
             ("", self.review_button), ("", self.accept_review_button),
         ])
-        self.groups["map"] = self._group("Full Orientation Map & Quality Review", [
-            ("Candidates", self.map_matches), ("Minimum candidate angle", self.map_min_angle),
-            ("Minimum peaks", self.map_min_peaks), ("Low-confidence threshold", self.low_confidence),
+        self.groups["map"] = self._group("Full Orientation Map", [
+            ("Candidates", self.map_matches), ("Min candidate angle", self.map_min_angle),
+            ("Min peaks", self.map_min_peaks), ("Low-confidence threshold", self.low_confidence),
             ("", self.map_inversion), ("", self.corr_normalize), ("", self.map_button),
         ])
         controls = QWidget()

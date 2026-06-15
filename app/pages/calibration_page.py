@@ -118,13 +118,13 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.rotation_real_length = self._float_input(0.01, 2, 0.4, decimals=3)
         self.rotation_q_length = self._float_input(0.01, 2, 0.3, decimals=3)
         self.refresh_button = QPushButton("Check Calibration")
-        self.origin_button = QPushButton("Measure Origin")
-        self.compare_origin_button = QPushButton("Compare Origin Correction")
-        self.draw_ellipse_circle_button = QPushButton("Draw Ring Fit ROI")
-        self.ellipse_button = QPushButton("Fit Ellipse")
+        self.origin_button = QPushButton("Measure")
+        self.compare_origin_button = QPushButton("Compare")
+        self.draw_ellipse_circle_button = QPushButton("Draw ROI")
+        self.ellipse_button = QPushButton("Fit")
         self.pixel_button = QPushButton("Set Q Pixel Size")
         self.load_cif_button = QPushButton("Load Crystal CIF")
-        self.fit_pixel_button = QPushButton("Fit Pixel Size From Crystal Reference")
+        self.fit_pixel_button = QPushButton("Fit Pixel Size")
         self.rotation_button = QPushButton("Set QR Rotation")
         self.apply_origin_button = QPushButton("Apply")
         self.apply_ellipse_button = QPushButton("Accept && Apply Ellipse")
@@ -322,8 +322,16 @@ class CalibrationPage(QWidget, WorkerRunner):
         origin_form.addRow("robust steps", self.origin_robust_steps)
         origin_form.addRow("robust threshold", self.origin_robust_threshold)
         origin_layout.addLayout(origin_form)
+        
+        """
         origin_layout.addWidget(self.origin_button)
         origin_layout.addWidget(self.compare_origin_button)
+        origin_layout.addWidget(self.apply_origin_button)
+        """
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.origin_button)
+        button_row.addWidget(self.compare_origin_button)
+        origin_layout.addLayout(button_row)
         origin_layout.addWidget(self.apply_origin_button)
 
         ellipse_group = QGroupBox("Ellipse Calibration")
@@ -334,9 +342,17 @@ class CalibrationPage(QWidget, WorkerRunner):
         ellipse_layout.addRow("inner radius", self.ellipse_inner)
         ellipse_layout.addRow("outer radius", self.ellipse_outer)
         ellipse_layout.addRow("BVM sampling", self.sampling_spin)
+        
+        """
         ellipse_layout.addRow("", self.draw_ellipse_circle_button)
         ellipse_layout.addRow("", self.ellipse_button)
-        ellipse_layout.addRow("", self.apply_ellipse_button)
+        """
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.draw_ellipse_circle_button)
+        button_row.addWidget(self.ellipse_button)
+        ellipse_layout.addRow(button_row)
+        
+        ellipse_layout.addRow(self.apply_ellipse_button)
 
         pixel_group = QGroupBox("Q Pixel Size")
         pixel_layout = QFormLayout(pixel_group)

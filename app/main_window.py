@@ -858,9 +858,9 @@ class MainWindow(QMainWindow):
         roles_layout = QVBoxLayout(roles_group)
         for label, role in [
             ("Set as Target", "target_datacube"),
-            ("Set as Vacuum Probe", "vacuum_probe"),
-            ("Set as Ellipse Ref", "polycrystal_calibration"),
-            ("Set as Rotation Ref", "defocused_cbed"),
+            ("Vacuum Probe", "vacuum_probe"),
+            ("Ellipse Reference", "polycrystal_calibration"),
+            ("Rotation Reference", "defocused_cbed"),
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))

@@ -76,7 +76,7 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
         ]
     if goal == "Orientation Mapping":
         return shared + [
-            RouteModule("orientation_setup", "Orientation Setup & Validation", "orientation",
+            RouteModule("orientation_setup", "Orientation Setup", "orientation",
                 "Calibrated BraggVectors and a CIF or manual crystal; incomplete calibration is allowed with warnings.",
                 "Reviewed candidates and an explicitly accepted single-pattern match.",
                 WorkflowStep.ORIENTATION_REVIEW_ACCEPT, "calibration"),

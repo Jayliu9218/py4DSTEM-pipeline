@@ -93,7 +93,7 @@ class BraggPeaksPage(QWidget, WorkerRunner):
         self.prepare_kernel_button = QPushButton("Prepare Probe Kernel")
         self.pick_roi_button = QPushButton("Draw ROI")
         self.run_current_button = QPushButton("Run Current Pattern")
-        self.run_selected_button = QPushButton("Check 6 Selected Positions")
+        self.run_selected_button = QPushButton("Check 6 Positions")
         self.run_full_button = QPushButton("Run Full BraggVectors")
         self.status_label = QLabel("Idle")
         self.status_label.setWordWrap(True)
