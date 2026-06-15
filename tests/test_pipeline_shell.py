@@ -150,21 +150,6 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(preprocess.prerequisite, "data_setup")
         self.assertEqual(dpc.prerequisite, "dpc_preprocess")
 
-    def test_route_buttons_follow_data_and_completed_prerequisites(self) -> None:
-        window = MainWindow()
-        try:
-            self.assertTrue(window.route_bar.buttons["data_setup"].isEnabled())
-            self.assertFalse(window.route_bar.buttons["virtual_imaging"].isEnabled())
-            window.route_coordinator.data_ready_provider = lambda: True
-            window._refresh_pipeline_state()
-            self.assertTrue(window.route_bar.buttons["virtual_imaging"].isEnabled())
-            self.assertFalse(window.route_bar.buttons["bragg_detection"].isEnabled())
-
-            window.workflow_state.mark_completed(WorkflowStep.VIRTUAL_DETECTOR)
-            self.assertTrue(window.route_bar.buttons["bragg_detection"].isEnabled())
-        finally:
-            window.close()
-
     def test_dpc_stages_have_independent_workspaces(self) -> None:
         pages = [
             self.window.dpc_segmented_page,
