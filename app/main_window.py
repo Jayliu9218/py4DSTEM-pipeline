@@ -100,8 +100,10 @@ class MainWindow(QMainWindow):
     <p>Start by opening an HDF5/EMD file, assigning the Target DataCube and any
     optional reference roles, then choose a structure type and analysis goal.</p>
     <h3>Shared Data Setup</h3>
-    <p>Inspect the DataCube, assign dataset roles, preview preprocessing, and apply
-    corrections explicitly before downstream analysis.</p>
+    <p>Select a DataCube and click <b>Show Data</b> to activate and assign it as
+    the Target DataCube. Tree selection remains lazy; <b>Preview Selected</b>
+    displays only the selected slice or scan position. Review preprocessing and
+    apply corrections explicitly before downstream analysis.</p>
     <h3>Crystalline / Bragg-based</h3>
     <p><b>Orientation Mapping:</b> detect Bragg peaks, calibrate reciprocal space,
     load a crystal structure, create an orientation plan, and match orientations.</p>
@@ -116,8 +118,12 @@ class MainWindow(QMainWindow):
     <p><b>Parallax:</b> accept a bright-field disk, align virtual BF images, review
     shifts, and optionally run subpixel or aberration processing.</p>
     <p><b>Ptychography:</b> inspect data and probe, accept geometry and preprocessing,
-    run a Quick Reconstruction, review QC, optionally optimize parameters, then run
-    Advanced Reconstruction and export the retained results.</p>
+    run a Quick Reconstruction, calculate QC metrics, and click <b>Confirm QC
+    Risks</b>. Parameter Optimization is optional. After optimization, click
+    <b>Apply Best Self-Consistency Value</b>; accepted QC remains valid and Advanced
+    Reconstruction becomes ready. Upstream optimized values rebuild preprocessing
+    inside the Advanced background task, while batch/probe options transfer directly.
+    The best self-consistency value is diagnostic and is not proof of physical accuracy.</p>
     <p><b>Method Comparison:</b> compare retained DPC and Ptychography results when
     both are available.</p>
     <h3>Amorphous / Diffuse-scattering</h3>
@@ -127,6 +133,10 @@ class MainWindow(QMainWindow):
     <p>Completed stages are retained. Changing upstream parameters marks affected
     downstream results as stale. Re-run and re-accept stale stages before relying
     on later results.</p>
+    <h3>Performance and Warnings</h3>
+    <p>Large 4D reductions run in cancellable background tasks. Use the reduction
+    memory budget to control chunking, follow Progress and Warnings in Output, and
+    review scientific diagnostics before accepting a stage.</p>
     """
 
     current_file = property(

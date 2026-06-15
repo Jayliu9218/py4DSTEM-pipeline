@@ -2,6 +2,8 @@
 
 A Windows desktop application for browsing py4DSTEM/HDF5 data and running guided 4D-STEM processing workflows with stage-based review gates.
 
+![Ptychography quick reconstruction](docs/ptychography%20quick%20reconstruction.png)
+
 Built with:
 
 - **PySide6** for the desktop UI
@@ -13,8 +15,9 @@ Built with:
 
 ### Data & Preprocessing
 - Open `.h5`, `.hdf5`, and `.emd` files
-- Browse HDF5 groups and datasets in a tree view
-- Display 2D datasets and browse 4D DataCube scan positions
+- Browse HDF5 groups and datasets lazily in a tree view
+- Select a DataCube and click **Show Data** to activate it as the Target DataCube
+- Preview selected 2D diffraction slices and individual 4D scan positions without calculating a full scan overview
 - Mean / max diffraction pattern diagnostics
 - Hot-pixel detection and correction
 
@@ -38,11 +41,28 @@ Built with:
 ### Phase Retrieval Workflows
 - **DPC / CoM**: segmented virtual detector → CoM preprocessing with rotation/transpose correction → review/accept gate → integrated reconstruction
 - **Parallax**: BF disk definition → alignment (Fast/Notebook Quality/Custom presets) → review gate → subpixel refinement, aberration fitting/CTF diagnostics
-- **Ptychography**: data & probe setup → geometry calibration → preprocessing acceptance → Quick Reconstruction → QC review/accept → parameter optimization → Advanced Reconstruction → export
+- **Ptychography**: data & probe setup → geometry calibration → preprocessing acceptance → Quick Reconstruction → QC review/accept → optional parameter optimization → Advanced Reconstruction → export
 - **Method Comparison**: side-by-side DPC and Ptychography result viewer
 
+After QC is explicitly accepted, **Apply Best Self-Consistency Value** keeps
+Advanced Reconstruction ready. Upstream optimized values are applied by
+rebuilding the preprocessing instance inside the background Advanced task;
+advanced-only values such as batch size, fix probe, and probe modes are passed
+directly to Advanced Reconstruction.
+
+## Guided Workflow
+
+1. Open an HDF5/EMD file and select a DataCube in the Data Browser.
+2. Click **Show Data** to activate and assign it as the Target DataCube.
+3. Choose an Analysis Route and Target from the top toolbar.
+4. Move through the route from left to right, reviewing and accepting scientific gates.
+5. Use the Output panel for progress, activity, and warnings; export retained results at the final stage.
+
+Detailed route notes and screenshots are available in
+[docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+
 ### Shared Infrastructure
-- **SEM/FIB-style dark-gray theme** with dark/light switchable via View menu; Fusion style base for cross-platform consistency
+- **Industrial light theme** by default, with a dark instrument theme available from the View menu
 - Centralized `app/theme.py` color constants and per-widget QSS (`theme.qss` / `theme_light.qss`) applied globally via `QApplication.setStyleSheet()`
 - Stage-based workflow with explicit review/accept gates and downstream staleness tracking
 - CPU/GPU execution choice with CUDA guidance

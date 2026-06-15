@@ -105,6 +105,10 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertIn("Current situation", window.ABOUT_HTML)
         self.assertIn("Current improvements", window.ABOUT_HTML)
         self.assertIn("GNU General Public License version 3", window.LICENSE_HTML)
+        self.assertIn("Show Data", window.TUTORIAL_HTML)
+        self.assertIn("Apply Best Self-Consistency Value", window.TUTORIAL_HTML)
+        self.assertIn("accepted QC remains valid", window.TUTORIAL_HTML)
+        self.assertIn("cancellable background tasks", window.TUTORIAL_HTML)
         for workflow in (
             "Orientation Mapping", "Strain Mapping", "Structural Phase Mapping",
             "DPC / CoM", "Parallax", "Ptychography", "Method Comparison",
