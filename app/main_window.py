@@ -210,7 +210,7 @@ class MainWindow(QMainWindow):
                 "virtual_source": self._get_virtual_detector_source,
                 "shape": self._get_current_4d_shape,
                 "probe_geometry": self._get_probe_geometry,
-                "selected_source": self._get_selected_display_source,
+                "show_data_source": self._get_show_data_source,
                 "datacube": self._get_py4dstem_datacube,
                 "vacuum_probe_path": self._get_vacuum_probe_source,
                 "virtual_image": self._get_virtual_detector_image,
@@ -1071,14 +1071,8 @@ class MainWindow(QMainWindow):
                 self.diffraction_viewer.set_image(image)
                 self.preview_status = "Rendered diffraction slice"
             elif self.selected_preview_kind == "DataCube":
-                self.scan_viewer.clear("Scan overview deferred until a workflow requests it.")
-                if not self._try_load_py4dstem_datacube(
-                    self.selected_hdf5_path,
-                    show_warning=False,
-                    render_overview=False,
-                ):
-                    dataset = self.hdf5_service.resolve_4d_dataset(node)
-                    self._load_raw_4d_dataset(dataset.name, tuple(dataset.shape), render_scan_image=False)
+                if not self._activate_selected_datacube():
+                    raise ValueError("The selected node is not a displayable DataCube.")
                 self._display_4d_slice(self.rx_spin.value(), self.ry_spin.value())
                 self.preview_status = (
                     f"Rendered DataCube diffraction slice [{self.rx_spin.value()}, {self.ry_spin.value()}]"
@@ -1196,7 +1190,7 @@ class MainWindow(QMainWindow):
                 scan_image = self.py4dstem_service.get_scan_image()
                 self.scan_viewer.set_image(scan_image)
             self.current_4d_source = "py4dstem"
-            self.current_dataset_path = hdf5_path
+            self.current_dataset_path = info.datapath
             self.current_dataset_shape = info.shape
             self._restore_current_braggvectors()
             self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
@@ -1331,6 +1325,38 @@ class MainWindow(QMainWindow):
         target_path = self.workflow_state.dataset_roles.target_datacube
         return self.session.selected_display_source(path, target_path)
 
+    def _get_show_data_source(self):
+        selected_path = self._current_tree_selection_path()
+        if (
+            selected_path
+            and self.current_file is not None
+            and self.selected_preview_kind == "DataCube"
+            and self._activate_selected_datacube()
+        ):
+            active_path = self.current_dataset_path or selected_path
+            if self.workflow_state.dataset_roles.target_datacube != active_path:
+                self._assign_role_path("target_datacube", active_path)
+            return self._get_virtual_detector_source()
+        return self._get_selected_display_source()
+
+    def _activate_selected_datacube(self) -> bool:
+        selected_path = self._current_tree_selection_path()
+        if self.current_file is None or selected_path is None:
+            return False
+        node = self.current_file[selected_path]
+        if self.hdf5_service.describe_preview(node)["kind"] != "DataCube":
+            return False
+        self.scan_viewer.clear("Scan overview deferred until a workflow requests it.")
+        if self._try_load_py4dstem_datacube(
+            selected_path,
+            show_warning=False,
+            render_overview=False,
+        ):
+            return True
+        dataset = self.hdf5_service.resolve_4d_dataset(node)
+        self._load_raw_4d_dataset(dataset.name, tuple(dataset.shape), render_scan_image=False)
+        return True
+
     def _get_braggvectors(self):
         if self.current_dataset_path and self.current_dataset_path in self.braggvectors_by_datacube:
             return self.braggvectors_by_datacube[self.current_dataset_path]
@@ -1453,6 +1479,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Dataset Roles", "Select a node in the HDF5 tree first.")
             return
         self.selected_hdf5_path = selected_path
+        self._assign_role_path(role, selected_path)
+
+    def _assign_role_path(self, role: str, selected_path: str) -> None:
         self.session.assign_role(
             role,
             selected_path,

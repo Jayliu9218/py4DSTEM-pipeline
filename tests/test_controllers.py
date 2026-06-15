@@ -110,6 +110,25 @@ class ControllerTests(unittest.TestCase):
         finally:
             path.unlink(missing_ok=True)
 
+    def test_plain_hdf5_group_is_not_read_as_py4dstem_reference(self) -> None:
+        path = Path(__file__).resolve().parents[1] / ".test-output" / "plain_group.h5"
+        path.parent.mkdir(exist_ok=True)
+        with h5py.File(path, "w") as output:
+            output.create_group("4DSTEM_simulation/metadatabundle")
+        service = Py4DSTEMService()
+        session = DataSessionController(Hdf5Service(), service)
+        service.read_datapath = Mock()
+        try:
+            session.open_file(path)
+
+            source = session.selected_display_source("/4DSTEM_simulation/metadatabundle", None)
+
+            self.assertIsNone(source)
+            service.read_datapath.assert_not_called()
+        finally:
+            session.close_file()
+            path.unlink(missing_ok=True)
+
     def test_data_session_role_assignment_preserves_initial_preprocess_workspace(self) -> None:
         session = DataSessionController(Hdf5Service(), Py4DSTEMService())
         state = WorkflowState()
