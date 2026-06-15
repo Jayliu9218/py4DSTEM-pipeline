@@ -194,6 +194,7 @@ class MainWindow(QMainWindow):
         self.recent_export_dir: Path | None = None
         self.current_route_key = "data_setup"
         self.route_modules: list[RouteModule] = []
+        self._initial_layout_applied = False
 
         self.tree = Hdf5TreeWidget()
         self.scan_viewer = ImageViewer()
@@ -428,10 +429,10 @@ class MainWindow(QMainWindow):
         self.theme_action_group = None
         self.dark_theme_action = self.view_menu.addAction("Dark Theme")
         self.dark_theme_action.setCheckable(True)
-        self.dark_theme_action.setChecked(True)
+        self.dark_theme_action.setChecked(False)
         self.light_theme_action = self.view_menu.addAction("Light Theme")
         self.light_theme_action.setCheckable(True)
-        self.light_theme_action.setChecked(False)
+        self.light_theme_action.setChecked(True)
         self.theme_action_group = QActionGroup(self)
         self.theme_action_group.addAction(self.dark_theme_action)
         self.theme_action_group.addAction(self.light_theme_action)
@@ -762,13 +763,16 @@ class MainWindow(QMainWindow):
         self._compact_input_controls()
         self._bold_section_titles()
         self._set_preview_empty()
-        # Apply default dock sizes so startup matches Layout > Reset Layout.
-        self.resizeDocks(
-            [self.data_dock, self.controls_dock],
-            [300, 350],
-            Qt.Horizontal,
-        )
-        self.resizeDocks([self.output_dock], [100], Qt.Vertical)
+        # Dock sizes are applied after the first show/maximize event. Applying
+        # them here is too early: Qt redistributes dock geometry when the real
+        # screen size becomes available, making startup differ from Reset Layout.
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API name
+        super().showEvent(event)
+        if self._initial_layout_applied:
+            return
+        self._initial_layout_applied = True
+        self._reset_layout(silent=True)
 
     def _reset_layout(self, silent: bool = False) -> None:
         """Restore all docks to their default dock areas and sizes."""

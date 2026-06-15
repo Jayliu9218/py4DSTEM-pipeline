@@ -1,4 +1,4 @@
-"""Centralized theme constants for the SEM/FIB-style dark-gray interface.
+"""Centralized theme constants for the default industrial-light interface.
 
 All inline color values across the application should reference these constants
 instead of hard-coding hex strings, so the palette stays consistent and tunable
@@ -9,26 +9,26 @@ from __future__ import annotations
 
 
 class Theme:
-    # --- Surfaces (dark gray) ---
-    PANEL_BG = "#2b2b2b"        # dock / toolbar / control panel background
-    PANEL_BG_ALT = "#333333"    # slightly lighter panel (headers, inputs)
-    PANEL_BORDER = "#3c3c3c"    # dividers, panel borders
+    # --- Surfaces (industrial light) ---
+    PANEL_BG = "#dedede"
+    PANEL_BG_ALT = "#c9c9c9"
+    PANEL_BORDER = "#8a8a8a"
     CANVAS_BG = "#1a1a1a"       # image viewport (near-black)
-    INPUT_BG = "#1e1e1e"        # input fields, tables
-    GROUP_BG = "#2f2f2f"        # QGroupBox body
-    GROUP_TITLE_BG = "#3a3a3a"  # QGroupBox title chip
-    TABLE_HEADER_BG = "#383838"
-    TABLE_GRIDLINES = "#404040"
+    INPUT_BG = "#ffffff"
+    GROUP_BG = "#e4e4e4"
+    GROUP_TITLE_BG = "#a9a9a9"
+    TABLE_HEADER_BG = "#b5b5b5"
+    TABLE_GRIDLINES = "#c7c7c7"
 
     # --- Text ---
-    TEXT_PRIMARY = "#e0e0e0"
-    TEXT_SECONDARY = "#a0a0a0"
-    TEXT_DISABLED = "#666666"
+    TEXT_PRIMARY = "#111111"
+    TEXT_SECONDARY = "#4f4f4f"
+    TEXT_DISABLED = "#8a8a8a"
 
     # --- Accent ---
-    ACCENT = "#4a9eff"          # selected / active / primary action
-    ACCENT_HOVER = "#6bb0ff"
-    ACCENT_PRESSED = "#3a8eef"
+    ACCENT = "#2d79b7"
+    ACCENT_HOVER = "#438bc2"
+    ACCENT_PRESSED = "#1f659d"
 
     # --- Status LEDs ---
     READY = "#4caf50"           # completed / idle-OK (green)
@@ -41,9 +41,11 @@ class Theme:
     LED_CHAR = "●"
 
 
-PANEL_MARGIN = 6           # compact panel content margin
-PANEL_MARGIN_TIGHT = 4     # tighter for toolbars / route bars
-GROUP_SPACING = 8          # spacing between QGroupBox sections
+PANEL_MARGIN = 4
+PANEL_MARGIN_TIGHT = 3
+GROUP_SPACING = 4
 INPUT_MAX_WIDTH = 280      # compact input control max width
-PARAM_GROUP_MAX_HEIGHT = 280  # capped height for dense parameter QGroupBox sections
-PARAM_ROW_HEIGHT = 22         # uniform row height inside table-like parameter forms
+PARAM_GROUP_MAX_HEIGHT = 250
+PARAM_ROW_HEIGHT = 20
+PARAM_TABLE_HEIGHT = 150
+ACTION_BUTTON_MIN_HEIGHT = 24
