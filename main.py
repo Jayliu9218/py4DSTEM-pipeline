@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
 from app.qt_utils import WheelEventFilter
+from app.version import __version__
 from app.widgets.splash import SplashScreen
 
 # Minimum splash visibility (ms) so the window finishes laying out underneath
@@ -35,6 +36,7 @@ def main() -> int:
     font = QFont("Segoe UI", 9)
     app.setFont(font)
     app.setApplicationName("4D-STEM Analysis Pipeline")
+    app.setApplicationVersion(__version__)
     app.setStyleSheet(_load_stylesheet())
     # Swallow mouse-wheel events on every QComboBox so scrolling a control panel
     # cannot accidentally change parameter values.

@@ -1,6 +1,6 @@
 param(
     [string]$SourcePath = "dist\pyinstaller\py4DSTEM Pipeline",
-    [string]$OutputPath = "dist\py4DSTEM-Pipeline-portable.zip"
+    [string]$OutputPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +9,16 @@ $env:PYTHONUTF8 = "1"
 
 Push-Location (Resolve-Path "$PSScriptRoot\..")
 try {
+    $versionFile = Join-Path (Get-Location) "app\version.py"
+    $versionText = Get-Content $versionFile -Raw
+    if ($versionText -notmatch '__version__\s*=\s*"([^"]+)"') {
+        throw "Could not read __version__ from '$versionFile'."
+    }
+    $releaseTag = "v$($Matches[1])"
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+        $OutputPath = "dist\py4DSTEM-Pipeline-$releaseTag-portable.zip"
+    }
+
     # The portable build is a zip of the PyInstaller onedir output, not a full
     # conda env. This keeps the archive small (only runtime files) and produces
     # a no-install portable distribution alongside the Inno Setup installer.

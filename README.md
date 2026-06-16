@@ -252,7 +252,7 @@ packaging/
   py4dstem_pipeline.spec
   build_pyinstaller.ps1
   inno_setup.iss
-  build_conda_pack.ps1
+  build_portable.ps1
   build_nuitka.ps1
   README_packaging.md
 ```
@@ -267,6 +267,12 @@ where practical without requiring compiled extensions.
 - [py4DSTEM tutorials](https://github.com/py4dstem/py4DSTEM_tutorials)
 
 ## Release Roadmap
+
+Current planned GitHub release: **v0.1.0 preview**. Publish it as a GitHub
+prerelease with only the GitHub-generated **Source code** assets; do not attach
+the packaged executable, installer, or portable zip while the frozen app is too
+large for practical distribution. See [CHANGELOG.md](CHANGELOG.md) and
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before tagging.
 
 ### 1. Development
 
@@ -318,7 +324,7 @@ build from step 2):
 Output:
 
 ```text
-dist\py4DSTEM-Pipeline-portable.zip
+dist\py4DSTEM-Pipeline-v0.1.0-portable.zip
 ```
 
 Use Nuitka when a compiled distribution is preferred:

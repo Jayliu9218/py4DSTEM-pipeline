@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-ABOUT_HTML = """
+from app.version import RELEASE_CHANNEL, __version__
+
+
+ABOUT_HTML = f"""
 <h2>py4DSTEM Pipeline</h2>
+<p><b>Version:</b> {__version__} ({RELEASE_CHANNEL})</p>
 <p>A desktop workflow application for browsing, processing, reconstructing,
 reviewing, and exporting 4D-STEM data with py4DSTEM.</p>
 <h3>Current situation</h3>

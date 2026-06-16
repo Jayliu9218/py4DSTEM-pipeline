@@ -1,4 +1,5 @@
 #define MyAppName "py4DSTEM Pipeline"
+; Keep this value aligned with app/version.py before publishing a release.
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "py4DSTEM Pipeline Team"
 #define MyAppExeName "py4DSTEM Pipeline.exe"

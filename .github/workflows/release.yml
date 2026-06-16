@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Draft source-only prerelease
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $version = python -c "from app.version import __version__; print(__version__)"
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Validate tag matches app version
+        shell: pwsh
+        run: |
+          $expected = "${{ steps.meta.outputs.tag }}"
+          $actual = "${{ github.event.inputs.tag || github.ref_name }}"
+          if ($actual -ne $expected) {
+            throw "Release tag '$actual' does not match app version '$expected'."
+          }
+
+      - name: Create GitHub source-only prerelease draft
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: py4DSTEM Pipeline ${{ steps.meta.outputs.tag }}
+          draft: true
+          prerelease: true
+          generate_release_notes: true

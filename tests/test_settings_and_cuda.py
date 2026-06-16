@@ -11,6 +11,7 @@ sys.modules.setdefault("py4DSTEM", types.SimpleNamespace())
 from main import _load_stylesheet
 from app.main_window import MainWindow
 from app.qt_utils import WheelEventFilter
+from app.version import __version__
 from app.services.project_state_service import ProjectState
 from app.services.bragg_strain_service import BraggDetectionParams, BraggStrainService
 from app.services.orientation_service import OrientationPlanParams, OrientationService
@@ -104,6 +105,7 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertIn("each analysis workflow", window.tutorials_action.statusTip())
         self.assertIn("Current situation", window.ABOUT_HTML)
         self.assertIn("Current improvements", window.ABOUT_HTML)
+        self.assertIn(__version__, window.ABOUT_HTML)
         self.assertIn("GNU General Public License version 3", window.LICENSE_HTML)
         self.assertIn("Show Data", window.TUTORIAL_HTML)
         self.assertIn("Apply Best Self-Consistency Value", window.TUTORIAL_HTML)

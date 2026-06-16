@@ -1,0 +1,29 @@
+name: Release validation
+description: Record validation notes for a release candidate.
+title: "[Release validation]: "
+labels: ["release", "validation"]
+body:
+  - type: input
+    id: tag
+    attributes:
+      label: Release tag
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: Unit tests and compile verification passed.
+        - label: Source checkout launched from the development environment.
+        - label: Representative `.h5` dataset opened and DataCube assigned.
+        - label: Representative `.emd` dataset opened and DataCube assigned.
+        - label: One crystalline route completed through a review gate.
+        - label: One phase-retrieval route completed through a review gate.
+        - label: Export was verified.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Include dataset context, route names, and any warnings.

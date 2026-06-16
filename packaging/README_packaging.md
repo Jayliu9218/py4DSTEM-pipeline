@@ -104,7 +104,7 @@ the PyInstaller build to exist first.
 Output:
 
 ```text
-dist\py4DSTEM-Pipeline-portable.zip
+dist\py4DSTEM-Pipeline-v0.1.0-portable.zip
 ```
 
 ### Nuitka
