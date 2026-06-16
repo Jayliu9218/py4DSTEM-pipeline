@@ -127,6 +127,18 @@ class ArrayReductionTests(unittest.TestCase):
             sys.modules.pop(module_name, None)
             set_reduction_backend(original)
 
+    def test_default_native_backend_stub_is_importable_and_safe(self) -> None:
+        original = get_reduction_backend()
+        try:
+            set_reduction_backend(None)
+
+            self.assertTrue(try_enable_native_backend())
+            self.assertEqual(get_reduction_backend().name, "native-python-stub")
+            np.testing.assert_allclose(scan_sum(self.data), self.data.sum(axis=(2, 3)))
+            np.testing.assert_allclose(mean_diffraction(self.data), self.data.mean(axis=(0, 1)))
+        finally:
+            set_reduction_backend(original)
+
     def test_reductions_never_request_complete_4d_dataset(self) -> None:
         source = RecordingDataset(self.data)
         mask = np.ones(self.data.shape[2:], dtype=bool)
