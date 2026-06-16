@@ -7,11 +7,14 @@ import h5py
 import numpy as np
 
 from app.services.array_reduction import (
+    PythonReductionBackend,
     detector_sum,
+    get_reduction_backend,
     masked_scan_mean,
     max_diffraction,
     mean_diffraction,
     scan_sum,
+    set_reduction_backend,
 )
 from app.services.hdf5_service import Hdf5Service
 from app.services.preprocessing_service import HotPixelParams, PreprocessingService
@@ -48,6 +51,49 @@ class ArrayReductionTests(unittest.TestCase):
             self.data[:, :, mask].sum(axis=2),
         )
         np.testing.assert_allclose(masked_scan_mean(self.data, scan_mask), self.data[scan_mask].mean(axis=0))
+
+    def test_public_functions_delegate_to_configured_backend(self) -> None:
+        class RecordingBackend(PythonReductionBackend):
+            name = "recording"
+
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def mean_diffraction(self, source, **kwargs):
+                self.calls.append("mean")
+                return super().mean_diffraction(source, **kwargs)
+
+            def max_diffraction(self, source, **kwargs):
+                self.calls.append("max")
+                return super().max_diffraction(source, **kwargs)
+
+            def scan_sum(self, source, **kwargs):
+                self.calls.append("scan")
+                return super().scan_sum(source, **kwargs)
+
+            def virtual_detector_sum(self, source, mask, **kwargs):
+                self.calls.append("detector")
+                return super().virtual_detector_sum(source, mask, **kwargs)
+
+            def masked_scan_mean(self, source, mask, **kwargs):
+                self.calls.append("masked")
+                return super().masked_scan_mean(source, mask, **kwargs)
+
+        original = get_reduction_backend()
+        backend = RecordingBackend()
+        mask = np.ones(self.data.shape[2:], dtype=bool)
+        scan_mask = np.ones(self.data.shape[:2], dtype=bool)
+        try:
+            set_reduction_backend(backend)
+            mean_diffraction(self.data)
+            max_diffraction(self.data)
+            scan_sum(self.data)
+            detector_sum(self.data, mask)
+            masked_scan_mean(self.data, scan_mask)
+        finally:
+            set_reduction_backend(original)
+
+        self.assertEqual(backend.calls, ["mean", "max", "scan", "detector", "masked"])
 
     def test_reductions_never_request_complete_4d_dataset(self) -> None:
         source = RecordingDataset(self.data)

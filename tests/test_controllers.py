@@ -68,6 +68,31 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_data_session_tracks_selection_preview_and_active_target(self) -> None:
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+
+        selection = session.update_selection(
+            "/cube",
+            "group",
+            preview_kind="DataCube",
+            preview_shape=(2, 3, 4, 5),
+        )
+        self.assertEqual(selection.selected_hdf5_path, "/cube")
+        self.assertEqual(session.selected_preview_kind, "DataCube")
+        self.assertEqual(session.preview_status, "Not rendered")
+
+        session.mark_preview_rendered("Rendered DataCube diffraction slice [0, 0]")
+        session.mark_active_target("/cube", (2, 3, 4, 5), "hdf5")
+
+        self.assertTrue(session.selection.displayed)
+        self.assertEqual(session.selection.active_target_path, "/cube")
+        self.assertEqual(session.current_dataset_path, "/cube")
+        self.assertEqual(session.current_4d_source, "hdf5")
+
+        session.clear_selection()
+        self.assertIsNone(session.selected_hdf5_path)
+        self.assertEqual(session.selected_preview_kind, "Not displayable")
+
     def test_target_bright_field_never_triggers_implicit_reduction(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "overview_cache.h5"
         path.parent.mkdir(exist_ok=True)

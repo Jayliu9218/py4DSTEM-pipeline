@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,20 @@ import numpy as np
 
 from app.services.hdf5_service import Hdf5Service
 from app.services.py4dstem_service import Py4DSTEMService
+
+
+@dataclass(frozen=True)
+class DataSelection:
+    """Current HDF5 tree selection and preview/target display state."""
+
+    selected_hdf5_path: str | None = None
+    selected_node_kind: str | None = None
+    preview_kind: str = "Not displayable"
+    preview_shape: tuple[int, ...] | None = None
+    preview_status: str = "Not rendered"
+    active_target_path: str | None = None
+    active_source: str | None = None
+    displayed: bool = False
 
 
 class DataSessionController:
@@ -22,8 +37,7 @@ class DataSessionController:
         self.current_dataset_path: str | None = None
         self.current_dataset_shape: tuple[int, ...] | None = None
         self.current_4d_source: str | None = None
-        self.selected_hdf5_path: str | None = None
-        self.selected_node_kind: str | None = None
+        self.selection = DataSelection()
         self.current_attrs: dict[str, object] = {}
         self.raw_scan_image_cache_path: str | None = None
         self.raw_scan_image_cache: np.ndarray | None = None
@@ -32,9 +46,149 @@ class DataSessionController:
         self.braggvectors_by_datacube: dict[str, object] = {}
         self.reference_braggvectors_cache: dict[str, object] = {}
 
-    def raw_scan_image(self, hdf5_path: str, dataset: h5py.Dataset) -> np.ndarray:
+    @property
+    def selected_hdf5_path(self) -> str | None:
+        return self.selection.selected_hdf5_path
+
+    @selected_hdf5_path.setter
+    def selected_hdf5_path(self, value: str | None) -> None:
+        self.selection = DataSelection(
+            selected_hdf5_path=value,
+            selected_node_kind=self.selection.selected_node_kind,
+            preview_kind=self.selection.preview_kind,
+            preview_shape=self.selection.preview_shape,
+            preview_status=self.selection.preview_status,
+            active_target_path=self.selection.active_target_path,
+            active_source=self.selection.active_source,
+            displayed=self.selection.displayed,
+        )
+
+    @property
+    def selected_node_kind(self) -> str | None:
+        return self.selection.selected_node_kind
+
+    @selected_node_kind.setter
+    def selected_node_kind(self, value: str | None) -> None:
+        self.selection = DataSelection(
+            selected_hdf5_path=self.selection.selected_hdf5_path,
+            selected_node_kind=value,
+            preview_kind=self.selection.preview_kind,
+            preview_shape=self.selection.preview_shape,
+            preview_status=self.selection.preview_status,
+            active_target_path=self.selection.active_target_path,
+            active_source=self.selection.active_source,
+            displayed=self.selection.displayed,
+        )
+
+    @property
+    def selected_preview_kind(self) -> str:
+        return self.selection.preview_kind
+
+    @selected_preview_kind.setter
+    def selected_preview_kind(self, value: str) -> None:
+        self._replace_selection(preview_kind=value)
+
+    @property
+    def selected_preview_shape(self) -> tuple[int, ...] | None:
+        return self.selection.preview_shape
+
+    @selected_preview_shape.setter
+    def selected_preview_shape(self, value: tuple[int, ...] | None) -> None:
+        self._replace_selection(preview_shape=value)
+
+    @property
+    def preview_status(self) -> str:
+        return self.selection.preview_status
+
+    @preview_status.setter
+    def preview_status(self, value: str) -> None:
+        self._replace_selection(preview_status=value, displayed=value.startswith("Rendered"))
+
+    def update_selection(
+        self,
+        hdf5_path: str,
+        node_kind: str,
+        *,
+        preview_kind: str = "Not displayable",
+        preview_shape: tuple[int, ...] | None = None,
+    ) -> DataSelection:
+        self.selection = DataSelection(
+            selected_hdf5_path=hdf5_path,
+            selected_node_kind=node_kind,
+            preview_kind=preview_kind,
+            preview_shape=preview_shape,
+        )
+        return self.selection
+
+    def clear_selection(self) -> None:
+        self.selection = DataSelection()
+
+    def mark_preview_rendered(self, status: str) -> DataSelection:
+        self.selection = DataSelection(
+            selected_hdf5_path=self.selection.selected_hdf5_path,
+            selected_node_kind=self.selection.selected_node_kind,
+            preview_kind=self.selection.preview_kind,
+            preview_shape=self.selection.preview_shape,
+            preview_status=status,
+            active_target_path=self.selection.active_target_path,
+            active_source=self.selection.active_source,
+            displayed=True,
+        )
+        return self.selection
+
+    def mark_preview_failed(self, status: str) -> DataSelection:
+        self._replace_selection(preview_status=status, displayed=False)
+        return self.selection
+
+    def mark_active_target(
+        self,
+        path: str,
+        shape: tuple[int, ...],
+        source: str,
+    ) -> DataSelection:
+        self.current_dataset_path = path
+        self.current_dataset_shape = shape
+        self.current_4d_source = source
+        self.selection = DataSelection(
+            selected_hdf5_path=self.selection.selected_hdf5_path,
+            selected_node_kind=self.selection.selected_node_kind,
+            preview_kind=self.selection.preview_kind,
+            preview_shape=self.selection.preview_shape,
+            preview_status=self.selection.preview_status,
+            active_target_path=path,
+            active_source=source,
+            displayed=self.selection.displayed,
+        )
+        return self.selection
+
+    def _replace_selection(self, **changes: object) -> None:
+        values = {
+            "selected_hdf5_path": self.selection.selected_hdf5_path,
+            "selected_node_kind": self.selection.selected_node_kind,
+            "preview_kind": self.selection.preview_kind,
+            "preview_shape": self.selection.preview_shape,
+            "preview_status": self.selection.preview_status,
+            "active_target_path": self.selection.active_target_path,
+            "active_source": self.selection.active_source,
+            "displayed": self.selection.displayed,
+        }
+        values.update(changes)
+        self.selection = DataSelection(**values)
+
+    def raw_scan_image(
+        self,
+        hdf5_path: str,
+        dataset: h5py.Dataset,
+        *,
+        memory_budget_bytes: int | None = None,
+        progress_callback=None,
+    ) -> np.ndarray:
         if self.raw_scan_image_cache_path != hdf5_path or self.raw_scan_image_cache is None:
-            self.raw_scan_image_cache = self.hdf5_service.read_4d_scan_image(dataset)
+            self.raw_scan_image_cache = self.hdf5_service.read_4d_scan_image(
+                dataset,
+                memory_budget_bytes=memory_budget_bytes,
+                progress_callback=progress_callback,
+            )
             self.raw_scan_image_cache_path = hdf5_path
         return self.raw_scan_image_cache
 
@@ -166,6 +320,7 @@ class DataSessionController:
         self.current_dataset_path = None
         self.current_dataset_shape = None
         self.current_4d_source = None
+        self.clear_selection()
         self.clear_raw_scan_image_cache()
         self.diffraction_cache.clear()
         self.py4dstem_service.close()

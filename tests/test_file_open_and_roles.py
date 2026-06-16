@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import h5py
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from app.main_window import MainWindow
 from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
@@ -79,6 +79,15 @@ class FileOpenAndRolesTests(unittest.TestCase):
         target_item = self.window.tree.topLevelItem(0).child(0)
         self.assertEqual(self.window.tree.textElideMode(), Qt.ElideMiddle)
         self.assertEqual(target_item.toolTip(0), target_item.text(0))
+
+    def test_preview_action_is_prominent_below_subset_controls(self) -> None:
+        preview_bar = self.window.findChild(QWidget, "dataPreviewBar")
+
+        self.assertIsNotNone(preview_bar)
+        self.assertEqual(self.window.preview_button.objectName(), "previewSelectedButton")
+        self.assertEqual(self.window.preview_hint_label.objectName(), "dataPreviewHint")
+        self.assertIs(self.window.preview_button.parentWidget(), preview_bar)
+        self.assertGreaterEqual(self.window.preview_button.minimumHeight(), 24)
 
     def test_tree_selection_is_metadata_only_until_preview_is_requested(self) -> None:
         self.window._open_file_path(str(self.path))
