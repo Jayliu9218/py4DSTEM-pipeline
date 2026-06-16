@@ -1,0 +1,23 @@
+changelog:
+  categories:
+    - title: Workflow and UI
+      labels:
+        - workflow
+        - ui
+        - enhancement
+    - title: Packaging and Release
+      labels:
+        - packaging
+        - release
+        - ci
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+    - title: Other Changes
+      labels:
+        - "*"

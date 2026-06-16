@@ -38,6 +38,28 @@ class PackagingResourceTests(unittest.TestCase):
             with self.subTest(resource=resource):
                 self.assertIn(resource, script)
 
+    def test_release_metadata_is_aligned(self) -> None:
+        from app.version import IS_PRERELEASE, RELEASE_TAG, __version__
+
+        inno = (self.root / "packaging" / "inno_setup.iss").read_text(encoding="utf-8")
+        changelog = (self.root / "CHANGELOG.md").read_text(encoding="utf-8")
+        checklist = (self.root / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+        release_workflow = (
+            self.root / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(__version__, "0.1.0")
+        self.assertEqual(RELEASE_TAG, "v0.1.0")
+        self.assertTrue(IS_PRERELEASE)
+        self.assertIn('#define MyAppVersion "0.1.0"', inno)
+        self.assertIn("## [0.1.0]", changelog)
+        self.assertIn("Keep `v0.1.0` marked as a prerelease.", checklist)
+        self.assertIn("Do not attach generated executable", checklist)
+        self.assertIn("source-only prerelease", release_workflow)
+        self.assertIn("prerelease: true", release_workflow)
+        self.assertNotIn("build_pyinstaller.ps1", release_workflow)
+        self.assertNotIn("files:", release_workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

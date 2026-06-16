@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a problem in py4DSTEM Pipeline.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Dataset context
+      description: File type, approximate shape, route, and stage where the problem appeared.
+      placeholder: ".h5 or .emd, DataCube shape, workflow route, stage"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Run ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant Output panel messages or attach screenshots.
