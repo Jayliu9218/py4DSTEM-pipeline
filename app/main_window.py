@@ -755,15 +755,27 @@ class MainWindow(QMainWindow):
 
     def _reset_layout(self, silent: bool = False) -> None:
         """Restore all docks to their default dock areas and sizes."""
-        for dock in (self.data_dock, self.controls_dock, self.output_dock):
+        expected_areas = {
+            self.data_dock: Qt.LeftDockWidgetArea,
+            self.controls_dock: Qt.RightDockWidgetArea,
+            self.output_dock: Qt.BottomDockWidgetArea,
+        }
+        needs_readd = any(
+            dock.isFloating()
+            or self.dockWidgetArea(dock) != area
+            or bool(self.tabifiedDockWidgets(dock))
+            for dock, area in expected_areas.items()
+        )
+        for dock in expected_areas:
             dock.setFloating(False)
-        # Re-add to canonical areas to undo any tabbing/dragging.
-        self.removeDockWidget(self.data_dock)
-        self.removeDockWidget(self.controls_dock)
-        self.removeDockWidget(self.output_dock)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
+        if needs_readd:
+            # Re-add to canonical areas to undo any tabbing/dragging.
+            self.removeDockWidget(self.data_dock)
+            self.removeDockWidget(self.controls_dock)
+            self.removeDockWidget(self.output_dock)
+            self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
+            self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
         # Explicitly show — removeDockWidget hides them and addDockWidget does not un-hide.
         for dock in (self.data_dock, self.controls_dock, self.output_dock):
             dock.setVisible(True)
