@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +21,10 @@ class DataSelection:
     preview_kind: str = "Not displayable"
     preview_shape: tuple[int, ...] | None = None
     preview_status: str = "Not rendered"
+    previewed_hdf5_path: str | None = None
     active_target_path: str | None = None
     active_source: str | None = None
+    last_rendered_path: str | None = None
     displayed: bool = False
 
 
@@ -52,16 +54,7 @@ class DataSessionController:
 
     @selected_hdf5_path.setter
     def selected_hdf5_path(self, value: str | None) -> None:
-        self.selection = DataSelection(
-            selected_hdf5_path=value,
-            selected_node_kind=self.selection.selected_node_kind,
-            preview_kind=self.selection.preview_kind,
-            preview_shape=self.selection.preview_shape,
-            preview_status=self.selection.preview_status,
-            active_target_path=self.selection.active_target_path,
-            active_source=self.selection.active_source,
-            displayed=self.selection.displayed,
-        )
+        self._replace_selection(selected_hdf5_path=value)
 
     @property
     def selected_node_kind(self) -> str | None:
@@ -69,16 +62,7 @@ class DataSessionController:
 
     @selected_node_kind.setter
     def selected_node_kind(self, value: str | None) -> None:
-        self.selection = DataSelection(
-            selected_hdf5_path=self.selection.selected_hdf5_path,
-            selected_node_kind=value,
-            preview_kind=self.selection.preview_kind,
-            preview_shape=self.selection.preview_shape,
-            preview_status=self.selection.preview_status,
-            active_target_path=self.selection.active_target_path,
-            active_source=self.selection.active_source,
-            displayed=self.selection.displayed,
-        )
+        self._replace_selection(selected_node_kind=value)
 
     @property
     def selected_preview_kind(self) -> str:
@@ -102,7 +86,15 @@ class DataSessionController:
 
     @preview_status.setter
     def preview_status(self, value: str) -> None:
-        self._replace_selection(preview_status=value, displayed=value.startswith("Rendered"))
+        self._replace_selection(
+            preview_status=value,
+            displayed=value.startswith("Rendered"),
+            last_rendered_path=(
+                self.selection.selected_hdf5_path
+                if value.startswith("Rendered")
+                else self.selection.last_rendered_path
+            ),
+        )
 
     def update_selection(
         self,
@@ -117,6 +109,8 @@ class DataSessionController:
             selected_node_kind=node_kind,
             preview_kind=preview_kind,
             preview_shape=preview_shape,
+            active_target_path=self.selection.active_target_path,
+            active_source=self.selection.active_source,
         )
         return self.selection
 
@@ -124,20 +118,24 @@ class DataSessionController:
         self.selection = DataSelection()
 
     def mark_preview_rendered(self, status: str) -> DataSelection:
-        self.selection = DataSelection(
-            selected_hdf5_path=self.selection.selected_hdf5_path,
-            selected_node_kind=self.selection.selected_node_kind,
-            preview_kind=self.selection.preview_kind,
-            preview_shape=self.selection.preview_shape,
+        self._replace_selection(
             preview_status=status,
-            active_target_path=self.selection.active_target_path,
-            active_source=self.selection.active_source,
+            previewed_hdf5_path=self.selection.selected_hdf5_path,
+            last_rendered_path=self.selection.selected_hdf5_path,
             displayed=True,
         )
         return self.selection
 
     def mark_preview_failed(self, status: str) -> DataSelection:
         self._replace_selection(preview_status=status, displayed=False)
+        return self.selection
+
+    def mark_rendered(self, path: str | None, status: str) -> DataSelection:
+        self._replace_selection(
+            preview_status=status,
+            last_rendered_path=path,
+            displayed=True,
+        )
         return self.selection
 
     def mark_active_target(
@@ -149,31 +147,41 @@ class DataSessionController:
         self.current_dataset_path = path
         self.current_dataset_shape = shape
         self.current_4d_source = source
-        self.selection = DataSelection(
-            selected_hdf5_path=self.selection.selected_hdf5_path,
-            selected_node_kind=self.selection.selected_node_kind,
-            preview_kind=self.selection.preview_kind,
-            preview_shape=self.selection.preview_shape,
-            preview_status=self.selection.preview_status,
+        self._replace_selection(
             active_target_path=path,
             active_source=source,
-            displayed=self.selection.displayed,
         )
         return self.selection
 
     def _replace_selection(self, **changes: object) -> None:
-        values = {
-            "selected_hdf5_path": self.selection.selected_hdf5_path,
-            "selected_node_kind": self.selection.selected_node_kind,
-            "preview_kind": self.selection.preview_kind,
-            "preview_shape": self.selection.preview_shape,
-            "preview_status": self.selection.preview_status,
-            "active_target_path": self.selection.active_target_path,
-            "active_source": self.selection.active_source,
-            "displayed": self.selection.displayed,
+        self.selection = replace(self.selection, **changes)
+
+    def data_browser_selection_info(
+        self,
+        *,
+        path: object,
+        node_type: object,
+        shape: object,
+        dtype: object,
+        rx: object,
+        ry: object,
+    ) -> dict[str, object]:
+        return {
+            "Selected node": self.selection.selected_hdf5_path or "-",
+            "Node type": node_type,
+            "Shape": shape,
+            "Dtype": dtype,
+            "Preview type": self.selection.preview_kind,
+            "Preview status": self.selection.preview_status,
+            "Previewed node": self.selection.previewed_hdf5_path or "-",
+            "Active DataCube": self.selection.active_target_path or self.current_dataset_path or "-",
+            "Active source": self.selection.active_source or self.current_4d_source or "-",
+            "Last rendered": self.selection.last_rendered_path or "-",
+            "Displayed": "Yes" if self.selection.displayed else "No",
+            "rx": rx,
+            "ry": ry,
+            "Path": path,
         }
-        values.update(changes)
-        self.selection = DataSelection(**values)
 
     def raw_scan_image(
         self,

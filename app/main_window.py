@@ -1116,6 +1116,10 @@ class MainWindow(QMainWindow):
                 self.diffraction_viewer.set_image(image)
                 info = self.py4dstem_service.describe_current_datacube()
                 datapath = info.get("datapath", "DataCube")
+                self.session.mark_rendered(
+                    str(datapath),
+                    f"Rendered DataCube diffraction slice [{rx}, {ry}]",
+                )
                 self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
             elif self.current_4d_source == "hdf5":
                 if self.current_file is None or self.current_dataset_path is None:
@@ -1123,6 +1127,10 @@ class MainWindow(QMainWindow):
                 dataset = self.current_file[self.current_dataset_path]
                 image = self.session.diffraction_pattern(self.current_dataset_path, dataset, rx, ry)
                 self.diffraction_viewer.set_image(image)
+                self.session.mark_rendered(
+                    self.current_dataset_path,
+                    f"Rendered DataCube diffraction slice [{rx}, {ry}]",
+                )
                 self.log_panel.log(
                     f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
                 )
@@ -1476,19 +1484,14 @@ class MainWindow(QMainWindow):
                 "Scan shape": self.scan_shape_label.text(),
                 "Diffraction shape": self.diffraction_shape_label.text(),
             },
-            selection={
-                "Path": self.path_label.text(),
-                "Type": self.type_label.text(),
-                "Shape": self.shape_label.text(),
-                "Dtype": self.dtype_label.text(),
-                "Preview type": self.selected_preview_kind,
-                "Preview status": self.preview_status,
-                "Displayed": "Yes" if self.session.selection.displayed else "No",
-                "Active target": self.session.selection.active_target_path or self.current_dataset_path or "-",
-                "Active source": self.session.selection.active_source or self.current_4d_source or "-",
-                "rx": self.rx_spin.value() if self.rx_spin.isEnabled() else "-",
-                "ry": self.ry_spin.value() if self.ry_spin.isEnabled() else "-",
-            },
+            selection=self.session.data_browser_selection_info(
+                path=self.path_label.text(),
+                node_type=self.type_label.text(),
+                shape=self.shape_label.text(),
+                dtype=self.dtype_label.text(),
+                rx=self.rx_spin.value() if self.rx_spin.isEnabled() else "-",
+                ry=self.ry_spin.value() if self.ry_spin.isEnabled() else "-",
+            ),
             roles={
                 "Target DataCube": roles.target_datacube or "-",
                 "Ellipse Reference": roles.polycrystal_calibration or "-",

@@ -85,9 +85,24 @@ class ControllerTests(unittest.TestCase):
         session.mark_active_target("/cube", (2, 3, 4, 5), "hdf5")
 
         self.assertTrue(session.selection.displayed)
+        self.assertEqual(session.selection.previewed_hdf5_path, "/cube")
+        self.assertEqual(session.selection.last_rendered_path, "/cube")
         self.assertEqual(session.selection.active_target_path, "/cube")
         self.assertEqual(session.current_dataset_path, "/cube")
         self.assertEqual(session.current_4d_source, "hdf5")
+
+        info = session.data_browser_selection_info(
+            path="/cube",
+            node_type="group",
+            shape=(2, 3, 4, 5),
+            dtype="-",
+            rx=0,
+            ry=0,
+        )
+        self.assertEqual(info["Selected node"], "/cube")
+        self.assertEqual(info["Previewed node"], "/cube")
+        self.assertEqual(info["Active DataCube"], "/cube")
+        self.assertEqual(info["Last rendered"], "/cube")
 
         session.clear_selection()
         self.assertIsNone(session.selected_hdf5_path)
