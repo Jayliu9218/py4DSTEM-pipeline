@@ -8,31 +8,25 @@ that need careful validation on representative 4D-STEM datasets.
 
 ## [0.1.0] - 2026-06-16
 
-### Status
+### Summary
 
-- Preview source-code release for internal validation and early group review.
-- Marked as a GitHub prerelease because amorphous-analysis routes and some
-  advanced packaging paths are still under development.
+- Source-code preview release for early validation.
+- Published as a GitHub prerelease with no exe, installer, or portable zip
+  asset.
 
 ### Added
 
-- Guided Windows desktop workflow for py4DSTEM/HDF5 data browsing, DataCube role
-  assignment, stage-based processing, review gates, and result export.
-- Crystalline workflows covering Bragg peak detection, calibration, orientation
-  mapping, strain mapping, and a unified crystalline-results review page.
+- HDF5/EMD browsing, Target DataCube assignment, guided stages, review gates,
+  and result export.
+- Crystalline workflows for Bragg detection, calibration, orientation mapping,
+  strain mapping, and result review.
 - Phase-retrieval workflows for DPC/CoM, Parallax, Ptychography, and method
   comparison.
-- Project-state persistence, dock-layout restoration, scientific report
-  generation, CPU/GPU execution selection, and cancellable background workers.
-- PyInstaller packaging scripts, portable-zip packaging, Inno Setup installer
-  configuration, and packaging-environment validation remain available for local
-  testing, but are not attached to the `v0.1.0` GitHub release.
+- Project-state persistence, dock-layout restoration, background progress, and
+  CPU/GPU execution selection.
 
-### Known Limitations
+### Notes
 
-- The GitHub release intentionally provides only source-code assets; users should
-  run from the development environment instead of installing a packaged exe.
-- Radial Profile, RDF, FEM, Amorphous Strain, and Structural Phase routes remain
-  visible development areas rather than production-ready analysis workflows.
-- py4DSTEM is installed from the upstream `dev` branch for the packaging
-  environment, so dependency behavior can shift between rebuilds.
+- Run from the development environment using `scripts/setup_dev_env.ps1`.
+- Amorphous-analysis and structural-phase routes remain under development.
+- Validate scientific outputs on representative `.h5` or `.emd` datasets.
