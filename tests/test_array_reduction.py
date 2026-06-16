@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import unittest
-import sys
-import types
 from pathlib import Path
 
 import h5py
@@ -17,7 +15,6 @@ from app.services.array_reduction import (
     mean_diffraction,
     scan_sum,
     set_reduction_backend,
-    try_enable_native_backend,
 )
 from app.services.hdf5_service import Hdf5Service
 from app.services.preprocessing_service import HotPixelParams, PreprocessingService
@@ -97,47 +94,6 @@ class ArrayReductionTests(unittest.TestCase):
             set_reduction_backend(original)
 
         self.assertEqual(backend.calls, ["mean", "max", "scan", "detector", "masked"])
-
-    def test_optional_native_backend_falls_back_when_unavailable(self) -> None:
-        original = get_reduction_backend()
-        try:
-            set_reduction_backend(None)
-            enabled = try_enable_native_backend("missing_native_array_reduction_for_test")
-
-            self.assertFalse(enabled)
-            self.assertEqual(get_reduction_backend().name, "python")
-            np.testing.assert_allclose(scan_sum(self.data), self.data.sum(axis=(2, 3)))
-        finally:
-            set_reduction_backend(original)
-
-    def test_optional_native_backend_can_be_enabled_by_factory(self) -> None:
-        class StubBackend(PythonReductionBackend):
-            name = "stub-native"
-
-        module_name = "tests._stub_native_array_reduction"
-        module = types.ModuleType(module_name)
-        module.create_backend = lambda: StubBackend()
-        original = get_reduction_backend()
-        try:
-            sys.modules[module_name] = module
-            self.assertTrue(try_enable_native_backend(module_name))
-            self.assertEqual(get_reduction_backend().name, "stub-native")
-            np.testing.assert_allclose(scan_sum(self.data), self.data.sum(axis=(2, 3)))
-        finally:
-            sys.modules.pop(module_name, None)
-            set_reduction_backend(original)
-
-    def test_default_native_backend_stub_is_importable_and_safe(self) -> None:
-        original = get_reduction_backend()
-        try:
-            set_reduction_backend(None)
-
-            self.assertTrue(try_enable_native_backend())
-            self.assertEqual(get_reduction_backend().name, "native-python-stub")
-            np.testing.assert_allclose(scan_sum(self.data), self.data.sum(axis=(2, 3)))
-            np.testing.assert_allclose(mean_diffraction(self.data), self.data.mean(axis=(0, 1)))
-        finally:
-            set_reduction_backend(original)
 
     def test_reductions_never_request_complete_4d_dataset(self) -> None:
         source = RecordingDataset(self.data)
