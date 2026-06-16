@@ -53,10 +53,13 @@ class PackagingResourceTests(unittest.TestCase):
         self.assertTrue(IS_PRERELEASE)
         self.assertIn('#define MyAppVersion "0.1.0"', inno)
         self.assertIn("## [0.1.0]", changelog)
+        self.assertIn("Source-code preview release", changelog)
+        self.assertIn("no exe, installer, or portable zip", changelog)
         self.assertIn("Keep `v0.1.0` marked as a prerelease.", checklist)
         self.assertIn("Do not attach generated executable", checklist)
         self.assertIn("source-only prerelease", release_workflow)
         self.assertIn("prerelease: true", release_workflow)
+        self.assertIn("body_path: CHANGELOG.md", release_workflow)
         self.assertNotIn("build_pyinstaller.ps1", release_workflow)
         self.assertNotIn("files:", release_workflow)
 

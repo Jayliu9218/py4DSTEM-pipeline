@@ -32,6 +32,7 @@ Manual validation:
 
 - Use the generated GitHub release draft for `v0.1.0`.
 - Keep `v0.1.0` marked as a prerelease.
+- Use `CHANGELOG.md` as the release body.
 - Do not attach generated executable, installer, or portable-zip artifacts.
 - Publish with only the GitHub-generated source code assets:
   - `Source code (zip)`
