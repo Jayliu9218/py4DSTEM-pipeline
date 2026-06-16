@@ -105,6 +105,22 @@ class NotebookStrainWorkflowTests(unittest.TestCase):
         self.assertEqual(diffraction.image.shape, (4, 4))
         self.assertIsNone(diffraction.detector_preview)
 
+    def test_virtual_detector_task_carries_metadata_and_matches_compute(self) -> None:
+        data = np.arange(2 * 3 * 4 * 4, dtype=float).reshape(2, 3, 4, 4)
+        params = VirtualDetectorParams(VirtualDetectorService.OFF_AXIS_DARK_FIELD, 1, 1, 0, 1)
+        service = VirtualDetectorService()
+        progress: list[tuple[str, float]] = []
+
+        task = service.compute_task(data, params)
+        result = task.run(lambda message, fraction: progress.append((message, fraction)))
+
+        self.assertEqual(task.name, "Virtual detector")
+        self.assertIn("virtual_detector:", task.result_key or "")
+        self.assertEqual(task.parameters["mode"], VirtualDetectorService.OFF_AXIS_DARK_FIELD)
+        self.assertEqual(task.parameters["shape"], data.shape)
+        self.assertIn(("Preparing virtual detector: Off-axis Dark Field", 0.0), progress)
+        np.testing.assert_allclose(result.image, service.compute(data, params).image)
+
     def test_circular_virtual_diffraction_uses_real_space_mask(self) -> None:
         data = np.arange(5 * 7 * 3 * 4, dtype=float).reshape(5, 7, 3, 4)
         result = VirtualDetectorService().compute(
