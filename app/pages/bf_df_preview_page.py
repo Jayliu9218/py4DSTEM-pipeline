@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
+    QGroupBox,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -66,9 +67,8 @@ class BFDFPreviewPage(QWidget, WorkerRunner):
         self._build_layout()
 
     def _build_layout(self) -> None:
-        controls = QWidget()
+        controls = QGroupBox("BF / DF Preview")
         layout = QVBoxLayout(controls)
-        layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         form.addRow("BF Radius", self.bf_radius)
         form.addRow("DF Inner Radius", self.df_inner)

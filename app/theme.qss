@@ -399,8 +399,12 @@ QRadioButton::indicator:hover {
     background: #252525;
 }
 QCheckBox::indicator:checked {
-    background: #4a9eff;
-    border: 1px solid #4a9eff;
+    background: #2db84d;
+    border: 1px solid #2db84d;
+}
+QCheckBox::indicator:checked:hover {
+    background: #38c95b;
+    border: 1px solid #38c95b;
 }
 
 /* --- Progress bar -------------------------------------------------------- */
