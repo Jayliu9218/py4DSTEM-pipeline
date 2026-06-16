@@ -7,10 +7,11 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 
+from app.services.computation_task import ComputationCancelled, ComputationTask
 from app.widgets.progress_stream import ProgressStream
 
 ProgressCallback = Callable[[str, float], None]
-Operation = Callable[[ProgressCallback], Any]
+Operation = Callable[[ProgressCallback], Any] | ComputationTask
 
 # Sentinel fraction for stdout-captured text that carries no numeric fraction.
 # Workers forward such lines with this value; receivers treat NaN as "text only".
@@ -45,6 +46,8 @@ class BackgroundWorker(QObject):
 
     def cancel(self) -> None:
         self._cancel_requested.set()
+        if isinstance(self._operation, ComputationTask):
+            self._operation.cancel()
 
     def _emit_progress(self, message: str, fraction: float) -> None:
         if self._cancel_requested.is_set():
@@ -57,20 +60,25 @@ class BackgroundWorker(QObject):
             if self._capture_stdout:
                 stream = ProgressStream(self._stdout_progress)
                 with redirect_stdout(stream), redirect_stderr(stream):
-                    result = self._operation(self._emit_progress)
+                    result = self._run_operation()
                 stream.flush()
             else:
-                result = self._operation(self._emit_progress)
+                result = self._run_operation()
             if self._cancel_requested.is_set():
                 raise OperationCancelled("Operation cancelled.")
             self.finished.emit(result)
-        except OperationCancelled:
+        except (OperationCancelled, ComputationCancelled):
             self.cancelled.emit()
         except Exception as exc:  # noqa: BLE001 - surface any worker failure to the UI
             self.failed.emit(str(exc))
 
     def _stdout_progress(self, message: str) -> None:
         self._emit_progress(message, TEXT_ONLY)
+
+    def _run_operation(self) -> Any:
+        if isinstance(self._operation, ComputationTask):
+            return self._operation.run(self._emit_progress)
+        return self._operation(self._emit_progress)
 
 
 class WorkerRunner:
@@ -124,8 +132,9 @@ class WorkerRunner:
         self.pending_operation = name
         self._is_busy = True
         self._on_start(name)
-        self.log_panel.process_started(name, name)
-        snapshot = self._process_snapshot(name, parameters)
+        task = operation if isinstance(operation, ComputationTask) else None
+        self.log_panel.process_started(name, task.status_message if task else name)
+        snapshot = self._process_snapshot(name, parameters, task)
         if snapshot is not None:
             self.log_panel.process_snapshot(snapshot)
 
@@ -171,11 +180,25 @@ class WorkerRunner:
         if status_label is not None:
             status_label.setText(f"Running {name}...")
 
-    def _process_snapshot(self, name: str, parameters: dict[str, object] | None):
+    def _process_snapshot(
+        self,
+        name: str,
+        parameters: dict[str, object] | None,
+        task: ComputationTask | None = None,
+    ):
         # Local import avoids a hard dependency for pages that don't use snapshots.
         from app.widgets.log_panel import ProcessSnapshot
 
-        params = parameters if parameters is not None else self._default_parameters()
+        if parameters is not None:
+            params = parameters
+        elif task is not None:
+            params = task.parameters
+            if task.memory_budget_mb is not None:
+                params = {**params, "memory_budget_mb": task.memory_budget_mb}
+            if task.result_key is not None:
+                params = {**params, "result_key": task.result_key}
+        else:
+            params = self._default_parameters()
         if not params:
             return None
         return ProcessSnapshot(step=name, parameters=dict(params))

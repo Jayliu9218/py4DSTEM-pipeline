@@ -1,12 +1,149 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 
 
 DEFAULT_BLOCK_BYTES = 32 * 1024 * 1024
+ProgressCallback = Any
+
+
+class ReductionBackend(Protocol):
+    """Interface for interchangeable 4D reduction backends."""
+
+    name: str
+
+    def mean_diffraction(
+        self,
+        source: Any,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        ...
+
+    def max_diffraction(
+        self,
+        source: Any,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        ...
+
+    def scan_sum(
+        self,
+        source: Any,
+        *,
+        dtype: np.dtype[Any] | type | None = None,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        ...
+
+    def virtual_detector_sum(
+        self,
+        source: Any,
+        mask: np.ndarray,
+        *,
+        dtype: np.dtype[Any] | type | None = None,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    ) -> np.ndarray:
+        ...
+
+    def masked_scan_mean(
+        self,
+        source: Any,
+        mask: np.ndarray,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    ) -> np.ndarray:
+        ...
+
+
+class PythonReductionBackend:
+    """Default NumPy/HDF5-friendly reduction backend."""
+
+    name = "python"
+
+    def mean_diffraction(
+        self,
+        source: Any,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        return _mean_diffraction_impl(
+            source,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=progress_callback,
+        )
+
+    def max_diffraction(
+        self,
+        source: Any,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        return _max_diffraction_impl(
+            source,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=progress_callback,
+        )
+
+    def scan_sum(
+        self,
+        source: Any,
+        *,
+        dtype: np.dtype[Any] | type | None = None,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        progress_callback: ProgressCallback = None,
+    ) -> np.ndarray:
+        return _scan_sum_impl(
+            source,
+            dtype=dtype,
+            memory_budget_bytes=memory_budget_bytes,
+            progress_callback=progress_callback,
+        )
+
+    def virtual_detector_sum(
+        self,
+        source: Any,
+        mask: np.ndarray,
+        *,
+        dtype: np.dtype[Any] | type | None = None,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    ) -> np.ndarray:
+        return _detector_sum_impl(
+            source,
+            mask,
+            dtype=dtype,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+
+    def masked_scan_mean(
+        self,
+        source: Any,
+        mask: np.ndarray,
+        *,
+        memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    ) -> np.ndarray:
+        return _masked_scan_mean_impl(source, mask, memory_budget_bytes=memory_budget_bytes)
+
+
+_reduction_backend: ReductionBackend = PythonReductionBackend()
+
+
+def get_reduction_backend() -> ReductionBackend:
+    return _reduction_backend
+
+
+def set_reduction_backend(backend: ReductionBackend | None) -> None:
+    global _reduction_backend
+    _reduction_backend = backend or PythonReductionBackend()
 
 
 def shape_4d(source: Any) -> tuple[int, int, int, int]:
@@ -41,6 +178,19 @@ def mean_diffraction(
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
     progress_callback=None,
 ) -> np.ndarray:
+    return get_reduction_backend().mean_diffraction(
+        source,
+        memory_budget_bytes=memory_budget_bytes,
+        progress_callback=progress_callback,
+    )
+
+
+def _mean_diffraction_impl(
+    source: Any,
+    *,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
     shape = shape_4d(source)
     total = np.zeros(shape[2:], dtype=np.float64)
     emit = progress_callback or (lambda _message, _fraction: None)
@@ -51,6 +201,19 @@ def mean_diffraction(
 
 
 def max_diffraction(
+    source: Any,
+    *,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
+    return get_reduction_backend().max_diffraction(
+        source,
+        memory_budget_bytes=memory_budget_bytes,
+        progress_callback=progress_callback,
+    )
+
+
+def _max_diffraction_impl(
     source: Any,
     *,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
@@ -79,6 +242,21 @@ def scan_sum_with_progress(
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
     progress_callback=None,
 ) -> np.ndarray:
+    return get_reduction_backend().scan_sum(
+        source,
+        dtype=dtype,
+        memory_budget_bytes=memory_budget_bytes,
+        progress_callback=progress_callback,
+    )
+
+
+def _scan_sum_impl(
+    source: Any,
+    *,
+    dtype: np.dtype[Any] | type | None = None,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    progress_callback=None,
+) -> np.ndarray:
     shape = shape_4d(source)
     output_dtype = np.dtype(dtype) if dtype is not None else _sum_dtype(source)
     result = np.empty(shape[:2], dtype=output_dtype)
@@ -96,6 +274,16 @@ def detector_sum(
     *,
     dtype: np.dtype[Any] | type | None = None,
 ) -> np.ndarray:
+    return get_reduction_backend().virtual_detector_sum(source, mask, dtype=dtype)
+
+
+def _detector_sum_impl(
+    source: Any,
+    mask: np.ndarray,
+    *,
+    dtype: np.dtype[Any] | type | None = None,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+) -> np.ndarray:
     shape = shape_4d(source)
     detector_mask = np.asarray(mask, dtype=bool)
     if detector_mask.shape != shape[2:]:
@@ -104,12 +292,21 @@ def detector_sum(
         )
     output_dtype = np.dtype(dtype) if dtype is not None else _sum_dtype(source)
     result = np.empty(shape[:2], dtype=output_dtype)
-    for selection, block in iter_scan_blocks(source):
+    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
         result[selection, :] = np.sum(block[:, :, detector_mask], axis=2, dtype=output_dtype)
     return result
 
 
 def masked_scan_mean(source: Any, mask: np.ndarray) -> np.ndarray:
+    return get_reduction_backend().masked_scan_mean(source, mask)
+
+
+def _masked_scan_mean_impl(
+    source: Any,
+    mask: np.ndarray,
+    *,
+    memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+) -> np.ndarray:
     shape = shape_4d(source)
     scan_mask = np.asarray(mask, dtype=bool)
     if scan_mask.shape != shape[:2]:
@@ -121,7 +318,7 @@ def masked_scan_mean(source: Any, mask: np.ndarray) -> np.ndarray:
         raise ValueError("Scan mask contains no selected positions.")
 
     total = np.zeros(shape[2:], dtype=np.float64)
-    for selection, block in iter_scan_blocks(source):
+    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
         block_mask = scan_mask[selection, :]
         if np.any(block_mask):
             total += np.sum(block[block_mask], axis=0, dtype=np.float64)
