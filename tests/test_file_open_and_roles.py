@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import h5py
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from app.main_window import MainWindow
 from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
@@ -80,6 +80,15 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.assertEqual(self.window.tree.textElideMode(), Qt.ElideMiddle)
         self.assertEqual(target_item.toolTip(0), target_item.text(0))
 
+    def test_preview_action_is_prominent_below_subset_controls(self) -> None:
+        preview_bar = self.window.findChild(QWidget, "dataPreviewBar")
+
+        self.assertIsNotNone(preview_bar)
+        self.assertEqual(self.window.preview_button.objectName(), "previewSelectedButton")
+        self.assertEqual(self.window.preview_hint_label.objectName(), "dataPreviewHint")
+        self.assertIs(self.window.preview_button.parentWidget(), preview_bar)
+        self.assertGreaterEqual(self.window.preview_button.minimumHeight(), 24)
+
     def test_tree_selection_is_metadata_only_until_preview_is_requested(self) -> None:
         self.window._open_file_path(str(self.path))
         target_item = self.window.tree.topLevelItem(0).child(0)
@@ -104,6 +113,11 @@ class FileOpenAndRolesTests(unittest.TestCase):
                 read_scan.assert_not_called()
                 read_slice.assert_called_once()
                 self.assertIn("[1, 1]", self.window.preview_status)
+                info_text = self._data_info_text()
+                self.assertIn("Selected node: /target", info_text)
+                self.assertIn("Previewed node: /target", info_text)
+                self.assertIn("Active DataCube: /target", info_text)
+                self.assertIn("Last rendered: /target", info_text)
 
     def test_show_data_activates_and_assigns_selected_raw_datacube(self) -> None:
         self.window._open_file_path(str(self.path))
@@ -117,6 +131,16 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.assertEqual(self.window.current_4d_source, "hdf5")
         self.assertEqual(self.window.current_dataset_path, "/target")
         self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/target")
+
+    def _data_info_text(self) -> str:
+        root = self.window.tree.info_root_item
+        self.assertIsNotNone(root)
+        lines: list[str] = []
+        for group_index in range(root.childCount()):
+            group = root.child(group_index)
+            for child_index in range(group.childCount()):
+                lines.append(group.child(child_index).text(0))
+        return "\n".join(lines)
 
     def test_show_data_activates_py4dstem_datacube_without_preview(self) -> None:
         path = self.path.parent / "show_data_datacube.h5"

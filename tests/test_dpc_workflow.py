@@ -45,6 +45,17 @@ class _FakeDPC:
         return self
 
 
+class _FakeVirtualImageDataCube:
+    def __init__(self) -> None:
+        self.data = np.ones((2, 3, 4, 5))
+        self.calls: list[dict[str, object]] = []
+
+    def get_virtual_image(self, **kwargs):
+        self.calls.append(kwargs)
+        value = 1 if kwargs["mode"] == "circle" else 2
+        return np.full(self.data.shape[:2], value, dtype=float)
+
+
 class DPCWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.created = []
@@ -73,6 +84,21 @@ class DPCWorkflowTests(unittest.TestCase):
         self.assertEqual(preset.outer_radius_mrad, 25)
         self.assertEqual(preset.sampling_x, 0.246570625)
         self.assertEqual(preset.sampling_y, 0.246570625)
+
+    def test_bf_df_task_carries_metadata_and_matches_compute(self) -> None:
+        datacube = _FakeVirtualImageDataCube()
+        progress: list[tuple[str, float]] = []
+
+        task = self.service.compute_bf_df_task(datacube, bf_radius=3, df_inner=4, df_outer=6)
+        result = task.run(lambda message, fraction: progress.append((message, fraction)))
+
+        self.assertEqual(task.name, "BF / DF Preview")
+        self.assertIn("bf_df_preview:", task.result_key or "")
+        self.assertEqual(task.parameters["shape"], datacube.data.shape)
+        self.assertIn(("Preparing BF / DF preview", 0.0), progress)
+        np.testing.assert_array_equal(result["Bright Field"], np.ones(datacube.data.shape[:2]))
+        np.testing.assert_array_equal(result["Dark Field"], np.ones(datacube.data.shape[:2]) * 2)
+        self.assertEqual(len(datacube.calls), 2)
 
     def test_four_segment_demonstration_produces_notebook_outputs(self) -> None:
         result = self.service.generate_segmented_dpc(

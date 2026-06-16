@@ -150,6 +150,23 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(preprocess.prerequisite, "data_setup")
         self.assertEqual(dpc.prerequisite, "dpc_preprocess")
 
+    def test_bf_df_preview_reuses_cached_display_results(self) -> None:
+        page = self.window.bf_df_preview_page
+        source = object()
+        result = {"Bright Field": np.ones((2, 2)), "Dark Field": np.ones((2, 2)) * 2}
+        page.source_provider = lambda: source
+        page.service.compute_bf_df_task = types.MethodType(
+            lambda _service, *_args, **_kwargs: self.fail("cached BF/DF result should not start a task"),
+            page.service,
+        )
+        key = page._cache_key(source)
+        page.result_cache.put(key, result)
+
+        page._run()
+
+        self.assertEqual(page.status_label.text(), "Done (cached)")
+        self.assertIs(page.result, result)
+
     def test_dpc_stages_have_independent_workspaces(self) -> None:
         pages = [
             self.window.dpc_segmented_page,

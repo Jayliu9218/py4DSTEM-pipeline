@@ -257,6 +257,10 @@ packaging/
   README_packaging.md
 ```
 
+The reduction layer uses the tested Python/NumPy implementation as the stable
+runtime path. The application keeps large-array work chunked and cancellable
+where practical without requiring compiled extensions.
+
 ## py4DSTEM Resources
 
 - [py4DSTEM source repository](https://github.com/py4dstem/py4DSTEM)
