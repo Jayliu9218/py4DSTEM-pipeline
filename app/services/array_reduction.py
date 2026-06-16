@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from importlib import import_module
-from logging import getLogger
 from typing import Any, Protocol
 
 import numpy as np
 
 
-logger = getLogger(__name__)
 DEFAULT_BLOCK_BYTES = 32 * 1024 * 1024
 ProgressCallback = Any
 
@@ -147,29 +144,6 @@ def get_reduction_backend() -> ReductionBackend:
 def set_reduction_backend(backend: ReductionBackend | None) -> None:
     global _reduction_backend
     _reduction_backend = backend or PythonReductionBackend()
-
-
-def try_enable_native_backend(module_name: str = "app.services.native_array_reduction") -> bool:
-    """Enable an optional native backend if one is installed.
-
-    The native module is intentionally optional: development installs, packaged
-    builds, and user machines without compiled extensions continue using the
-    Python backend.
-    """
-
-    try:
-        module = import_module(module_name)
-        factory = getattr(module, "create_backend")
-        backend = factory()
-    except ModuleNotFoundError as exc:
-        if exc.name != module_name:
-            logger.info("Native reduction backend dependency is unavailable: %s", exc)
-        return False
-    except Exception:
-        logger.exception("Native reduction backend could not be enabled.")
-        return False
-    set_reduction_backend(backend)
-    return True
 
 
 def shape_4d(source: Any) -> tuple[int, int, int, int]:

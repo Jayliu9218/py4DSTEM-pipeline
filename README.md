@@ -224,7 +224,6 @@ app/
     structural_phase_page.py              # Structural phase (in development)
   services/
     array_reduction.py                    # Streaming HDF5 reductions
-    native_array_reduction.py             # Optional native-backend hook
     bragg_strain_service.py               # Bragg detection, strain, calibration params
     hdf5_service.py                       # HDF5 file I/O
     orientation_service.py                # Orientation plan & match
@@ -258,10 +257,9 @@ packaging/
   README_packaging.md
 ```
 
-The reduction layer is backend-oriented. The default path is the tested
-Python/NumPy implementation; `native_array_reduction.py` is currently a safe
-importable stub so packaging and runtime fallback paths can stabilize before any
-compiled C++/pybind11 backend is introduced.
+The reduction layer uses the tested Python/NumPy implementation as the stable
+runtime path. The application keeps large-array work chunked and cancellable
+where practical without requiring compiled extensions.
 
 ## py4DSTEM Resources
 

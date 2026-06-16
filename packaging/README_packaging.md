@@ -54,11 +54,8 @@ can still launch but falls back to the unstyled Qt/Fusion interface, making it
 look different from `python main.py`. The packaged-application launch test
 checks these resources before starting the executable.
 
-The optional reduction backend hook (`app.services.native_array_reduction`) is
-currently a Python fallback stub. Packaging should include it when discovered,
-but the application must continue to run if a future compiled native extension is
-absent or fails to load; the tested Python reduction backend remains the default
-safe path.
+The tested Python reduction backend is the stable runtime path. Packaging does
+not require compiled reduction extensions.
 
 ## 2. MVP Testing: PyInstaller onedir
 
