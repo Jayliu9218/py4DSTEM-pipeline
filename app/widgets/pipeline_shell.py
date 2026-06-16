@@ -228,7 +228,10 @@ class ModuleControlPanel(QWidget):
         layout = content.layout() if content is not None else None
         if layout is None:
             return
+        layout.setContentsMargins(PANEL_MARGIN + 1, PANEL_MARGIN, PANEL_MARGIN + 1, PANEL_MARGIN)
         layout.setSpacing(GROUP_SPACING)
+        if isinstance(content, QGroupBox):
+            ModuleControlPanel._apply_table_form(layout, -1, content)
         for table in content.findChildren(QTableWidget):
             table.setFixedHeight(PARAM_TABLE_HEIGHT)
             table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
