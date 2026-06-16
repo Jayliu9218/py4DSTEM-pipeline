@@ -88,17 +88,13 @@ class PreprocessingPage(QWidget, WorkerRunner):
         if source is None:
             QMessageBox.information(self, "Preprocess", "Select or assign a displayable data object first.")
             return
-        budget = int(self.memory_budget_mb.value()) * 1024 * 1024
+        budget_mb = int(self.memory_budget_mb.value())
         self._show_data_source = source
+        task = self.service.show_data_task(source, memory_budget_mb=budget_mb)
         self._start_background(
-            "Show Data",
-            lambda progress: self.service.show_data(
-                source,
-                memory_budget_bytes=budget,
-                progress_callback=progress,
-            ),
+            task.name,
+            task,
             capture_stdout=False,
-            parameters={"memory_budget_mb": int(self.memory_budget_mb.value())},
         )
 
     def _on_start(self, name: str) -> None:

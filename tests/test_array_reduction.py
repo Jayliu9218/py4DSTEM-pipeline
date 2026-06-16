@@ -130,6 +130,22 @@ class ArrayReductionTests(unittest.TestCase):
         self.assertEqual(progress[-1], ("Data display ready", 1.0))
         self.assertTrue(all(0 <= fraction <= 1 for _message, fraction in progress))
 
+    def test_show_data_task_carries_metadata_and_matches_show_data(self) -> None:
+        source = RecordingDataset(self.data)
+        progress: list[tuple[str, float]] = []
+        service = PreprocessingService()
+
+        task = service.show_data_task(source, memory_budget_mb=1)
+        results = task.run(lambda message, fraction: progress.append((message, fraction)))
+
+        self.assertEqual(task.name, "Show Data")
+        self.assertEqual(task.memory_budget_mb, 1)
+        self.assertIn("show_data:", task.result_key or "")
+        self.assertEqual(task.parameters["shape"], self.data.shape)
+        self.assertIn(("Preparing data display", 0.0), progress)
+        self.assertIn("Scan overview", results)
+        np.testing.assert_allclose(results["Mean diffraction pattern"], self.data.mean(axis=(0, 1)))
+
     def test_hdf5_service_workflows_match_numpy(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "block_reduction_sample.h5"
         path.parent.mkdir(exist_ok=True)
