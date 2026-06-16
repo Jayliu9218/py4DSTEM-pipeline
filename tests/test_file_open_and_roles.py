@@ -113,6 +113,11 @@ class FileOpenAndRolesTests(unittest.TestCase):
                 read_scan.assert_not_called()
                 read_slice.assert_called_once()
                 self.assertIn("[1, 1]", self.window.preview_status)
+                info_text = self._data_info_text()
+                self.assertIn("Selected node: /target", info_text)
+                self.assertIn("Previewed node: /target", info_text)
+                self.assertIn("Active DataCube: /target", info_text)
+                self.assertIn("Last rendered: /target", info_text)
 
     def test_show_data_activates_and_assigns_selected_raw_datacube(self) -> None:
         self.window._open_file_path(str(self.path))
@@ -126,6 +131,16 @@ class FileOpenAndRolesTests(unittest.TestCase):
         self.assertEqual(self.window.current_4d_source, "hdf5")
         self.assertEqual(self.window.current_dataset_path, "/target")
         self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, "/target")
+
+    def _data_info_text(self) -> str:
+        root = self.window.tree.info_root_item
+        self.assertIsNotNone(root)
+        lines: list[str] = []
+        for group_index in range(root.childCount()):
+            group = root.child(group_index)
+            for child_index in range(group.childCount()):
+                lines.append(group.child(child_index).text(0))
+        return "\n".join(lines)
 
     def test_show_data_activates_py4dstem_datacube_without_preview(self) -> None:
         path = self.path.parent / "show_data_datacube.h5"
