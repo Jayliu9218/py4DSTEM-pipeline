@@ -197,18 +197,11 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
         self.export_button.setEnabled(False)
         self.log_panel.log(f"Virtual detector started: {params.mode}")
 
-        operation = lambda _cb: self.service.compute(source, params)
+        task = self.service.compute_task(source, params)
         if not self._start_background(
-            "Virtual detector",
-            operation,
+            task.name,
+            task,
             capture_stdout=False,
-            parameters={
-                "mode": params.mode,
-                "center_x": params.center_x,
-                "center_y": params.center_y,
-                "inner_radius": params.inner_radius,
-                "outer_radius": params.outer_radius,
-            },
         ):
             self.run_button.setEnabled(True)
 
