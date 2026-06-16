@@ -18,6 +18,12 @@ from app.main_window import MainWindow
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
 
 
+class ArrayLike:
+    def __init__(self, shape: tuple[int, ...], dtype=np.float32) -> None:
+        self.shape = shape
+        self.dtype = np.dtype(dtype)
+
+
 class ControllerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -45,6 +51,30 @@ class ControllerTests(unittest.TestCase):
         finally:
             session.close_file()
             path.unlink(missing_ok=True)
+
+    def test_raw_scan_cache_key_includes_shape_and_dtype(self) -> None:
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        session.current_file_path = Path("sample.h5")
+        session.hdf5_service.read_4d_scan_image = Mock(
+            side_effect=[
+                np.ones((2, 2)),
+                np.ones((3, 2)),
+                np.ones((3, 2), dtype=np.float32),
+            ]
+        )
+
+        first = session.raw_scan_image("/data", ArrayLike((2, 2, 3, 4), np.float32))
+        second = session.raw_scan_image("/data", ArrayLike((2, 2, 3, 4), np.float32))
+        third = session.raw_scan_image("/data", ArrayLike((3, 2, 3, 4), np.float32))
+        fourth = session.raw_scan_image("/data", ArrayLike((3, 2, 3, 4), np.float64))
+
+        self.assertIs(first, second)
+        self.assertIsNot(second, third)
+        self.assertIsNot(third, fourth)
+        self.assertEqual(session.hdf5_service.read_4d_scan_image.call_count, 3)
+        self.assertEqual(session.raw_scan_image_cache_key.hdf5_path, "/data")
+        self.assertEqual(session.raw_scan_image_cache_key.shape, (3, 2, 3, 4))
+        self.assertEqual(session.raw_scan_image_cache_key.dtype, "float64")
 
     def test_data_session_reuses_recent_diffraction_slices(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "diffraction_cache.h5"
@@ -129,6 +159,8 @@ class ControllerTests(unittest.TestCase):
             overview = np.ones(dataset.shape[:2])
             self.assertTrue(session.cache_scan_overview(dataset, overview))
             self.assertIs(session.target_bright_field_image(), session.raw_scan_image_cache)
+            self.assertEqual(session.raw_scan_image_cache_key.hdf5_path, "/data")
+            self.assertEqual(session.raw_scan_image_cache_key.operation, "scan_overview")
         finally:
             session.close_file()
             path.unlink(missing_ok=True)

@@ -28,6 +28,17 @@ class DataSelection:
     displayed: bool = False
 
 
+@dataclass(frozen=True)
+class DataCacheKey:
+    """Stable identity for cached derived data."""
+
+    file_path: str | None
+    hdf5_path: str
+    operation: str
+    shape: tuple[int, ...]
+    dtype: str
+
+
 class DataSessionController:
     """Owns mutable file/dataset session state and data-provider behavior."""
 
@@ -42,6 +53,7 @@ class DataSessionController:
         self.selection = DataSelection()
         self.current_attrs: dict[str, object] = {}
         self.raw_scan_image_cache_path: str | None = None
+        self.raw_scan_image_cache_key: DataCacheKey | None = None
         self.raw_scan_image_cache: np.ndarray | None = None
         self.diffraction_cache: OrderedDict[tuple[str, int, int], np.ndarray] = OrderedDict()
         self.diffraction_cache_limit = 16
@@ -191,12 +203,14 @@ class DataSessionController:
         memory_budget_bytes: int | None = None,
         progress_callback=None,
     ) -> np.ndarray:
-        if self.raw_scan_image_cache_path != hdf5_path or self.raw_scan_image_cache is None:
+        cache_key = self._data_cache_key("scan_overview", hdf5_path, dataset)
+        if self.raw_scan_image_cache_key != cache_key or self.raw_scan_image_cache is None:
             self.raw_scan_image_cache = self.hdf5_service.read_4d_scan_image(
                 dataset,
                 memory_budget_bytes=memory_budget_bytes,
                 progress_callback=progress_callback,
             )
+            self.raw_scan_image_cache_key = cache_key
             self.raw_scan_image_cache_path = hdf5_path
         return self.raw_scan_image_cache
 
@@ -208,6 +222,7 @@ class DataSessionController:
 
     def clear_raw_scan_image_cache(self) -> None:
         self.raw_scan_image_cache_path = None
+        self.raw_scan_image_cache_key = None
         self.raw_scan_image_cache = None
 
     def diffraction_pattern(
@@ -267,7 +282,11 @@ class DataSessionController:
         return self.virtual_detector_source()
 
     def target_bright_field_image(self) -> np.ndarray | None:
-        if self.current_dataset_path == self.raw_scan_image_cache_path:
+        if (
+            self.current_dataset_path == self.raw_scan_image_cache_path
+            and self.raw_scan_image_cache_key is not None
+            and self.raw_scan_image_cache_key.file_path == self._current_file_key()
+        ):
             return self.raw_scan_image_cache
         return None
 
@@ -284,8 +303,27 @@ class DataSessionController:
         if source is not active and source_data is not active_data and not same_hdf5_path:
             return False
         self.raw_scan_image_cache_path = self.current_dataset_path
+        self.raw_scan_image_cache_key = self._data_cache_key(
+            "scan_overview",
+            self.current_dataset_path,
+            source_data,
+        )
         self.raw_scan_image_cache = np.asarray(image)
         return True
+
+    def _data_cache_key(self, operation: str, hdf5_path: str, data: Any) -> DataCacheKey:
+        shape = tuple(int(value) for value in getattr(data, "shape", ()))
+        dtype = str(getattr(data, "dtype", "unknown"))
+        return DataCacheKey(
+            file_path=self._current_file_key(),
+            hdf5_path=hdf5_path,
+            operation=operation,
+            shape=shape,
+            dtype=dtype,
+        )
+
+    def _current_file_key(self) -> str | None:
+        return str(self.current_file_path.resolve()) if self.current_file_path is not None else None
 
     def current_4d_shape(self) -> tuple[int, int, int, int] | None:
         if self.current_dataset_shape is None or len(self.current_dataset_shape) != 4:
