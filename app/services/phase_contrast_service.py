@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.computation_task import ComputationTask
+
 logger = logging.getLogger(__name__)
 
 
@@ -398,6 +400,39 @@ class PhaseContrastService:
             raise PhaseContrastServiceError(
                 f"BF/DF computation failed: {exc}"
             ) from exc
+
+    def compute_bf_df_task(
+        self,
+        datacube: Any,
+        *,
+        bf_radius: float | None = None,
+        df_inner: float | None = None,
+        df_outer: float | None = None,
+        probe_geometry: Any | None = None,
+    ) -> ComputationTask:
+        data = getattr(datacube, "data", datacube)
+        shape = tuple(int(value) for value in getattr(data, "shape", ()))
+        params = {
+            "bf_radius": bf_radius,
+            "df_inner": df_inner,
+            "df_outer": df_outer,
+            "probe_center_x": getattr(probe_geometry, "center_x", None),
+            "probe_center_y": getattr(probe_geometry, "center_y", None),
+        }
+        result_key = f"bf_df_preview:{shape}:{params}"
+        return ComputationTask(
+            name="BF / DF Preview",
+            operation=lambda _progress: self.compute_bf_df(
+                datacube,
+                bf_radius=bf_radius,
+                df_inner=df_inner,
+                df_outer=df_outer,
+                probe_geometry=probe_geometry,
+            ),
+            result_key=result_key,
+            status_message="Preparing BF / DF preview",
+            parameters={"shape": shape or "-", **params},
+        )
 
     def run_ptychography(
         self,

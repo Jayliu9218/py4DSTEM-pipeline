@@ -38,6 +38,7 @@ from app.controllers.route_coordinator import RouteCoordinator
 from app.controllers.application_pages import ApplicationPages
 from app.controllers.project_coordinator import ProjectCoordinator
 from app.controllers.data_session_controller import DataSessionController
+from app import help_content
 from app.theme import Theme
 from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
@@ -62,82 +63,9 @@ from app.widgets.pipeline_shell import (
 
 
 class MainWindow(QMainWindow):
-    ABOUT_HTML = """
-    <h2>py4DSTEM Pipeline</h2>
-    <p>A desktop workflow application for browsing, processing, reconstructing,
-    reviewing, and exporting 4D-STEM data with py4DSTEM.</p>
-    <h3>Current situation</h3>
-    <p>The application provides guided crystalline and phase-retrieval workflows,
-    shared calculation progress, project-state persistence, scientific diagnostics,
-    and result export. The amorphous-analysis routes are visible but remain under
-    development.</p>
-    <h3>Current improvements</h3>
-    <ul>
-      <li>Staged workflows with explicit review and acceptance gates.</li>
-      <li>CPU/GPU execution choices and clearer CUDA or memory failure guidance.</li>
-      <li>Thread-safe background calculations with live progress reporting.</li>
-      <li>Reusable Ptychography profiles, Quick Reconstruction, QC, and Advanced Reconstruction.</li>
-    </ul>
-    <p>Results should always be reviewed using appropriate experimental knowledge;
-    automated diagnostics support scientific judgment but do not replace it.</p>
-    """
-
-    LICENSE_HTML = """
-    <h2>License</h2>
-    <p>This project is intended for distribution under the
-    <b>GNU General Public License version 3 (GPLv3)</b>.</p>
-    <p>py4DSTEM is open source software distributed under a GPLv3 license. It is
-    free to use, alter, or build on, provided that any work derived from py4DSTEM
-    is also kept free and open under a GPLv3 license.</p>
-    <p>Reference:
-    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPLv3 license</a><br>
-    py4DSTEM:
-    <a href="https://github.com/py4dstem/py4DSTEM">github.com/py4dstem/py4DSTEM</a></p>
-    """
-
-    TUTORIAL_HTML = """
-    <h2>Workflow Tutorial</h2>
-    <p>Start by opening an HDF5/EMD file, assigning the Target DataCube and any
-    optional reference roles, then choose a structure type and analysis goal.</p>
-    <h3>Shared Data Setup</h3>
-    <p>Select a DataCube and click <b>Show Data</b> to activate and assign it as
-    the Target DataCube. Tree selection remains lazy; <b>Preview Selected</b>
-    displays only the selected slice or scan position. Review preprocessing and
-    apply corrections explicitly before downstream analysis.</p>
-    <h3>Crystalline / Bragg-based</h3>
-    <p><b>Orientation Mapping:</b> detect Bragg peaks, calibrate reciprocal space,
-    load a crystal structure, create an orientation plan, and match orientations.</p>
-    <p><b>Strain Mapping:</b> generate virtual images, prepare a probe kernel,
-    calculate BraggVectors, apply calibration, select a reference, and calculate
-    strain and quality maps.</p>
-    <p><b>Structural Phase Mapping:</b> uses calibrated Bragg information for
-    phase-specific analysis; this route is still being expanded.</p>
-    <h3>Phase Retrieval / Ptychography</h3>
-    <p><b>DPC / CoM:</b> preview BF/DF contrast, inspect segmented DPC, preprocess
-    and accept CoM fields, then run integrated reconstruction.</p>
-    <p><b>Parallax:</b> accept a bright-field disk, align virtual BF images, review
-    shifts, and optionally run subpixel or aberration processing.</p>
-    <p><b>Ptychography:</b> inspect data and probe, accept geometry and preprocessing,
-    run a Quick Reconstruction, calculate QC metrics, and click <b>Confirm QC
-    Risks</b>. Parameter Optimization is optional. After optimization, click
-    <b>Apply Best Self-Consistency Value</b>; accepted QC remains valid and Advanced
-    Reconstruction becomes ready. Upstream optimized values rebuild preprocessing
-    inside the Advanced background task, while batch/probe options transfer directly.
-    The best self-consistency value is diagnostic and is not proof of physical accuracy.</p>
-    <p><b>Method Comparison:</b> compare retained DPC and Ptychography results when
-    both are available.</p>
-    <h3>Amorphous / Diffuse-scattering</h3>
-    <p>Radial Profile, RDF, FEM, and Amorphous Strain routes are planned workflows
-    and are not yet production-ready.</p>
-    <h3>Reading Workflow Status</h3>
-    <p>Completed stages are retained. Changing upstream parameters marks affected
-    downstream results as stale. Re-run and re-accept stale stages before relying
-    on later results.</p>
-    <h3>Performance and Warnings</h3>
-    <p>Large 4D reductions run in cancellable background tasks. Use the reduction
-    memory budget to control chunking, follow Progress and Warnings in Output, and
-    review scientific diagnostics before accepting a stage.</p>
-    """
+    ABOUT_HTML = help_content.ABOUT_HTML
+    LICENSE_HTML = help_content.LICENSE_HTML
+    TUTORIAL_HTML = help_content.TUTORIAL_HTML
 
     current_file = property(
         lambda self: self.session.current_file,
@@ -166,6 +94,18 @@ class MainWindow(QMainWindow):
     selected_node_kind = property(
         lambda self: self.session.selected_node_kind,
         lambda self, value: setattr(self.session, "selected_node_kind", value),
+    )
+    selected_preview_kind = property(
+        lambda self: self.session.selected_preview_kind,
+        lambda self, value: setattr(self.session, "selected_preview_kind", value),
+    )
+    selected_preview_shape = property(
+        lambda self: self.session.selected_preview_shape,
+        lambda self, value: setattr(self.session, "selected_preview_shape", value),
+    )
+    preview_status = property(
+        lambda self: self.session.preview_status,
+        lambda self, value: setattr(self.session, "preview_status", value),
     )
     current_attrs = property(
         lambda self: self.session.current_attrs,
@@ -260,8 +200,13 @@ class MainWindow(QMainWindow):
         self.rx_spin.valueChanged.connect(lambda _value: self._refresh_tree_data_info())
         self.ry_spin.valueChanged.connect(lambda _value: self._refresh_tree_data_info())
         self.preview_button = QPushButton("Preview Selected")
+        self.preview_button.setObjectName("previewSelectedButton")
+        self.preview_button.setMinimumHeight(24)
+        self.preview_button.setCursor(Qt.PointingHandCursor)
         self.preview_button.setEnabled(False)
         self.preview_button.clicked.connect(self._preview_selected_node)
+        self.preview_hint_label = QLabel("Select rx/ry, then preview the selected node")
+        self.preview_hint_label.setObjectName("dataPreviewHint")
 
         self._progress("Laying out workspace…")
         self._build_menu()
@@ -630,13 +575,20 @@ class MainWindow(QMainWindow):
         data_browser_layout.setSpacing(0)
         data_browser_layout.addWidget(self.tree, 1)
         preview_bar = QWidget()
-        preview_layout = QHBoxLayout(preview_bar)
-        preview_layout.setContentsMargins(3, 3, 3, 3)
-        preview_layout.setSpacing(3)
-        preview_layout.addWidget(QLabel("rx"))
-        preview_layout.addWidget(self.rx_spin)
-        preview_layout.addWidget(QLabel("ry"))
-        preview_layout.addWidget(self.ry_spin)
+        preview_bar.setObjectName("dataPreviewBar")
+        preview_layout = QVBoxLayout(preview_bar)
+        preview_layout.setContentsMargins(6, 5, 6, 6)
+        preview_layout.setSpacing(4)
+        index_layout = QHBoxLayout()
+        index_layout.setContentsMargins(0, 0, 0, 0)
+        index_layout.setSpacing(4)
+        index_layout.addWidget(QLabel("rx"))
+        index_layout.addWidget(self.rx_spin)
+        index_layout.addWidget(QLabel("ry"))
+        index_layout.addWidget(self.ry_spin)
+        index_layout.addStretch(1)
+        preview_layout.addLayout(index_layout)
+        preview_layout.addWidget(self.preview_hint_label)
         preview_layout.addWidget(self.preview_button)
         data_browser_layout.addWidget(preview_bar)
         self.tree.setFrameShape(QFrame.NoFrame)
@@ -803,15 +755,27 @@ class MainWindow(QMainWindow):
 
     def _reset_layout(self, silent: bool = False) -> None:
         """Restore all docks to their default dock areas and sizes."""
-        for dock in (self.data_dock, self.controls_dock, self.output_dock):
+        expected_areas = {
+            self.data_dock: Qt.LeftDockWidgetArea,
+            self.controls_dock: Qt.RightDockWidgetArea,
+            self.output_dock: Qt.BottomDockWidgetArea,
+        }
+        needs_readd = any(
+            dock.isFloating()
+            or self.dockWidgetArea(dock) != area
+            or bool(self.tabifiedDockWidgets(dock))
+            for dock, area in expected_areas.items()
+        )
+        for dock in expected_areas:
             dock.setFloating(False)
-        # Re-add to canonical areas to undo any tabbing/dragging.
-        self.removeDockWidget(self.data_dock)
-        self.removeDockWidget(self.controls_dock)
-        self.removeDockWidget(self.output_dock)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
+        if needs_readd:
+            # Re-add to canonical areas to undo any tabbing/dragging.
+            self.removeDockWidget(self.data_dock)
+            self.removeDockWidget(self.controls_dock)
+            self.removeDockWidget(self.output_dock)
+            self.addDockWidget(Qt.LeftDockWidgetArea, self.data_dock)
+            self.addDockWidget(Qt.RightDockWidgetArea, self.controls_dock)
+            self.addDockWidget(Qt.BottomDockWidgetArea, self.output_dock)
         # Explicitly show — removeDockWidget hides them and addDockWidget does not un-hide.
         for dock in (self.data_dock, self.controls_dock, self.output_dock):
             dock.setVisible(True)
@@ -1045,20 +1009,22 @@ class MainWindow(QMainWindow):
             return
 
         self.log_panel.log(f"Selected {node_kind}: {hdf5_path}")
-        self.selected_hdf5_path = hdf5_path
-        self.selected_node_kind = node_kind
-        self.selected_preview_kind = "Not displayable"
-        self.selected_preview_shape = None
-        self.preview_status = "Not rendered"
+        self.session.update_selection(hdf5_path, node_kind)
 
         try:
             node = self.current_file[hdf5_path]
             info = self.hdf5_service.describe_node(node, hdf5_path)
             self._show_node_info(info)
             preview = self.hdf5_service.describe_preview(node)
-            self.selected_preview_kind = str(preview["kind"])
+            preview_kind = str(preview["kind"])
             shape = preview.get("shape")
-            self.selected_preview_shape = tuple(shape) if isinstance(shape, tuple) else None
+            preview_shape = tuple(shape) if isinstance(shape, tuple) else None
+            self.session.update_selection(
+                hdf5_path,
+                node_kind,
+                preview_kind=preview_kind,
+                preview_shape=preview_shape,
+            )
             self._configure_4d_controls(self.selected_preview_shape)
             self.preview_button.setEnabled(self.selected_preview_kind != "Not displayable")
             self._refresh_tree_data_info()
@@ -1079,12 +1045,12 @@ class MainWindow(QMainWindow):
                     raise ValueError("The selected diffraction slice is not a dataset.")
                 image = self.hdf5_service.read_2d_dataset(node)
                 self.diffraction_viewer.set_image(image)
-                self.preview_status = "Rendered diffraction slice"
+                self.session.mark_preview_rendered("Rendered diffraction slice")
             elif self.selected_preview_kind == "DataCube":
                 if not self._activate_selected_datacube():
                     raise ValueError("The selected node is not a displayable DataCube.")
                 self._display_4d_slice(self.rx_spin.value(), self.ry_spin.value())
-                self.preview_status = (
+                self.session.mark_preview_rendered(
                     f"Rendered DataCube diffraction slice [{self.rx_spin.value()}, {self.ry_spin.value()}]"
                 )
             else:
@@ -1092,7 +1058,7 @@ class MainWindow(QMainWindow):
             self._refresh_tree_data_info()
             self.log_panel.log(f"{self.preview_status}: {self.selected_hdf5_path}")
         except Exception as exc:
-            self.preview_status = f"Preview failed: {exc}"
+            self.session.mark_preview_failed(f"Preview failed: {exc}")
             self._refresh_tree_data_info()
             self.log_panel.log(self.preview_status)
             QMessageBox.warning(self, "Preview error", str(exc))
@@ -1126,12 +1092,8 @@ class MainWindow(QMainWindow):
         self.current_dataset_shape = None
         self.current_4d_source = None
         self._set_index_controls_visible(False)
-        self.selected_hdf5_path = None
-        self.selected_node_kind = None
+        self.session.clear_selection()
         self.current_attrs = {}
-        self.selected_preview_kind = "Not displayable"
-        self.selected_preview_shape = None
-        self.preview_status = "Not rendered"
         self.preview_button.setEnabled(False)
         self._refresh_tree_data_info()
 
@@ -1166,6 +1128,10 @@ class MainWindow(QMainWindow):
                 self.diffraction_viewer.set_image(image)
                 info = self.py4dstem_service.describe_current_datacube()
                 datapath = info.get("datapath", "DataCube")
+                self.session.mark_rendered(
+                    str(datapath),
+                    f"Rendered DataCube diffraction slice [{rx}, {ry}]",
+                )
                 self.log_panel.log(f"Displayed py4DSTEM diffraction pattern: {datapath}[{rx}, {ry}]")
             elif self.current_4d_source == "hdf5":
                 if self.current_file is None or self.current_dataset_path is None:
@@ -1173,6 +1139,10 @@ class MainWindow(QMainWindow):
                 dataset = self.current_file[self.current_dataset_path]
                 image = self.session.diffraction_pattern(self.current_dataset_path, dataset, rx, ry)
                 self.diffraction_viewer.set_image(image)
+                self.session.mark_rendered(
+                    self.current_dataset_path,
+                    f"Rendered DataCube diffraction slice [{rx}, {ry}]",
+                )
                 self.log_panel.log(
                     f"Displayed HDF5 diffraction pattern: {self.current_dataset_path}[{rx}, {ry}, :, :]"
                 )
@@ -1199,9 +1169,7 @@ class MainWindow(QMainWindow):
             if render_overview:
                 scan_image = self.py4dstem_service.get_scan_image()
                 self.scan_viewer.set_image(scan_image)
-            self.current_4d_source = "py4dstem"
-            self.current_dataset_path = info.datapath
-            self.current_dataset_shape = info.shape
+            self.session.mark_active_target(info.datapath, info.shape, "py4dstem")
             self._restore_current_braggvectors()
             self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
             if render_overview:
@@ -1246,9 +1214,7 @@ class MainWindow(QMainWindow):
         if render_scan_image:
             scan_image = self._raw_scan_image(hdf5_path, dataset)
             self.scan_viewer.set_image(scan_image)
-        self.current_4d_source = "hdf5"
-        self.current_dataset_path = hdf5_path
-        self.current_dataset_shape = shape
+        self.session.mark_active_target(hdf5_path, shape, "hdf5")
         self._restore_current_braggvectors()
         self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
         self.virtual_detector_page.refresh_defaults_from_datacube()
@@ -1530,16 +1496,14 @@ class MainWindow(QMainWindow):
                 "Scan shape": self.scan_shape_label.text(),
                 "Diffraction shape": self.diffraction_shape_label.text(),
             },
-            selection={
-                "Path": self.path_label.text(),
-                "Type": self.type_label.text(),
-                "Shape": self.shape_label.text(),
-                "Dtype": self.dtype_label.text(),
-                "Preview type": self.selected_preview_kind,
-                "Preview status": self.preview_status,
-                "rx": self.rx_spin.value() if self.rx_spin.isEnabled() else "-",
-                "ry": self.ry_spin.value() if self.ry_spin.isEnabled() else "-",
-            },
+            selection=self.session.data_browser_selection_info(
+                path=self.path_label.text(),
+                node_type=self.type_label.text(),
+                shape=self.shape_label.text(),
+                dtype=self.dtype_label.text(),
+                rx=self.rx_spin.value() if self.rx_spin.isEnabled() else "-",
+                ry=self.ry_spin.value() if self.ry_spin.isEnabled() else "-",
+            ),
             roles={
                 "Target DataCube": roles.target_datacube or "-",
                 "Ellipse Reference": roles.polycrystal_calibration or "-",

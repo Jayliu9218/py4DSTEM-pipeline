@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from app.services.computation_task import ComputationTask
 from app.services.array_reduction import max_diffraction, mean_diffraction, scan_sum_with_progress
 
 
@@ -28,6 +29,32 @@ class HotPixelPreview:
 
 
 class PreprocessingService:
+    def show_data_task(
+        self,
+        source: Any,
+        *,
+        memory_budget_mb: int,
+    ) -> ComputationTask:
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        shape = tuple(int(value) for value in getattr(data, "shape", ()))
+        dtype = getattr(data, "dtype", None)
+        result_key = f"show_data:{shape}:{dtype}"
+        return ComputationTask(
+            name="Show Data",
+            operation=lambda progress: self.show_data(
+                source,
+                memory_budget_bytes=max(int(memory_budget_mb), 1) * 1024 * 1024,
+                progress_callback=progress,
+            ),
+            memory_budget_mb=memory_budget_mb,
+            result_key=result_key,
+            status_message="Preparing data display",
+            parameters={
+                "shape": shape or "-",
+                "dtype": str(dtype) if dtype is not None else "-",
+            },
+        )
+
     def display_data(self, source: Any) -> dict[str, np.ndarray]:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         shape = getattr(data, "shape", None)

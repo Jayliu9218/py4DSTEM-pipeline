@@ -18,6 +18,12 @@ from app.main_window import MainWindow
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
 
 
+class ArrayLike:
+    def __init__(self, shape: tuple[int, ...], dtype=np.float32) -> None:
+        self.shape = shape
+        self.dtype = np.dtype(dtype)
+
+
 class ControllerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -46,6 +52,30 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_raw_scan_cache_key_includes_shape_and_dtype(self) -> None:
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+        session.current_file_path = Path("sample.h5")
+        session.hdf5_service.read_4d_scan_image = Mock(
+            side_effect=[
+                np.ones((2, 2)),
+                np.ones((3, 2)),
+                np.ones((3, 2), dtype=np.float32),
+            ]
+        )
+
+        first = session.raw_scan_image("/data", ArrayLike((2, 2, 3, 4), np.float32))
+        second = session.raw_scan_image("/data", ArrayLike((2, 2, 3, 4), np.float32))
+        third = session.raw_scan_image("/data", ArrayLike((3, 2, 3, 4), np.float32))
+        fourth = session.raw_scan_image("/data", ArrayLike((3, 2, 3, 4), np.float64))
+
+        self.assertIs(first, second)
+        self.assertIsNot(second, third)
+        self.assertIsNot(third, fourth)
+        self.assertEqual(session.hdf5_service.read_4d_scan_image.call_count, 3)
+        self.assertEqual(session.raw_scan_image_cache_key.hdf5_path, "/data")
+        self.assertEqual(session.raw_scan_image_cache_key.shape, (3, 2, 3, 4))
+        self.assertEqual(session.raw_scan_image_cache_key.dtype, "float64")
+
     def test_data_session_reuses_recent_diffraction_slices(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "diffraction_cache.h5"
         path.parent.mkdir(exist_ok=True)
@@ -68,6 +98,46 @@ class ControllerTests(unittest.TestCase):
             session.close_file()
             path.unlink(missing_ok=True)
 
+    def test_data_session_tracks_selection_preview_and_active_target(self) -> None:
+        session = DataSessionController(Hdf5Service(), Py4DSTEMService())
+
+        selection = session.update_selection(
+            "/cube",
+            "group",
+            preview_kind="DataCube",
+            preview_shape=(2, 3, 4, 5),
+        )
+        self.assertEqual(selection.selected_hdf5_path, "/cube")
+        self.assertEqual(session.selected_preview_kind, "DataCube")
+        self.assertEqual(session.preview_status, "Not rendered")
+
+        session.mark_preview_rendered("Rendered DataCube diffraction slice [0, 0]")
+        session.mark_active_target("/cube", (2, 3, 4, 5), "hdf5")
+
+        self.assertTrue(session.selection.displayed)
+        self.assertEqual(session.selection.previewed_hdf5_path, "/cube")
+        self.assertEqual(session.selection.last_rendered_path, "/cube")
+        self.assertEqual(session.selection.active_target_path, "/cube")
+        self.assertEqual(session.current_dataset_path, "/cube")
+        self.assertEqual(session.current_4d_source, "hdf5")
+
+        info = session.data_browser_selection_info(
+            path="/cube",
+            node_type="group",
+            shape=(2, 3, 4, 5),
+            dtype="-",
+            rx=0,
+            ry=0,
+        )
+        self.assertEqual(info["Selected node"], "/cube")
+        self.assertEqual(info["Previewed node"], "/cube")
+        self.assertEqual(info["Active DataCube"], "/cube")
+        self.assertEqual(info["Last rendered"], "/cube")
+
+        session.clear_selection()
+        self.assertIsNone(session.selected_hdf5_path)
+        self.assertEqual(session.selected_preview_kind, "Not displayable")
+
     def test_target_bright_field_never_triggers_implicit_reduction(self) -> None:
         path = Path(__file__).resolve().parents[1] / ".test-output" / "overview_cache.h5"
         path.parent.mkdir(exist_ok=True)
@@ -89,6 +159,8 @@ class ControllerTests(unittest.TestCase):
             overview = np.ones(dataset.shape[:2])
             self.assertTrue(session.cache_scan_overview(dataset, overview))
             self.assertIs(session.target_bright_field_image(), session.raw_scan_image_cache)
+            self.assertEqual(session.raw_scan_image_cache_key.hdf5_path, "/data")
+            self.assertEqual(session.raw_scan_image_cache_key.operation, "scan_overview")
         finally:
             session.close_file()
             path.unlink(missing_ok=True)

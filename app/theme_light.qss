@@ -187,6 +187,43 @@ QPushButton:disabled {
     border: 1px solid #b2b2b2;
 }
 QPushButton#exportButton { font-weight: bold; }
+QWidget#dataPreviewBar {
+    background: #d9d9d9;
+    border-top: 1px solid #8a8a8a;
+}
+QLabel#dataPreviewHint {
+    color: #4f4f4f;
+    font-size: 8pt;
+    padding-left: 1px;
+}
+QPushButton#previewSelectedButton {
+    background: #c9e4f5;
+    color: #0f2f45;
+    border: 1px solid #2d79b7;
+    border-top-color: #f4fbff;
+    border-left-color: #f4fbff;
+    font-weight: bold;
+    min-height: 24px;
+    max-height: 28px;
+    padding: 3px 12px;
+}
+QPushButton#previewSelectedButton:hover,
+QPushButton#previewSelectedButton:focus {
+    background: #dff1fb;
+    border: 1px solid #136aa8;
+}
+QPushButton#previewSelectedButton:pressed {
+    background: #8fc3e5;
+    border: 1px solid #5f5f5f;
+    border-top-color: #5f5f5f;
+    border-left-color: #5f5f5f;
+}
+QPushButton#previewSelectedButton:disabled {
+    background: #d2d2d2;
+    color: #7d7d7d;
+    border: 1px solid #a8a8a8;
+    font-weight: bold;
+}
 QWidget#moduleControlPanel QPushButton {
     background: #d8d8d8;
     border: 1px solid #777777;

@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import QEventLoop, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
+from app.services.computation_task import ComputationCancelled, ComputationTask
 from app.widgets.log_panel import LogPanel
 from app.widgets.worker_runner import (
     BackgroundWorker,
@@ -137,6 +138,32 @@ class BackgroundWorkerTests(unittest.TestCase):
         worker.run()
 
         self.assertEqual(cancelled, [True])
+
+    def test_computation_task_runs_and_cancels_through_worker(self) -> None:
+        task = ComputationTask(
+            "Task",
+            lambda emit: (emit("step", 0.25), 7)[1],
+            memory_budget_mb=64,
+            result_key="sample",
+            status_message="Starting task",
+        )
+        worker = BackgroundWorker(task, capture_stdout=False)
+        results: list[int] = []
+        progresses: list[tuple[str, float]] = []
+        worker.finished.connect(results.append)
+        worker.progress.connect(lambda message, fraction: progresses.append((message, fraction)))
+
+        worker.run()
+
+        self.assertEqual(results, [7])
+        self.assertEqual(task.memory_budget_bytes, 64 * 1024 * 1024)
+        self.assertIn(("Starting task", 0.0), progresses)
+        self.assertIn(("step", 0.25), progresses)
+
+        cancelled_task = ComputationTask("Cancelled", lambda _emit: None)
+        cancelled_task.cancel()
+        with self.assertRaises(ComputationCancelled):
+            cancelled_task.run(lambda _message, _fraction: None)
 
 
 class WorkerRunnerTests(unittest.TestCase):
@@ -278,6 +305,25 @@ class WorkerRunnerTests(unittest.TestCase):
 
         page._finish_sync("Sync Job", operation)
         self.assertEqual(page.errors, ["sync boom"])
+
+    def test_start_background_accepts_computation_task_metadata(self) -> None:
+        page = _RunnerPage(LogPanel())
+        task = ComputationTask(
+            "Task Job",
+            lambda emit: (emit("half", 0.5), "done")[1],
+            memory_budget_mb=32,
+            result_key="task-result",
+            status_message="Preparing task",
+            parameters={"alpha": 1},
+        )
+
+        self.assertTrue(page._start_background("Task Job", task))
+        self._run_until_thread_finishes(page)
+
+        self.assertEqual(page.results, ["done"])
+        process_log = page.log_panel.process_log.toPlainText()
+        self.assertIn("memory_budget_mb=32", process_log)
+        self.assertIn("result_key=task-result", process_log)
 
 
 if __name__ == "__main__":

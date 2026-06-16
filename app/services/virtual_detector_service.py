@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from app.services.computation_task import ComputationTask
 from app.services.array_reduction import (
     detector_sum,
     masked_scan_mean,
@@ -52,6 +53,33 @@ class VirtualDetectorService:
     CUSTOM_ANNULAR = "Custom Annular Detector"
     OFF_AXIS_DARK_FIELD = "Off-axis Dark Field"
     VIRTUAL_DIFFRACTION = "Virtual Diffraction"
+
+    def compute_task(self, source: Any, params: VirtualDetectorParams) -> ComputationTask:
+        data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
+        shape = tuple(int(dim) for dim in getattr(data, "shape", ()))
+        result_key = (
+            "virtual_detector:"
+            f"{params.mode}:{shape}:"
+            f"{params.center_x}:{params.center_y}:{params.inner_radius}:{params.outer_radius}:"
+            f"{params.roi_mode}:{params.roi_rx_start}:{params.roi_rx_end}:"
+            f"{params.roi_ry_start}:{params.roi_ry_end}:{params.roi_center_x}:"
+            f"{params.roi_center_y}:{params.roi_radius}"
+        )
+        return ComputationTask(
+            name="Virtual detector",
+            operation=lambda _progress: self.compute(source, params),
+            result_key=result_key,
+            status_message=f"Preparing virtual detector: {params.mode}",
+            parameters={
+                "mode": params.mode,
+                "shape": shape or "-",
+                "center_x": params.center_x,
+                "center_y": params.center_y,
+                "inner_radius": params.inner_radius,
+                "outer_radius": params.outer_radius,
+                "roi_mode": params.roi_mode,
+            },
+        )
 
     def compute(self, source: Any, params: VirtualDetectorParams) -> VirtualDetectorResult:
         start = perf_counter()

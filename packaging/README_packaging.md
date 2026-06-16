@@ -54,6 +54,9 @@ can still launch but falls back to the unstyled Qt/Fusion interface, making it
 look different from `python main.py`. The packaged-application launch test
 checks these resources before starting the executable.
 
+The tested Python reduction backend is the stable runtime path. Packaging does
+not require compiled reduction extensions.
+
 ## 2. MVP Testing: PyInstaller onedir
 
 ```powershell

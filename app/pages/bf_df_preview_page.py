@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.services.phase_contrast_service import PhaseContrastService, PhaseContrastServiceError
 from app.services.result_registry import ResultRegistry
+from app.services.result_cache import ResultCache, make_result_cache_key
 from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, WorkflowStep
 from app.theme import Theme
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
@@ -44,8 +45,10 @@ class BFDFPreviewPage(QWidget, WorkerRunner):
         self.workflow_state = workflow_state
         self.result_registry = result_registry
         self.service = PhaseContrastService()
+        self.result_cache = ResultCache(limit=4)
         self._init_worker_runner()
         self.result: dict[str, np.ndarray] | None = None
+        self._pending_cache_key = None
 
         self.bf_radius = self._float_input(1, 1000, 10, decimals=1, unit="px")
         self.df_inner = self._float_input(1, 1000, 20, decimals=1, unit="px")
@@ -96,25 +99,38 @@ class BFDFPreviewPage(QWidget, WorkerRunner):
         df_inner = self.df_inner.value()
         df_outer = self.df_outer.value()
         probe_geom = self.probe_geometry_provider()
+        cache_key = self._cache_key(source)
+        cached = self.result_cache.get(cache_key)
+        if cached is not None:
+            self.log_panel.log("BF / DF preview reused cached result")
+            self._display_result(cached, from_cache=True)
+            return
 
-        def operation(_cb):
-            return self.service.compute_bf_df(
-                source,
-                bf_radius=bf_radius,
-                df_inner=df_inner,
-                df_outer=df_outer,
-                probe_geometry=probe_geom,
-            )
-
-        if not self._start_background("BF / DF Preview", operation, parameters=self.params_snapshot()):
+        self._pending_cache_key = cache_key
+        task = self.service.compute_bf_df_task(
+            source,
+            bf_radius=bf_radius,
+            df_inner=df_inner,
+            df_outer=df_outer,
+            probe_geometry=probe_geom,
+        )
+        if not self._start_background(task.name, task):
             self.compute_button.setEnabled(True)
+            self._pending_cache_key = None
 
     def _handle_result(self, images: dict[str, np.ndarray]) -> None:
+        if self._pending_cache_key is not None:
+            self.result_cache.put(self._pending_cache_key, images)
+        self._pending_cache_key = None
+        self._display_result(images)
+
+    def _display_result(self, images: dict[str, np.ndarray], *, from_cache: bool = False) -> None:
         self.result = images
         self.compute_button.setEnabled(True)
-        self.status_label.setText("Done")
-        self.log_panel.log("BF / DF preview complete")
-        self.log_panel.process_finished(self.pending_operation)
+        self.status_label.setText("Done" if not from_cache else "Done (cached)")
+        if not from_cache:
+            self.log_panel.log("BF / DF preview complete")
+            self.log_panel.process_finished(self.pending_operation)
 
         self.workspace.append_results([
             FigureResult(f"BF / DF: {name}", image) for name, image in images.items()
@@ -134,6 +150,7 @@ class BFDFPreviewPage(QWidget, WorkerRunner):
         self.workflow_state.mark_completed(WorkflowStep.BF_DF_PREVIEW)
 
     def _handle_error(self, error: str) -> None:
+        self._pending_cache_key = None
         self.compute_button.setEnabled(True)
         self.status_label.setText("Failed")
         self.log_panel.log(f"BF / DF preview failed: {error}")
@@ -143,6 +160,9 @@ class BFDFPreviewPage(QWidget, WorkerRunner):
         # BF/DF forwards captured text to both the activity log and the progress bar.
         self.log_panel.log(message)
         super()._handle_progress(message, fraction)
+
+    def _cache_key(self, source) -> object:
+        return make_result_cache_key("bf_df_preview", source, self.params_snapshot())
 
     def _refresh_stale_status(self) -> None:
         if self.workflow_state.any_stale([WorkflowStep.BF_DF_PREVIEW]):

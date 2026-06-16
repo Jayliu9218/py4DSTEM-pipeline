@@ -80,11 +80,25 @@ class Hdf5Service:
 
         return np.asarray(dataset[rx, ry, :, :])
 
-    def read_4d_scan_image(self, dataset: h5py.Dataset) -> np.ndarray:
+    def read_4d_scan_image(
+        self,
+        dataset: h5py.Dataset,
+        *,
+        memory_budget_bytes: int | None = None,
+        progress_callback=None,
+    ) -> np.ndarray:
         if dataset.ndim != 4:
             raise ValueError(f"Expected a 4D dataset, got shape {dataset.shape}.")
         self._ensure_numeric(dataset)
-        return scan_sum(dataset)
+        if memory_budget_bytes is None and progress_callback is None:
+            return scan_sum(dataset)
+        from app.services.array_reduction import DEFAULT_BLOCK_BYTES, scan_sum_with_progress
+
+        return scan_sum_with_progress(
+            dataset,
+            memory_budget_bytes=memory_budget_bytes or DEFAULT_BLOCK_BYTES,
+            progress_callback=progress_callback,
+        )
 
     def _ensure_numeric(self, dataset: h5py.Dataset) -> None:
         if not np.issubdtype(dataset.dtype, np.number):
