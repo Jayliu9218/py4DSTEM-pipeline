@@ -656,6 +656,33 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(surface.objectName(), "moduleControlsSurface")
         self.assertEqual(scroll.objectName(), "moduleControlsScroll")
         self.assertEqual(scroll.widget().objectName(), "moduleControlsContent")
+        margins = scroll.widget().layout().contentsMargins()
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (PANEL_MARGIN + 1, PANEL_MARGIN, PANEL_MARGIN + 1, PANEL_MARGIN),
+        )
+
+    def test_bf_df_controls_use_shared_parameter_group_frame(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window._select_route_module("bf_df_preview")
+        panel = self.window.bf_df_preview_page.controls_panel
+
+        self.assertIsInstance(panel, QGroupBox)
+        self.assertEqual(panel.title(), "BF / DF Preview")
+        self.assertEqual(panel.objectName(), "paramForm")
+        self.assertTrue(panel.findChildren(QFormLayout))
+
+    def test_checkbox_checked_indicator_uses_green_accent(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent / "app"
+        light_qss = (root / "theme_light.qss").read_text(encoding="utf-8")
+        dark_qss = (root / "theme.qss").read_text(encoding="utf-8")
+
+        self.assertIn("QCheckBox::indicator:checked { background: #20a848", light_qss)
+        self.assertIn("background: #2db84d;", dark_qss)
+        self.assertNotIn("QCheckBox::indicator:checked { background: #2d79b7", light_qss)
+        self.assertNotIn("background: #4a9eff;\n    border: 1px solid #4a9eff;", dark_qss)
 
     def test_parameter_form_labels_do_not_use_zebra_backgrounds(self) -> None:
         self.window._select_route_module("calibration")
