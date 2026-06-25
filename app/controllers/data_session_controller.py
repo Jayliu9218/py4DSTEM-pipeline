@@ -14,7 +14,7 @@ from app.services.py4dstem_service import Py4DSTEMService
 
 @dataclass(frozen=True)
 class DataSelection:
-    """Current HDF5 tree selection and preview/target display state."""
+    """Current data selection and preview/target display state."""
 
     selected_hdf5_path: str | None = None
     selected_node_kind: str | None = None
@@ -219,6 +219,26 @@ class DataSessionController:
         self.current_file_path = Path(file_path)
         self.py4dstem_service.defer_open_file(file_path)
         return self.current_file
+
+    def open_direct_datacube(self, file_path: str | Path, import_options=None):
+        path = Path(file_path)
+        info = self.py4dstem_service.load_file_datacube(path, import_options=import_options)
+        self.current_file = None
+        self.current_file_path = path
+        self.current_dataset_path = info.datapath
+        self.current_dataset_shape = info.shape
+        self.current_4d_source = "py4dstem"
+        self.clear_raw_scan_image_cache()
+        self.diffraction_cache.clear()
+        self.selection = DataSelection(
+            selected_hdf5_path=info.datapath,
+            selected_node_kind="file",
+            preview_kind="DataCube",
+            preview_shape=info.shape,
+            active_target_path=info.datapath,
+            active_source="py4dstem",
+        )
+        return info
 
     def clear_raw_scan_image_cache(self) -> None:
         self.raw_scan_image_cache_path = None

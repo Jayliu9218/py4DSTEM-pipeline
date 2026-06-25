@@ -38,7 +38,7 @@ class ReportService:
             "## Project",
             "",
             f"- Data file: {project_state.file_path or '-'}",
-            f"- Selected HDF5 path: {project_state.selected_hdf5_path or '-'}",
+            f"- Selected data path: {project_state.selected_hdf5_path or '-'}",
             f"- Image scaling: {project_state.image_scaling}",
             f"- Image colormap: {project_state.image_cmap}",
             f"- CUDA: {'enabled' if project_state.cuda_enabled else 'disabled'}",

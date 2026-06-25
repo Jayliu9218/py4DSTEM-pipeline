@@ -31,7 +31,15 @@ class WorkflowStep:
     ORIENTATION_REVIEW_ACCEPT = "orientation_review_accept"
     ORIENTATION_MATCH = "orientation_match"
     STRAIN_MAP = "strain_map"
+    STRUCTURAL_PHASE_PLAN = "structural_phase_plan"
+    STRUCTURAL_PHASE_MATCH = "structural_phase_match"
     STRUCTURAL_PHASE = "structural_phase"
+    CRYSTAL_STRUCTURE_FACTORS = "crystal_structure_factors"
+    CRYSTAL_SIMULATED_DIFFRACTION = "crystal_simulated_diffraction"
+    CRYSTAL_PHASE = "crystal_phase"
+    CRYSTAL_ORIENTATION = "crystal_orientation"
+    CRYSTAL_GRAIN = "crystal_grain"
+    CRYSTAL_STRAIN = "crystal_strain"
     PHASE_CONTRAST = "phase_contrast"
     BF_DF_PREVIEW = "bf_df_preview"
     DPC_SEGMENTED = "dpc_segmented"
@@ -107,6 +115,15 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.STRUCTURAL_PHASE_PLAN,
+            WorkflowStep.STRUCTURAL_PHASE_MATCH,
+            WorkflowStep.STRUCTURAL_PHASE,
+            WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
+            WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
             WorkflowStep.BF_DF_PREVIEW,
             WorkflowStep.DPC_SEGMENTED,
             WorkflowStep.DPC_PREPROCESS,
@@ -147,6 +164,15 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.STRUCTURAL_PHASE_PLAN,
+            WorkflowStep.STRUCTURAL_PHASE_MATCH,
+            WorkflowStep.STRUCTURAL_PHASE,
+            WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
+            WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
             WorkflowStep.DPC_SEGMENTED,
             WorkflowStep.DPC_PREPROCESS,
             WorkflowStep.DPC_REVIEW,
@@ -185,6 +211,11 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.STRUCTURAL_PHASE_PLAN,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
         },
         WorkflowStep.BRAGG_VECTOR_MAP: {
             WorkflowStep.CALIBRATION_ORIGIN,
@@ -193,6 +224,11 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.STRUCTURAL_PHASE_PLAN,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
         },
         WorkflowStep.CALIBRATION_ORIGIN: {WorkflowStep.CALIBRATION_APPLY},
         WorkflowStep.CALIBRATION_ELLIPSE: {WorkflowStep.CALIBRATION_APPLY},
@@ -203,6 +239,11 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_REVIEW_ACCEPT,
             WorkflowStep.ORIENTATION_MATCH,
             WorkflowStep.STRAIN_MAP,
+            WorkflowStep.STRUCTURAL_PHASE_PLAN,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
         },
         WorkflowStep.ORIENTATION_PLAN: {
             WorkflowStep.ORIENTATION_REVIEW,
@@ -214,6 +255,34 @@ class WorkflowState(QObject):
             WorkflowStep.ORIENTATION_MATCH,
         },
         WorkflowStep.ORIENTATION_REVIEW_ACCEPT: {WorkflowStep.ORIENTATION_MATCH},
+        WorkflowStep.STRUCTURAL_PHASE_PLAN: {
+            WorkflowStep.STRUCTURAL_PHASE_MATCH,
+            WorkflowStep.STRUCTURAL_PHASE,
+        },
+        WorkflowStep.STRUCTURAL_PHASE_MATCH: {WorkflowStep.STRUCTURAL_PHASE},
+        WorkflowStep.CRYSTAL_STRUCTURE_FACTORS: {
+            WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
+        },
+        WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION: {
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
+        },
+        WorkflowStep.CRYSTAL_PHASE: {
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
+        },
+        WorkflowStep.CRYSTAL_ORIENTATION: {
+            WorkflowStep.CRYSTAL_GRAIN,
+            WorkflowStep.CRYSTAL_STRAIN,
+        },
+        WorkflowStep.CRYSTAL_GRAIN: {WorkflowStep.CRYSTAL_STRAIN},
         WorkflowStep.DPC_PREPROCESS: {WorkflowStep.DPC_REVIEW},
         WorkflowStep.DPC_REVIEW: {WorkflowStep.DPC},
         WorkflowStep.PARALLAX_BF: {WorkflowStep.PARALLAX_BF_ACCEPT},

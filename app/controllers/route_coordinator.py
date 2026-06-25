@@ -15,6 +15,7 @@ from app.widgets.pipeline_shell import (
 
 GOALS_BY_STRUCTURE = {
     "Crystalline / Bragg-based": [
+        "Crystal Analysis",
         "Orientation Mapping",
         "Strain Mapping",
         "Structural Phase Mapping",
@@ -35,7 +36,7 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
         "data_setup",
         "Data & Preprocess" if crystalline_route else "Data Setup",
         "preprocess" if crystalline_route else "overview",
-        "Open an HDF5 / EMD file, assign dataset roles, inspect the DataCube, and preview/apply preprocessing.",
+        "Open an HDF5 / EMD / MIB file, assign dataset roles, inspect the DataCube, and preview/apply preprocessing.",
         "Validated roles, DataCube diagnostics, and an explicitly preprocessed working DataCube.",
     )
     if crystalline_route:
@@ -78,6 +79,41 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
             "Applied origin, ellipse, pixel-size, and rotation calibration.",
             WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
     ]
+    if goal == "Crystal Analysis":
+        return shared + [
+            RouteModule("cif_manager", "CIF Manager", "crystal_cif",
+                "Calibrated BraggVectors; add one or more CIF crystal structures.",
+                "Enabled crystal candidates with phase names and fitting parameters.",
+                prerequisite="calibration"),
+            RouteModule("structure_factors", "Structure Factors", "crystal_structure",
+                "Enabled CIF structures and structure-factor limits.",
+                "Calculated structure factors for enabled candidate phases.",
+                WorkflowStep.CRYSTAL_STRUCTURE_FACTORS, "cif_manager"),
+            RouteModule("simulated_diffraction", "Simulated Diffraction", "crystal_simulated",
+                "Structure factors and orientation sampling parameters.",
+                "Per-phase orientation libraries for Bragg-vector template matching.",
+                WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION, "structure_factors"),
+            RouteModule("phase_matching", "Phase Matching", "crystal_phase",
+                "Calibrated BraggVectors and per-phase simulated diffraction libraries.",
+                "Phase ID map, confidence gap map, phase fractions, and masks.",
+                WorkflowStep.CRYSTAL_PHASE, "simulated_diffraction"),
+            RouteModule("orientation_matching", "Orientation Matching", "crystal_orientation",
+                "Phase-matching result and winning phase masks.",
+                "Composite phase plus orientation map and per-phase orientation RGB maps.",
+                WorkflowStep.CRYSTAL_ORIENTATION, "phase_matching"),
+            RouteModule("grain_analysis", "Grain Analysis", "crystal_grain",
+                "Orientation map with phase masks.",
+                "Optional grain labels and grain-quality diagnostics when supported.",
+                WorkflowStep.CRYSTAL_GRAIN, "orientation_matching"),
+            RouteModule("strain_analysis", "Strain Analysis", "crystal_strain",
+                "Phase masks and calibrated BraggVectors.",
+                "Optional phase-masked strain maps when supported by the installed py4DSTEM.",
+                WorkflowStep.CRYSTAL_STRAIN, "grain_analysis"),
+            RouteModule("crystalline_results", "Results & Quality", "crystalline_results",
+                "Completed phase/orientation matching.",
+                "Final crystal-analysis figures, metrics, warnings, and exports.",
+                WorkflowStep.CRYSTAL_PHASE, "strain_analysis"),
+        ]
     if goal == "Strain Mapping":
         return shared + [
             RouteModule("crystal_analysis", "Strain Analysis", "strain",
@@ -99,6 +135,17 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
                 "Explicitly accepted single-pattern match review.",
                 "Orientation mapping and quality review.",
                 WorkflowStep.ORIENTATION_MATCH, "orientation_setup"),
+        ]
+    if goal == "Structural Phase Mapping":
+        return shared + [
+            RouteModule("phase_library", "Crystal Library & Plan", "structural_phase",
+                "Calibrated BraggVectors; add one or more CIF crystal structures.",
+                "Multi-phase orientation plan for all enabled crystals.",
+                WorkflowStep.STRUCTURAL_PHASE_PLAN, "calibration"),
+            RouteModule("phase_matching", "Phase Matching", "structural_phase_match",
+                "Completed multi-phase orientation plan and BraggVectors.",
+                "Phase ID map, per-phase orientation maps, and confidence diagnostics.",
+                WorkflowStep.STRUCTURAL_PHASE_MATCH, "phase_library"),
         ]
     page = {
         "Orientation Mapping": "orientation",

@@ -168,6 +168,42 @@ class FileOpenAndRolesTests(unittest.TestCase):
             self.window._close_current_file()
             path.unlink(missing_ok=True)
 
+    def test_mib_file_opens_as_direct_py4dstem_datacube(self) -> None:
+        path = self.path.parent / "direct_datacube.mib"
+        path.write_bytes(b"mib")
+        data = np.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5)
+        datacube = Mock(shape=data.shape, name="direct_datacube", data=data)
+        module = Mock()
+        module.import_file.return_value = datacube
+        try:
+            with (
+                patch.object(self.window.py4dstem_service, "_py4dstem", return_value=module),
+                patch.object(self.window.calibration_page, "refresh_status"),
+            ):
+                self.window._open_file_path(str(path))
+
+            self.assertIsNone(self.window.current_file)
+            self.assertIs(self.window._get_py4dstem_datacube(), datacube)
+            self.assertEqual(self.window.current_4d_source, "py4dstem")
+            self.assertEqual(self.window.current_dataset_path, str(path))
+            self.assertEqual(self.window.workflow_state.dataset_roles.target_datacube, str(path))
+            self.assertEqual(self.window.tree.headerItem().text(0), "Data source")
+            self.assertEqual(self.window.selected_preview_kind, "DataCube")
+            self.assertTrue(self.window.preview_button.isEnabled())
+            module.import_file.assert_called_once_with(
+                str(path),
+                mem="MEMMAP",
+                scan=(512, 512),
+            )
+
+            self.window._preview_selected_node()
+
+            np.testing.assert_array_equal(self.window.diffraction_viewer.raw_image, data[0, 0, :, :])
+            self.assertIn("[0, 0]", self.window.preview_status)
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
     def test_two_dimensional_selection_renders_only_after_preview(self) -> None:
         path = self.path.parent / "diffraction_slice.h5"
         with h5py.File(path, "w") as output:

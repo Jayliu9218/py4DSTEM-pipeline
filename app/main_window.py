@@ -44,7 +44,11 @@ from app.services.phase_contrast_service import PhaseContrastResult
 from app.services.bragg_strain_service import BraggStrainService, BraggStrainServiceError
 from app.services.hdf5_service import Hdf5Service
 from app.services.project_state_service import ProjectState, ProjectStateService
-from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
+from app.services.py4dstem_service import (
+    DirectDataCubeImportOptions,
+    Py4DSTEMService,
+    Py4DSTEMServiceError,
+)
 from app.services.report_service import ReportService
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import WorkflowState, WorkflowStep
@@ -155,7 +159,7 @@ class MainWindow(QMainWindow):
         self.log_panel = LogPanel()
         self.phase_retrieval_results: dict[str, PhaseContrastResult] = {}
         self._progress("Building analysis pages…")
-        page_objects, self.dpc_service, self.parallax_service = ApplicationPages.build_page_objects(
+        page_objects, self.dpc_service, self.parallax_service, self.phase_mapping_service = ApplicationPages.build_page_objects(
             providers={
                 "virtual_source": self._get_virtual_detector_source,
                 "shape": self._get_current_4d_shape,
@@ -221,6 +225,14 @@ class MainWindow(QMainWindow):
                 "calibration": self.calibration_page.controls_panel,
                 "orientation_setup": self.orientation_setup_page.controls_panel,
                 "crystalline_results": self.crystalline_results_page.controls_panel,
+                "cif_manager": self.crystal_cif_page.controls_panel,
+                "structure_factors": self.crystal_structure_page.controls_panel,
+                "simulated_diffraction": self.crystal_simulated_page.controls_panel,
+                "orientation_matching": self.crystal_orientation_page.controls_panel,
+                "grain_analysis": self.crystal_grain_page.controls_panel,
+                "strain_analysis": self.crystal_strain_page.controls_panel,
+                "phase_library": self.structural_phase_library_page.controls_panel,
+                "phase_matching": self.structural_phase_match_page.controls_panel,
                 "bf_df_preview": self.bf_df_preview_page.controls_panel,
                 "dpc_segmented": self.dpc_segmented_page.controls_panel,
                 "dpc_preprocess": self.dpc_preprocess_page.controls_panel,
@@ -241,9 +253,10 @@ class MainWindow(QMainWindow):
                 "radial_profile": self.radial_profile_page.controls_panel,
             },
             crystal_controls={
+                "Crystal Analysis": self.crystal_cif_page.controls_panel,
                 "Strain Mapping": self.strain_map_page.controls_panel,
                 "Orientation Mapping": self.orientation_page.controls_panel,
-                "Structural Phase Mapping": self.structural_phase_page.controls_panel,
+                "Structural Phase Mapping": self.structural_phase_library_page.controls_panel,
             },
             amorphous_controls={
                 "Amorphous Strain": self.amorphous_strain_page.controls_panel,
@@ -271,6 +284,15 @@ class MainWindow(QMainWindow):
                 "orientation": self.orientation_setup_page,
                 "orientation_map": self.orientation_map_page,
                 "strain_map": self.strain_map_page,
+                "crystal_cif": self.crystal_cif_page,
+                "crystal_structure": self.crystal_structure_page,
+                "crystal_simulated": self.crystal_simulated_page,
+                "crystal_phase": self.crystal_phase_page,
+                "crystal_orientation": self.crystal_orientation_page,
+                "crystal_grain": self.crystal_grain_page,
+                "crystal_strain": self.crystal_strain_page,
+                "structural_phase": self.structural_phase_library_page,
+                "structural_phase_match": self.structural_phase_match_page,
                 "phase_contrast": self.phase_contrast_page,
                 "bf_df_preview": self.bf_df_preview_page,
                 "ptychography": self.ptychography_page,
@@ -549,6 +571,8 @@ class MainWindow(QMainWindow):
         for page in (
             self.orientation_setup_page,
             self.orientation_map_page,
+            self.structural_phase_library_page,
+            self.structural_phase_match_page,
         ):
             page.set_cuda_enabled(enabled)
         for page in (
@@ -605,6 +629,7 @@ class MainWindow(QMainWindow):
             "crystalline_results": self.crystalline_results_page,
             "strain": self.strain_map_page,
             "structural_phase": self.structural_phase_page,
+            "structural_phase_match": self.structural_phase_match_page,
             "phase_contrast": self.phase_contrast_page,
             "bf_df": self.bf_df_preview_page,
             "dpc_segmented": self.dpc_segmented_page,
@@ -938,43 +963,128 @@ class MainWindow(QMainWindow):
     def open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open HDF5 or EMD file",
+            "Open 4D-STEM data file",
             "",
-            "HDF5/EMD files (*.h5 *.hdf5 *.emd);;All files (*.*)",
+            "4D-STEM files (*.h5 *.hdf5 *.emd *.mib);;HDF5/EMD files (*.h5 *.hdf5 *.emd);;MIB files (*.mib);;All files (*.*)",
         )
         if not file_path:
             return
 
-        self._open_file_path(file_path)
+        import_options = None
+        if self.py4dstem_service.can_open_direct_datacube(file_path):
+            import_options = self._prompt_mib_import_options()
+            if import_options is None:
+                return
+        self._open_file_path(file_path, import_options=import_options)
 
-    def _open_file_path(self, file_path: str) -> None:
+    def _open_file_path(
+        self,
+        file_path: str,
+        *,
+        import_options: DirectDataCubeImportOptions | None = None,
+    ) -> None:
         try:
             self._close_current_file()
-            self.current_file = self.session.open_file(file_path)
-            self.result_registry.clear()
-            self.braggvectors_by_datacube.clear()
-            self.reference_braggvectors_cache.clear()
-            self.tree.populate(self.current_file)
-            self._set_preview_empty()
-            self._clear_dataset_info()
-            self._clear_all_image_workspaces()
-            self.bragg_strain_service.braggvectors = None
-            self.bragg_strain_service.strainmap = None
-            self.bragg_strain_service.strain_result = None
-            self.bragg_strain_service.probe_kernel = None
-            self.dpc_service.reset_dpc_workflow()
-            self.parallax_service.reset()
-            self.workflow_state.data_source_updated()
-            self.log_panel.log(f"Opened file: {file_path}")
-            self.log_panel.log(
-                "Opened in safe HDF5 mode. py4DSTEM import is deferred so startup and browsing "
-                "do not trigger native library errors."
-            )
+            if self.hdf5_service.is_hdf5_like(file_path):
+                self._open_hdf5_file_path(file_path)
+            elif self.py4dstem_service.can_open_direct_datacube(file_path):
+                self._open_direct_datacube_file_path(file_path, import_options=import_options)
+            else:
+                raise ValueError("Please choose a .h5, .hdf5, .emd, or .mib file.")
         except Exception as exc:
             self.current_file = None
             self.current_file_path = None
             self.log_panel.log(f"Failed to open file: {exc}")
             QMessageBox.critical(self, "Open failed", str(exc))
+
+    def _open_hdf5_file_path(self, file_path: str) -> None:
+        self.current_file = self.session.open_file(file_path)
+        self.result_registry.clear()
+        self.braggvectors_by_datacube.clear()
+        self.reference_braggvectors_cache.clear()
+        self.tree.populate(self.current_file)
+        self._set_preview_empty()
+        self._clear_dataset_info()
+        self._clear_all_image_workspaces()
+        self.bragg_strain_service.braggvectors = None
+        self.bragg_strain_service.strainmap = None
+        self.bragg_strain_service.strain_result = None
+        self.bragg_strain_service.probe_kernel = None
+        self.dpc_service.reset_dpc_workflow()
+        self.parallax_service.reset()
+        self.workflow_state.data_source_updated()
+        self.log_panel.log(f"Opened file: {file_path}")
+        self.log_panel.log(
+            "Opened in safe HDF5 mode. py4DSTEM import is deferred so startup and browsing "
+            "do not trigger native library errors."
+        )
+
+    def _prompt_mib_import_options(self) -> DirectDataCubeImportOptions | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("MIB Import Options")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        scan_x = NumericLineEdit(1, 100000, 512, integer=True)
+        scan_y = NumericLineEdit(1, 100000, 512, integer=True)
+        mem_mode = QComboBox()
+        mem_mode.addItems(["MEMMAP", "RAM"])
+        chunk_size = NumericLineEdit(1, 4096, 32, integer=True)
+        roi_tuning = QCheckBox("Use 128 x 128 ROI for first crystal-analysis pass")
+        roi_tuning.setChecked(True)
+        form.addRow("Scan X", scan_x)
+        form.addRow("Scan Y", scan_y)
+        form.addRow("Memory mode", mem_mode)
+        form.addRow("Chunk size", chunk_size)
+        layout.addLayout(form)
+        layout.addWidget(roi_tuning)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return DirectDataCubeImportOptions(
+            scan_shape=(int(scan_x.value()), int(scan_y.value())),
+            mem_mode=mem_mode.currentText(),
+            chunk_size=int(chunk_size.value()),
+            roi_tuning_mode=roi_tuning.isChecked(),
+        )
+
+    def _open_direct_datacube_file_path(
+        self,
+        file_path: str,
+        *,
+        import_options: DirectDataCubeImportOptions | None = None,
+    ) -> None:
+        self.result_registry.clear()
+        self.braggvectors_by_datacube.clear()
+        self.reference_braggvectors_cache.clear()
+        self._set_preview_empty("MIB DataCube loaded. Select a scan position to preview diffraction.")
+        self._clear_dataset_info()
+        info = self.session.open_direct_datacube(file_path, import_options=import_options)
+        self.current_file = None
+        self.tree.populate_direct_source(f"{Path(file_path).name}  {info.shape}", info.datapath)
+        self._clear_all_image_workspaces()
+        self.bragg_strain_service.braggvectors = None
+        self.bragg_strain_service.strainmap = None
+        self.bragg_strain_service.strain_result = None
+        self.bragg_strain_service.probe_kernel = None
+        self.dpc_service.reset_dpc_workflow()
+        self.parallax_service.reset()
+        self.workflow_state.data_source_updated()
+        self.workflow_state.set_dataset_role("target_datacube", info.datapath)
+        self._refresh_role_labels()
+        self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
+        self.path_label.setText(info.datapath)
+        self.type_label.setText("MIB DataCube")
+        self.shape_label.setText(str(info.shape))
+        self.dtype_label.setText(str(getattr(getattr(self.py4dstem_service.datacube, "data", None), "dtype", "-")))
+        self._configure_4d_controls(info.shape)
+        self.preview_button.setEnabled(True)
+        self.virtual_detector_page.refresh_defaults_from_datacube()
+        self.bragg_peaks_page.refresh_from_datacube()
+        self.calibration_page.refresh_status()
+        self.log_panel.log(f"Opened MIB DataCube: {file_path}")
 
     def save_project(self) -> None:
         output_dir = self.project_coordinator.save_project(
@@ -1036,6 +1146,20 @@ class MainWindow(QMainWindow):
             self.log_panel.log(f"Failed to inspect node: {exc}")
 
     def _preview_selected_node(self) -> None:
+        if self.current_file is None and self.current_4d_source == "py4dstem":
+            try:
+                self._display_4d_slice(self.rx_spin.value(), self.ry_spin.value())
+                self.session.mark_preview_rendered(
+                    f"Rendered DataCube diffraction slice [{self.rx_spin.value()}, {self.ry_spin.value()}]"
+                )
+                self._refresh_tree_data_info()
+                self.log_panel.log(f"{self.preview_status}: {self.current_dataset_path}")
+            except Exception as exc:
+                self.session.mark_preview_failed(f"Preview failed: {exc}")
+                self._refresh_tree_data_info()
+                self.log_panel.log(self.preview_status)
+                QMessageBox.warning(self, "Preview error", str(exc))
+            return
         if self.current_file is None or self.selected_hdf5_path is None:
             return
         try:
@@ -1452,7 +1576,7 @@ class MainWindow(QMainWindow):
     def _assign_current_role(self, role: str) -> None:
         selected_path = self._current_tree_selection_path()
         if selected_path is None:
-            QMessageBox.information(self, "Dataset Roles", "Select a node in the HDF5 tree first.")
+            QMessageBox.information(self, "Dataset Roles", "Select or open a data source first.")
             return
         self.selected_hdf5_path = selected_path
         self._assign_role_path(role, selected_path)
@@ -1514,7 +1638,7 @@ class MainWindow(QMainWindow):
         )
 
     def _set_preview_empty(self, message: str | None = None) -> None:
-        base = message or "No DataCube loaded. Open an HDF5 file and select a 4D-STEM dataset."
+        base = message or "No DataCube loaded. Open a 4D-STEM data file and select a dataset."
         self.scan_viewer.clear("Mean real-space image / virtual bright field preview")
         self.diffraction_viewer.clear(base)
 

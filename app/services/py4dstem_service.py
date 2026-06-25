@@ -26,6 +26,14 @@ class DataCubeInfo:
 
 
 @dataclass(frozen=True)
+class DirectDataCubeImportOptions:
+    scan_shape: tuple[int, int] = (512, 512)
+    mem_mode: str = "MEMMAP"
+    chunk_size: int = 32
+    roi_tuning_mode: bool = True
+
+
+@dataclass(frozen=True)
 class ProbeGeometry:
     radius: float
     center_x: float
@@ -33,6 +41,8 @@ class ProbeGeometry:
 
 
 class Py4DSTEMService:
+    DIRECT_DATACUBE_SUFFIXES = {".mib"}
+
     def __init__(self) -> None:
         self.file_path: Path | None = None
         self.root: Any | None = None
@@ -80,6 +90,90 @@ class Py4DSTEMService:
         self.datacube = None
         self.datacube_info = None
         self.probe_geometry = None
+
+    def can_open_direct_datacube(self, file_path: str | Path) -> bool:
+        return Path(file_path).suffix.lower() in self.DIRECT_DATACUBE_SUFFIXES
+
+    def load_file_datacube(
+        self,
+        file_path: str | Path,
+        import_options: DirectDataCubeImportOptions | None = None,
+    ) -> DataCubeInfo:
+        self.close()
+        py4DSTEM = self._py4dstem()
+        path = Path(file_path)
+        if not path.exists():
+            raise Py4DSTEMServiceError(f"File does not exist: {path}")
+        if not self.can_open_direct_datacube(path):
+            raise Py4DSTEMServiceError(f"Unsupported direct DataCube file: {path.suffix}")
+
+        try:
+            obj = self._read_direct_datacube(
+                py4DSTEM,
+                path,
+                import_options or DirectDataCubeImportOptions(),
+            )
+        except (AttributeError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            self.close()
+            raise Py4DSTEMServiceError(
+                "py4DSTEM could not read this MIB file as a DataCube. "
+                "Check that the MIB metadata and scan shape are available, or convert it to HDF5/EMD."
+            ) from exc
+        except Exception as exc:
+            self.close()
+            logger.exception("Unexpected error reading direct DataCube file")
+            raise Py4DSTEMServiceError(
+                "py4DSTEM could not read this MIB file as a DataCube. "
+                "Check that the MIB metadata and scan shape are available, or convert it to HDF5/EMD."
+            ) from exc
+
+        shape = self.get_datacube_shape(obj)
+        info = DataCubeInfo(
+            name=str(getattr(obj, "name", "") or path.stem or "MIB DataCube"),
+            datapath=str(path),
+            shape=shape,
+            scan_shape=shape[:2],
+            diffraction_shape=shape[2:],
+        )
+        self.file_path = path
+        self.root = obj
+        self.datacube = obj
+        self.datacube_info = info
+        self.probe_geometry = None
+        return info
+
+    def _read_direct_datacube(
+        self,
+        py4DSTEM,
+        path: Path,
+        options: DirectDataCubeImportOptions,
+    ) -> Any:
+        # MIB (and other non-native) files must go through py4DSTEM.import_file;
+        # py4DSTEM.read only handles native HDF5/EMD formats and raises an
+        # AssertionError for anything else. Use mem="MEMMAP" so multi-GB MIB
+        # datasets are accessed via a numpy memory map instead of being copied
+        # entirely into RAM.
+        import_file = getattr(py4DSTEM, "import_file", None)
+        if not callable(import_file):
+            raise Py4DSTEMServiceError(
+                "This py4DSTEM version does not expose import_file, which is "
+                "required to read MIB files."
+            )
+        attempts = (
+            {"mem": options.mem_mode, "scan": options.scan_shape},
+            {"mem": options.mem_mode},
+            {"scan": options.scan_shape},
+            {},
+        )
+        last_error: TypeError | None = None
+        for kwargs in attempts:
+            try:
+                return import_file(str(path), **kwargs)
+            except TypeError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise Py4DSTEMServiceError("py4DSTEM.import_file did not return a DataCube.")
 
     def load_datacube(self, datapath: str) -> DataCubeInfo:
         if self.file_path is None:
@@ -319,6 +413,6 @@ class Py4DSTEMService:
         except ImportError as exc:
             raise Py4DSTEMServiceError(
                 "py4DSTEM could not be imported in this environment. "
-                "The HDF5 file is open, but py4DSTEM-specific loading is unavailable. "
-                "Raw HDF5 browsing is still available."
+                "py4DSTEM-specific loading is unavailable. "
+                "Raw HDF5 browsing remains available for HDF5/EMD files."
             ) from exc

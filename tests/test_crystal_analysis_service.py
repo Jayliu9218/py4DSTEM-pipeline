@@ -1,0 +1,144 @@
+import types
+import unittest
+
+import numpy as np
+
+from app.controllers.route_coordinator import build_route_modules
+from app.services.crystal_analysis_service import CrystalAnalysisService
+from app.services.phase_mapping_service import PhaseMatchParams, PhasePlanParams
+from app.services.workflow_state import WorkflowState, WorkflowStep
+
+
+class _OrientationMap:
+    def __init__(self, corr):
+        self.corr = np.asarray(corr, dtype=float)
+
+
+class _Crystal:
+    def __init__(self, name, corr, strain=None):
+        self.name = name
+        self._corr = corr
+        self._strain = strain
+        self.structure_factors_called = False
+        self.orientation_plan_called = False
+
+    def setup_diffraction(self, **_kwargs):
+        pass
+
+    def calculate_structure_factors(self, **_kwargs):
+        self.structure_factors_called = True
+        return {"ok": True}
+
+    def orientation_plan(self, **_kwargs):
+        self.orientation_plan_called = True
+
+    def match_orientations(self, _braggvectors, **_kwargs):
+        return _OrientationMap(self._corr)
+
+    def plot_orientation_maps(self, **_kwargs):
+        import matplotlib.pyplot as plt
+
+        rgb = np.zeros((2, 2, 3, 1), dtype=float)
+        rgb[..., 0, 0] = 0.25 if self.name.endswith("fcc") else 0.8
+        return rgb, plt.figure(), None
+
+    def calculate_strain(self, *_args, **_kwargs):
+        if self._strain is None:
+            raise AttributeError("strain unavailable")
+        return self._strain
+
+
+class _CrystalNoStrain(_Crystal):
+    calculate_strain = None
+
+
+class _BraggVectors:
+    shape = (2, 2)
+    calstate = {"center": True, "ellipse": True, "pixel": True, "rotate": True}
+
+
+class CrystalAnalysisServiceTests(unittest.TestCase):
+    def _add(self, service, crystal):
+        service.context.crystals.append(
+            types.SimpleNamespace(
+                name=crystal.name,
+                crystal=crystal,
+                source=f"CIF: {crystal.name}.cif",
+                enabled=True,
+            )
+        )
+
+    def test_crystal_analysis_route_uses_full_stage_order(self):
+        modules = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
+        self.assertEqual(
+            [module.key for module in modules],
+            [
+                "data_setup",
+                "virtual_imaging",
+                "bragg_detection",
+                "calibration",
+                "cif_manager",
+                "structure_factors",
+                "simulated_diffraction",
+                "phase_matching",
+                "orientation_matching",
+                "grain_analysis",
+                "strain_analysis",
+                "crystalline_results",
+                "export",
+            ],
+        )
+
+    def test_roi_mode_is_centered_and_does_not_resize_source(self):
+        service = CrystalAnalysisService()
+        self.assertEqual(service.analysis_roi((512, 512)), (192, 320, 192, 320))
+        service.set_run_config(types.SimpleNamespace(mode="Full Dataset", roi_size=128))
+        self.assertIsNone(service.analysis_roi((512, 512)))
+
+    def test_dual_phase_match_selects_best_phase_and_confidence_gap(self):
+        service = CrystalAnalysisService()
+        self._add(service, _Crystal("Ti-fcc", [[0.9, 0.2], [0.7, 0.1]]))
+        self._add(service, _Crystal("Ti-hcp", [[0.4, 0.8], [0.3, 0.6]]))
+        service.calculate_structure_factors(PhasePlanParams())
+        service.build_orientation_libraries(PhasePlanParams())
+
+        result = service.match_phases(_BraggVectors(), PhaseMatchParams(low_confidence_threshold=0.25))
+
+        np.testing.assert_array_equal(result.phase_id_map, np.array([[0, 1], [0, 1]]))
+        np.testing.assert_allclose(result.confidence_map, np.array([[0.5, 0.6], [0.4, 0.5]]))
+        self.assertIn("Composite Phase + Orientation", result.images)
+
+    def test_low_confidence_mask_and_single_phase_orientation_summary(self):
+        service = CrystalAnalysisService()
+        self._add(service, _Crystal("Ti-hcp", [[0.55, 0.55], [0.55, 0.55]]))
+        service.build_orientation_libraries(PhasePlanParams())
+
+        result = service.match_phases(_BraggVectors(), PhaseMatchParams(low_confidence_threshold=0.75))
+
+        self.assertTrue(np.all(result.phase_id_map == 0))
+        self.assertFalse(np.any(result.images["Low Confidence Mask"]))
+        self.assertIn("Phase discrimination requires at least two enabled crystals.", result.warnings)
+        self.assertIn("Composite Phase + Orientation", service.orientation_summary().images)
+
+    def test_optional_strain_warns_when_api_missing_and_masks_when_available(self):
+        service = CrystalAnalysisService()
+        self._add(service, _Crystal("Ti-fcc", [[0.9, 0.2], [0.9, 0.2]], strain=np.ones((2, 2))))
+        self._add(service, _CrystalNoStrain("Ti-hcp", [[0.1, 0.8], [0.1, 0.8]]))
+        service.build_orientation_libraries(PhasePlanParams())
+        service.match_phases(_BraggVectors(), PhaseMatchParams())
+
+        result = service.run_strain_analysis(_BraggVectors())
+
+        self.assertIn("Ti-fcc Strain", result.images)
+        self.assertTrue(np.isnan(result.images["Ti-fcc Strain"][0, 1]))
+        self.assertIn("Ti-hcp: strain calculation is unavailable", " ".join(result.warnings))
+
+    def test_crystal_state_stales_after_calibration_update(self):
+        state = WorkflowState()
+        state.mark_completed(WorkflowStep.CRYSTAL_PHASE)
+        state.parameters_updated(WorkflowStep.CALIBRATION_APPLY)
+        self.assertTrue(state.is_stale(WorkflowStep.CRYSTAL_PHASE))
+
+
+if __name__ == "__main__":
+    unittest.main()

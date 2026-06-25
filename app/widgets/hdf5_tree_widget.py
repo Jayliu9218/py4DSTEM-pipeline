@@ -20,6 +20,7 @@ class Hdf5TreeWidget(QTreeWidget):
     def populate(self, hdf5_file: h5py.File) -> None:
         self.clear()
         self._hdf5_file = hdf5_file
+        self.setHeaderLabels(["HDF5 tree"])
         root_item = QTreeWidgetItem(["/"])
         root_item.setToolTip(0, "/")
         root_item.setData(0, 256, "/")
@@ -29,6 +30,24 @@ class Hdf5TreeWidget(QTreeWidget):
         self._add_children(root_item, hdf5_file, "/")
         root_item.setData(0, 258, True)
         root_item.setExpanded(True)
+        spacer = QTreeWidgetItem([""])
+        spacer.setFlags(Qt.NoItemFlags)
+        spacer.setSizeHint(0, QSize(0, 12))
+        self.addTopLevelItem(spacer)
+        self.info_root_item = QTreeWidgetItem(["Data info"])
+        self.info_root_item.setToolTip(0, "Data info")
+        self.addTopLevelItem(self.info_root_item)
+        self.set_data_info()
+
+    def populate_direct_source(self, label: str, source_path: str) -> None:
+        self.clear()
+        self._hdf5_file = None
+        self.setHeaderLabels(["Data source"])
+        source_item = QTreeWidgetItem([label])
+        source_item.setToolTip(0, source_path)
+        source_item.setData(0, 256, source_path)
+        source_item.setData(0, 257, "file")
+        self.addTopLevelItem(source_item)
         spacer = QTreeWidgetItem([""])
         spacer.setFlags(Qt.NoItemFlags)
         spacer.setSizeHint(0, QSize(0, 12))

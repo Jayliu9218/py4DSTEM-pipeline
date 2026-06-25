@@ -10,11 +10,16 @@ from app.services.array_reduction import scan_sum
 
 
 class Hdf5Service:
+    HDF5_SUFFIXES = {".h5", ".hdf5", ".emd"}
+
+    def is_hdf5_like(self, file_path: str | Path) -> bool:
+        return Path(file_path).suffix.lower() in self.HDF5_SUFFIXES
+
     def open_file(self, file_path: str | Path) -> h5py.File:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"File does not exist: {path}")
-        if path.suffix.lower() not in {".h5", ".hdf5", ".emd"}:
+        if not self.is_hdf5_like(path):
             raise ValueError("Please choose a .h5, .hdf5, or .emd file.")
         return h5py.File(path, "r")
 

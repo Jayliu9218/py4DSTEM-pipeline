@@ -23,6 +23,8 @@ from app.pages.virtual_detector_page import VirtualDetectorPage
 from app.services.parallax_service import ParallaxService
 from app.services.orientation_service import OrientationService
 from app.services.phase_contrast_service import PhaseContrastService
+from app.services.crystal_analysis_service import CrystalAnalysisService
+from app.services.phase_mapping_service import PhaseMappingService
 from app.services.ptychography_service import PtychographyService
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace
 
@@ -55,7 +57,7 @@ class ApplicationPages:
         workflow_state,
         result_registry,
         phase_retrieval_results: dict[str, object],
-    ) -> tuple[dict[str, QWidget], PhaseContrastService, ParallaxService]:
+    ) -> tuple[dict[str, QWidget], PhaseContrastService, ParallaxService, PhaseMappingService]:
         common = {
             "log_panel": log_panel,
             "workflow_state": workflow_state,
@@ -191,13 +193,33 @@ class ApplicationPages:
             log_panel=log_panel,
             workflow_state=workflow_state,
         )
-        pages["structural_phase_page"] = StructuralPhasePage()
+        phase_mapping_service = CrystalAnalysisService()
+        phase_workspace = AdaptiveImageWorkspace()
+        for name, stage in (
+            ("crystal_cif_page", "library"),
+            ("crystal_structure_page", "structure"),
+            ("crystal_simulated_page", "simulated"),
+            ("crystal_phase_page", "match"),
+            ("crystal_orientation_page", "orientation"),
+            ("crystal_grain_page", "grain"),
+            ("crystal_strain_page", "strain"),
+        ):
+            pages[name] = StructuralPhasePage(
+                braggvectors_provider=providers["braggvectors"],
+                service=phase_mapping_service,
+                stage_mode=stage,
+                workspace=phase_workspace,
+                **common,
+            )
+        pages["structural_phase_library_page"] = pages["crystal_cif_page"]
+        pages["structural_phase_match_page"] = pages["crystal_phase_page"]
+        pages["structural_phase_page"] = pages["structural_phase_library_page"]
         pages["radial_profile_page"] = RadialProfilePage()
         pages["rdf_page"] = RDFPage()
         pages["fem_page"] = FEMPage()
         pages["amorphous_strain_page"] = AmorphousStrainPage()
         ApplicationPages._normalize_workspace_page_layouts(pages.values())
-        return pages, dpc_service, parallax_service
+        return pages, dpc_service, parallax_service, phase_mapping_service
 
     @staticmethod
     def _normalize_workspace_page_layouts(pages) -> None:
