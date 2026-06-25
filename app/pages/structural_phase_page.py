@@ -33,11 +33,13 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     STAGE_STEPS = {
         "library": WorkflowStep.STRUCTURAL_PHASE_PLAN,
+        "library_match": WorkflowStep.CRYSTAL_PHASE,
         "match": WorkflowStep.STRUCTURAL_PHASE_MATCH,
         "results": WorkflowStep.STRUCTURAL_PHASE,
         "structure": WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
         "simulated": WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
         "orientation": WorkflowStep.CRYSTAL_ORIENTATION,
+        "orientation_grain": WorkflowStep.CRYSTAL_ORIENTATION,
         "grain": WorkflowStep.CRYSTAL_GRAIN,
         "strain": WorkflowStep.CRYSTAL_STRAIN,
     }
@@ -130,9 +132,17 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.orientation_button.clicked.connect(
             lambda: self._start(
                 "Orientation Matching",
-                lambda: self._crystal_service().orientation_summary(),
+                lambda: self._crystal_service().orientation_summary(self._orientation_params()),
             )
         )
+        self.orientation_matches = self._int(1, 20, 2)
+        self.orientation_min_angle = self._float(0, 180, 5, 2)
+        self.orientation_min_peaks = self._int(1, 1000, 3)
+        self.orientation_low_confidence = self._float(-1000, 1000, 0.1, 4)
+        self.orientation_inversion = QCheckBox("Use inversion symmetry")
+        self.orientation_inversion.setChecked(True)
+        self.orientation_normalize = QCheckBox("Normalize correlation")
+        self.orientation_normalize.setChecked(True)
         self.grain_button = QPushButton("Run Grain Analysis")
         self.grain_button.clicked.connect(
             lambda: self._start(
@@ -144,9 +154,25 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.strain_button.clicked.connect(
             lambda: self._start(
                 "Crystal Strain Analysis",
-                lambda: self._crystal_service().run_strain_analysis(self.braggvectors_provider()),
+                lambda: self._crystal_service().run_strain_analysis(
+                    self.braggvectors_provider(), self._strain_params()
+                ),
             )
         )
+        self.strain_rotation = self._float(-360, 360, -21.5, 2)
+        self.strain_max_spacing = self._float(0.1, 1000, 3, 2)
+        self.strain_min_abs = self._float(0, 1e12, 1200, 2)
+        self.strain_min_rel = self._float(0, 1, 0, 4)
+        self.strain_min_spacing = self._float(0, 1000, 2, 2)
+        self.strain_edge = self._int(0, 10000, 1)
+        self.strain_max_peaks = self._int(1, 10000, 150)
+        self.strain_reference_mode = QComboBox()
+        self.strain_reference_mode.addItem("Global mean", "global_none")
+        self.strain_reference_mode.addItem("ROI-derived g1/g2", "roi_g1g2")
+        self.strain_roi_rx_start = self._int(0, 100000, 34)
+        self.strain_roi_rx_end = self._int(0, 100000, 42)
+        self.strain_roi_ry_start = self._int(0, 100000, 8)
+        self.strain_roi_ry_end = self._int(0, 100000, 16)
 
     def _build_layout(self) -> None:
         self.groups: dict[str, QGroupBox] = {}
@@ -177,13 +203,31 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("Min peaks", self.match_min_peaks), ("Low-confidence threshold", self.low_confidence),
             ("", self.match_inversion), ("", self.corr_normalize), ("", self.match_button),
         ])
-        self.groups["orientation"] = self._group("Orientation Matching", [
+        self.groups["orientation"] = self._group("Orientation Mapping Review", [
+            ("Candidates", self.orientation_matches),
+            ("Min candidate angle", self.orientation_min_angle),
+            ("Min peaks", self.orientation_min_peaks),
+            ("Low-confidence threshold", self.orientation_low_confidence),
+            ("", self.orientation_inversion),
+            ("", self.orientation_normalize),
             ("", self.orientation_button),
         ])
         self.groups["grain"] = self._group("Grain Analysis", [
             ("", self.grain_button),
         ])
-        self.groups["strain"] = self._group("Strain Analysis", [
+        self.groups["strain"] = self._group("Phase-Masked Strain Mapping", [
+            ("coordinate_rotation", self.strain_rotation),
+            ("max_peak_spacing", self.strain_max_spacing),
+            ("minAbsoluteIntensity", self.strain_min_abs),
+            ("minRelativeIntensity", self.strain_min_rel),
+            ("minSpacing", self.strain_min_spacing),
+            ("edgeBoundary", self.strain_edge),
+            ("maxNumPeaks", self.strain_max_peaks),
+            ("reference", self.strain_reference_mode),
+            ("reference ROI rx start", self.strain_roi_rx_start),
+            ("reference ROI rx end", self.strain_roi_rx_end),
+            ("reference ROI ry start", self.strain_roi_ry_start),
+            ("reference ROI ry end", self.strain_roi_ry_end),
             ("", self.strain_button),
         ])
         controls = QWidget()
@@ -200,10 +244,12 @@ class StructuralPhasePage(QWidget, WorkerRunner):
     def _configure_stage(self) -> None:
         visible = {
             "library": {"library", "plan"},
+            "library_match": {"library", "plan", "structure", "simulated", "match"},
             "structure": {"library", "structure"},
             "simulated": {"library", "simulated"},
             "match": {"match"},
             "orientation": {"orientation"},
+            "orientation_grain": {"orientation", "grain"},
             "grain": {"grain"},
             "strain": {"strain"},
             "results": {},
@@ -240,6 +286,8 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self.service.load_crystal(path)
             self._update_crystal_list()
             self.workflow_state.parameters_updated(WorkflowStep.STRUCTURAL_PHASE_PLAN)
+            if isinstance(self.service, CrystalAnalysisService):
+                self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_STRUCTURE_FACTORS)
             self._notify(f"Crystal loaded: {Path(path).name}. Create the multi-phase plan.", "success")
         except PhaseMappingServiceError as exc:
             self._failed(str(exc))
@@ -252,6 +300,8 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self.service.remove_crystal(row)
             self._update_crystal_list()
             self.workflow_state.parameters_updated(WorkflowStep.STRUCTURAL_PHASE_PLAN)
+            if isinstance(self.service, CrystalAnalysisService):
+                self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_STRUCTURE_FACTORS)
             self._notify("Crystal removed. Recreate the multi-phase plan.", "info")
         except PhaseMappingServiceError as exc:
             self._failed(str(exc))
@@ -287,10 +337,21 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             step = {
                 "structure": WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
                 "simulated": WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
+                "orientation_grain": WorkflowStep.CRYSTAL_ORIENTATION,
                 "orientation": WorkflowStep.CRYSTAL_ORIENTATION,
                 "grain": WorkflowStep.CRYSTAL_GRAIN,
                 "strain": WorkflowStep.CRYSTAL_STRAIN,
             }.get(self.stage_mode, WorkflowStep.STRUCTURAL_PHASE_PLAN)
+            if result.stage == "structure_factors":
+                step = WorkflowStep.CRYSTAL_STRUCTURE_FACTORS
+            elif result.stage == "simulated_diffraction":
+                step = WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION
+            elif result.stage == "orientation_matching":
+                step = WorkflowStep.CRYSTAL_ORIENTATION
+            elif result.stage == "grain_analysis":
+                step = WorkflowStep.CRYSTAL_GRAIN
+            elif result.stage == "strain_analysis":
+                step = WorkflowStep.CRYSTAL_STRAIN
             self.workflow_state.mark_completed(step)
             self._register_stage_results(result)
             self.refresh_stage()
@@ -373,9 +434,37 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self.corr_normalize.isChecked(), self.low_confidence.value(),
         )
 
+    def _orientation_params(self) -> PhaseMatchParams:
+        return PhaseMatchParams(
+            int(self.orientation_matches.value()),
+            self.orientation_min_angle.value(),
+            int(self.orientation_min_peaks.value()),
+            self.orientation_inversion.isChecked(),
+            self.orientation_normalize.isChecked(),
+            self.orientation_low_confidence.value(),
+        )
+
+    def _strain_params(self) -> dict[str, object]:
+        return {
+            "coordinate_rotation": self.strain_rotation.value(),
+            "max_peak_spacing": self.strain_max_spacing.value(),
+            "min_absolute_intensity": self.strain_min_abs.value(),
+            "min_relative_intensity": self.strain_min_rel.value(),
+            "min_spacing": self.strain_min_spacing.value(),
+            "edge_boundary": int(self.strain_edge.value()),
+            "max_num_peaks": int(self.strain_max_peaks.value()),
+            "reference_mode": str(self.strain_reference_mode.currentData()),
+            "roi_rx_start": int(self.strain_roi_rx_start.value()),
+            "roi_rx_end": int(self.strain_roi_rx_end.value()),
+            "roi_ry_start": int(self.strain_roi_ry_start.value()),
+            "roi_ry_end": int(self.strain_roi_ry_end.value()),
+        }
+
     def params_snapshot(self) -> dict[str, object]:
         plan = self._plan_params()
         match = self._match_params()
+        orientation = self._orientation_params()
+        strain = self._strain_params()
         return {
             "mode": plan.mode, "accelerating_voltage": plan.accelerating_voltage, "k_max": plan.k_max,
             "analysis_mode": self.run_mode.currentText(),
@@ -392,9 +481,89 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             "inversion_symmetry": match.inversion_symmetry,
             "corr_normalize": match.corr_normalize,
             "low_confidence_threshold": match.low_confidence_threshold,
+            "orientation_matches": orientation.num_matches_return,
+            "orientation_min_angle_between_matches_deg": orientation.min_angle_between_matches_deg,
+            "orientation_min_number_peaks": orientation.min_number_peaks,
+            "orientation_inversion_symmetry": orientation.inversion_symmetry,
+            "orientation_corr_normalize": orientation.corr_normalize,
+            "orientation_low_confidence_threshold": orientation.low_confidence_threshold,
+            **{f"strain_{key}": value for key, value in strain.items()},
             "cuda": plan.cuda,
             "crystal_count": len(self.service.crystals),
         }
+
+    def apply_params_snapshot(self, params: dict[str, object]) -> None:
+        combo_keys = [
+            ("analysis_mode", self.run_mode),
+            ("mode", self.mode),
+        ]
+        for key, combo in combo_keys:
+            if key in params:
+                combo.setCurrentText(str(params[key]))
+
+        numeric_keys = [
+            ("roi_size", self.roi_size),
+            ("accelerating_voltage", self.voltage),
+            ("k_max", self.k_max),
+            ("angle_step_zone_axis", self.zone_step),
+            ("angle_step_in_plane", self.plane_step),
+            ("corr_kernel_size", self.corr_kernel_size),
+            ("sigma_excitation_error", self.sigma),
+            ("symmetry_order", self.symmetry_order),
+            ("match_candidates", self.match_matches),
+            ("min_angle_between_matches_deg", self.match_min_angle),
+            ("min_number_peaks", self.match_min_peaks),
+            ("low_confidence_threshold", self.low_confidence),
+            ("orientation_matches", self.orientation_matches),
+            ("orientation_min_angle_between_matches_deg", self.orientation_min_angle),
+            ("orientation_min_number_peaks", self.orientation_min_peaks),
+            ("orientation_low_confidence_threshold", self.orientation_low_confidence),
+            ("strain_coordinate_rotation", self.strain_rotation),
+            ("strain_max_peak_spacing", self.strain_max_spacing),
+            ("strain_min_absolute_intensity", self.strain_min_abs),
+            ("strain_min_relative_intensity", self.strain_min_rel),
+            ("strain_min_spacing", self.strain_min_spacing),
+            ("strain_edge_boundary", self.strain_edge),
+            ("strain_max_num_peaks", self.strain_max_peaks),
+            ("strain_roi_rx_start", self.strain_roi_rx_start),
+            ("strain_roi_rx_end", self.strain_roi_rx_end),
+            ("strain_roi_ry_start", self.strain_roi_ry_start),
+            ("strain_roi_ry_end", self.strain_roi_ry_end),
+        ]
+        for key, control in numeric_keys:
+            if key in params:
+                control.setValue(float(params[key]))
+
+        vector_keys = [
+            ("fiber_axis", (self.fiber_x, self.fiber_y, self.fiber_z)),
+            ("fiber_angles", (self.fiber_start, self.fiber_end)),
+        ]
+        for key, controls in vector_keys:
+            values = params.get(key)
+            if isinstance(values, (list, tuple)):
+                for control, value in zip(controls, values):
+                    control.setValue(float(value))
+
+        checkbox_keys = [
+            ("inversion_symmetry", self.match_inversion),
+            ("corr_normalize", self.corr_normalize),
+            ("orientation_inversion_symmetry", self.orientation_inversion),
+            ("orientation_corr_normalize", self.orientation_normalize),
+        ]
+        for key, checkbox in checkbox_keys:
+            if key in params:
+                checkbox.setChecked(bool(params[key]))
+
+        reference_mode = params.get("strain_reference_mode")
+        if reference_mode is not None:
+            index = self.strain_reference_mode.findData(str(reference_mode))
+            if index >= 0:
+                self.strain_reference_mode.setCurrentIndex(index)
+            else:
+                self.strain_reference_mode.setCurrentText(str(reference_mode))
+
+        self._sync_run_config()
+        self.refresh_stage()
 
     def _watch_parameters(self) -> None:
         for widget in [self.mode]:
@@ -412,6 +581,32 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             widget.valueChanged.connect(lambda _v: self._invalidate_result())
         self.match_inversion.toggled.connect(lambda _v: self._invalidate_result())
         self.corr_normalize.toggled.connect(lambda _v: self._invalidate_result())
+        for widget in [
+            self.orientation_matches,
+            self.orientation_min_angle,
+            self.orientation_min_peaks,
+            self.orientation_low_confidence,
+        ]:
+            self.workflow_state.watch(widget, WorkflowStep.CRYSTAL_ORIENTATION, "valueChanged")
+            widget.valueChanged.connect(lambda _v: self._invalidate_orientation())
+        self.orientation_inversion.toggled.connect(lambda _v: self._invalidate_orientation())
+        self.orientation_normalize.toggled.connect(lambda _v: self._invalidate_orientation())
+        for widget in [
+            self.strain_rotation,
+            self.strain_max_spacing,
+            self.strain_min_abs,
+            self.strain_min_rel,
+            self.strain_min_spacing,
+            self.strain_edge,
+            self.strain_max_peaks,
+            self.strain_roi_rx_start,
+            self.strain_roi_rx_end,
+            self.strain_roi_ry_start,
+            self.strain_roi_ry_end,
+        ]:
+            self.workflow_state.watch(widget, WorkflowStep.CRYSTAL_STRAIN, "valueChanged")
+            widget.valueChanged.connect(lambda _v: self._invalidate_strain())
+        self.strain_reference_mode.currentTextChanged.connect(lambda _v: self._invalidate_strain())
         self.crystal_list.itemChanged.connect(self._crystal_check_changed)
 
     def _crystal_check_changed(self, item: QListWidgetItem) -> None:
@@ -422,12 +617,30 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def _invalidate_plan(self) -> None:
         self.service.invalidate_plan()
+        self.workflow_state.parameters_updated(WorkflowStep.STRUCTURAL_PHASE_PLAN)
+        if isinstance(self.service, CrystalAnalysisService):
+            self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_STRUCTURE_FACTORS)
         self._notify("Plan parameters changed; recreate the multi-phase plan.", "warning")
         self.refresh_stage()
 
     def _invalidate_result(self) -> None:
         self.service.invalidate_result()
+        self.workflow_state.parameters_updated(WorkflowStep.STRUCTURAL_PHASE_MATCH)
+        if isinstance(self.service, CrystalAnalysisService):
+            self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_PHASE)
         self._notify("Match parameters changed; run phase matching again.", "warning")
+        self.refresh_stage()
+
+    def _invalidate_orientation(self) -> None:
+        self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_ORIENTATION)
+        self._notify("Orientation review parameters changed; rerun orientation review.", "warning")
+        self.refresh_stage()
+
+    def _invalidate_strain(self) -> None:
+        if isinstance(self.service, CrystalAnalysisService):
+            self.service.strain_result = None
+        self.workflow_state.parameters_updated(WorkflowStep.CRYSTAL_STRAIN)
+        self._notify("Strain parameters changed; rerun phase-masked strain analysis.", "warning")
         self.refresh_stage()
 
     def _refresh_stale_status(self) -> None:

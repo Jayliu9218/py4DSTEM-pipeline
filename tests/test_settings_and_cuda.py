@@ -112,7 +112,7 @@ class SettingsAndCudaTests(unittest.TestCase):
         self.assertIn("accepted QC remains valid", window.TUTORIAL_HTML)
         self.assertIn("cancellable background tasks", window.TUTORIAL_HTML)
         for workflow in (
-            "Crystal Analysis", "Orientation Mapping", "Strain Mapping", "Structural Phase Mapping",
+            "Crystal Analysis",
             "DPC / CoM", "Parallax", "Ptychography", "Method Comparison",
             "RDF", "FEM", "Amorphous Strain",
         ):

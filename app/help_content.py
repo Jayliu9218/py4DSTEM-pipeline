@@ -40,27 +40,17 @@ py4DSTEM:
 TUTORIAL_HTML = """
 <h2>Workflow Tutorial</h2>
 <p>Start by opening an HDF5/EMD or MIB file, assigning the Target DataCube and any
-optional reference roles, then choose a structure type and analysis goal.</p>
+optional reference roles, then choose a structure type and analysis workflow.</p>
 <h3>Shared Data Setup</h3>
 <p>Select a DataCube and click <b>Show Data</b> to activate and assign it as
 the Target DataCube. Tree selection remains lazy; <b>Preview Selected</b>
 displays only the selected slice or scan position. Review preprocessing and
 apply corrections explicitly before downstream analysis.</p>
 <h3>Crystalline / Bragg-based</h3>
-<p><b>Crystal Analysis:</b> the recommended Bragg-based route for crystalline
-materials. Open MIB with MEMMAP and scan shape, tune on an ROI, then run
-Virtual Imaging, Bragg Analysis, Calibration, CIF Manager, Structure Factors,
-Simulated Diffraction, Phase Matching, Orientation Matching, optional Grain
-Analysis, optional Strain Analysis, and Results / Export.</p>
-<p><b>Orientation Mapping:</b> detect Bragg peaks, calibrate reciprocal space,
-load a crystal structure, create an orientation plan, and match orientations.
-This legacy shortcut remains available, but Crystal Analysis is preferred for
-multi-phase samples.</p>
-<p><b>Strain Mapping:</b> generate virtual images, prepare a probe kernel,
-calculate BraggVectors, apply calibration, select a reference, and calculate
-strain and quality maps.</p>
-<p><b>Structural Phase Mapping:</b> legacy shortcut into the same CIF and
-phase-matching context used by Crystal Analysis.</p>
+<p><b>Crystal Analysis:</b> the unified Bragg-based route for crystalline
+materials. Open MIB with MEMMAP and scan shape, tune on an ROI, then continue
+through Data / Preprocess / Virtual Image, Probe & Bragg, Calibration, Crystal
+Setup & Phase Matching, Orientation & Grain, Strain & Results, and Export.</p>
 <h3>Phase Retrieval / Ptychography</h3>
 <p><b>DPC / CoM:</b> preview BF/DF contrast, inspect segmented DPC, preprocess
 and accept CoM fields, then run integrated reconstruction.</p>

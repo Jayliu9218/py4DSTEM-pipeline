@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from inspect import Parameter, signature
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+
+from app.services.array_reduction import scan_sum_with_progress
 
 logger = logging.getLogger(__name__)
 
@@ -159,21 +162,36 @@ class Py4DSTEMService:
                 "This py4DSTEM version does not expose import_file, which is "
                 "required to read MIB files."
             )
-        attempts = (
-            {"mem": options.mem_mode, "scan": options.scan_shape},
-            {"mem": options.mem_mode},
-            {"scan": options.scan_shape},
-            {},
-        )
-        last_error: TypeError | None = None
-        for kwargs in attempts:
-            try:
-                return import_file(str(path), **kwargs)
-            except TypeError as exc:
-                last_error = exc
-        if last_error is not None:
-            raise last_error
-        raise Py4DSTEMServiceError("py4DSTEM.import_file did not return a DataCube.")
+        try:
+            return import_file(str(path), **self._direct_import_kwargs(import_file, options))
+        except TypeError:
+            logger.debug("Retrying MIB import without optional keyword arguments.", exc_info=True)
+            return import_file(str(path))
+
+    @staticmethod
+    def _direct_import_kwargs(import_file: Any, options: DirectDataCubeImportOptions) -> dict[str, object]:
+        try:
+            parameters = signature(import_file).parameters
+        except (TypeError, ValueError):
+            return {"mem": options.mem_mode, "scan": options.scan_shape}
+        accepts_kwargs = any(param.kind == Parameter.VAR_KEYWORD for param in parameters.values())
+        if accepts_kwargs:
+            return {"mem": options.mem_mode, "scan": options.scan_shape}
+
+        kwargs: dict[str, object] = {}
+        if "mem" in parameters:
+            kwargs["mem"] = options.mem_mode
+        elif "memory" in parameters:
+            kwargs["memory"] = options.mem_mode
+        if "scan" in parameters:
+            kwargs["scan"] = options.scan_shape
+        elif "scan_shape" in parameters:
+            kwargs["scan_shape"] = options.scan_shape
+        if "chunk_size" in parameters:
+            kwargs["chunk_size"] = options.chunk_size
+        elif "chunksize" in parameters:
+            kwargs["chunksize"] = options.chunk_size
+        return kwargs
 
     def load_datacube(self, datapath: str) -> DataCubeInfo:
         if self.file_path is None:
@@ -343,8 +361,7 @@ class Py4DSTEMService:
             return np.asarray(getattr(virtual_image, "data", virtual_image))
         except (AttributeError, TypeError, ValueError, RuntimeError):
             logger.debug("get_virtual_image failed, falling back to raw sum", exc_info=True)
-            data = np.asarray(self.datacube.data)
-            return data.sum(axis=(2, 3))
+            return scan_sum_with_progress(self.datacube.data)
 
     def get_diffraction_pattern(self, rx: int, ry: int) -> np.ndarray:
         if self.datacube is None:

@@ -310,4 +310,5 @@ class ProjectToolbar(QWidget):
         self.goal.addItems(goals)
         if current in goals:
             self.goal.setCurrentText(current)
+        self.goal.setEnabled(len(goals) > 1)
         self.goal.blockSignals(False)

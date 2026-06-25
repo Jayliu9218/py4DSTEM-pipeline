@@ -109,10 +109,10 @@ class PhaseMappingServiceTests(unittest.TestCase):
         self.assertIn("at least two enabled crystals", " ".join(result.warnings))
 
     def test_route_and_state_wiring_for_structural_phase(self):
-        modules = build_route_modules("Crystalline / Bragg-based", "Structural Phase Mapping")
+        modules = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
         keys = [module.key for module in modules]
-        self.assertIn("phase_library", keys)
-        self.assertIn("phase_matching", keys)
+        self.assertIn("phase_setup", keys)
+        self.assertIn("orientation_matching", keys)
         state = WorkflowState()
         state.mark_completed(WorkflowStep.STRUCTURAL_PHASE_PLAN)
         state.parameters_updated(WorkflowStep.CALIBRATION_APPLY)

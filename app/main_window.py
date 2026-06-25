@@ -225,6 +225,7 @@ class MainWindow(QMainWindow):
                 "calibration": self.calibration_page.controls_panel,
                 "orientation_setup": self.orientation_setup_page.controls_panel,
                 "crystalline_results": self.crystalline_results_page.controls_panel,
+                "phase_setup": self.crystal_cif_page.controls_panel,
                 "cif_manager": self.crystal_cif_page.controls_panel,
                 "structure_factors": self.crystal_structure_page.controls_panel,
                 "simulated_diffraction": self.crystal_simulated_page.controls_panel,
@@ -254,9 +255,6 @@ class MainWindow(QMainWindow):
             },
             crystal_controls={
                 "Crystal Analysis": self.crystal_cif_page.controls_panel,
-                "Strain Mapping": self.strain_map_page.controls_panel,
-                "Orientation Mapping": self.orientation_page.controls_panel,
-                "Structural Phase Mapping": self.structural_phase_library_page.controls_panel,
             },
             amorphous_controls={
                 "Amorphous Strain": self.amorphous_strain_page.controls_panel,
@@ -628,6 +626,13 @@ class MainWindow(QMainWindow):
             "orientation": self.orientation_setup_page,
             "crystalline_results": self.crystalline_results_page,
             "strain": self.strain_map_page,
+            "crystal_cif": self.crystal_cif_page,
+            "crystal_structure": self.crystal_structure_page,
+            "crystal_simulated": self.crystal_simulated_page,
+            "crystal_phase": self.crystal_phase_page,
+            "crystal_orientation": self.crystal_orientation_page,
+            "crystal_grain": self.crystal_grain_page,
+            "crystal_strain": self.crystal_strain_page,
             "structural_phase": self.structural_phase_page,
             "structural_phase_match": self.structural_phase_match_page,
             "phase_contrast": self.phase_contrast_page,
@@ -892,6 +897,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.preprocessing_page.controls_panel)
         layout.addStretch(1)
         layout.addWidget(roles_group)
+        layout.addStretch(1)
+        layout.addWidget(self.virtual_detector_page.controls_panel)
         layout.addStretch(1)
         return panel
 

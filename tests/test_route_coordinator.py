@@ -21,8 +21,7 @@ class RouteDefinitionTests(unittest.TestCase):
         dpc = build_route_modules("Phase Retrieval / Ptychography", "DPC / CoM")
         parallax = build_route_modules("Phase Retrieval / Ptychography", "Parallax")
         ptychography = build_route_modules("Phase Retrieval / Ptychography", "Ptychography")
-        orientation = build_route_modules("Crystalline / Bragg-based", "Orientation Mapping")
-        strain = build_route_modules("Crystalline / Bragg-based", "Strain Mapping")
+        crystal = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
 
         self.assertEqual(
             [module.key for module in dpc],
@@ -48,14 +47,9 @@ class RouteDefinitionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [module.key for module in orientation],
-            ["data_setup", "virtual_imaging", "bragg_detection", "calibration",
-             "orientation_setup", "crystalline_results", "export"],
-        )
-        self.assertEqual(
-            [module.key for module in strain],
-            ["data_setup", "virtual_imaging", "bragg_detection", "calibration",
-             "crystal_analysis", "crystalline_results", "export"],
+            [module.key for module in crystal],
+            ["data_setup", "bragg_detection", "calibration", "phase_setup",
+             "orientation_matching", "strain_analysis", "export"],
         )
 
 if __name__ == "__main__":

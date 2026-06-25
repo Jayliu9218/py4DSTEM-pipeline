@@ -18,6 +18,27 @@ from app.services.py4dstem_service import (
 from app.widgets.adaptive_image_workspace import FigureResult
 
 
+class RecordingDataset:
+    def __init__(self, data: np.ndarray) -> None:
+        self.data = data
+        self.shape = data.shape
+        self.dtype = data.dtype
+        self.selections: list[object] = []
+
+    def __getitem__(self, selection):
+        self.selections.append(selection)
+        return self.data[selection]
+
+
+class FallbackScanDataCube:
+    def __init__(self, data: RecordingDataset) -> None:
+        self.data = data
+        self.shape = data.shape
+
+    def get_virtual_image(self, *_args, **_kwargs):
+        raise AttributeError("native virtual image unavailable")
+
+
 class FileOpenAndRolesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -234,6 +255,22 @@ class FileOpenAndRolesTests(unittest.TestCase):
         finally:
             self.window._close_current_file()
             path.unlink(missing_ok=True)
+
+    def test_direct_datacube_scan_image_fallback_uses_bounded_blocks(self) -> None:
+        data = np.arange(5 * 4 * 3 * 6, dtype=np.float32).reshape(5, 4, 3, 6)
+        source = RecordingDataset(data)
+        service = Py4DSTEMService()
+        service.datacube = FallbackScanDataCube(source)
+
+        scan_image = service.get_scan_image()
+
+        np.testing.assert_allclose(scan_image, data.sum(axis=(2, 3)))
+        self.assertTrue(source.selections)
+        for selection in source.selections:
+            self.assertIsInstance(selection, tuple)
+            first_axis = selection[0]
+            self.assertIsInstance(first_axis, slice)
+            self.assertLess(first_axis.stop - first_axis.start, data.shape[0])
 
     def test_two_dimensional_selection_renders_only_after_preview(self) -> None:
         path = self.path.parent / "diffraction_slice.h5"

@@ -196,12 +196,8 @@ class ApplicationPages:
         phase_mapping_service = CrystalAnalysisService()
         phase_workspace = AdaptiveImageWorkspace()
         for name, stage in (
-            ("crystal_cif_page", "library"),
-            ("crystal_structure_page", "structure"),
-            ("crystal_simulated_page", "simulated"),
-            ("crystal_phase_page", "match"),
-            ("crystal_orientation_page", "orientation"),
-            ("crystal_grain_page", "grain"),
+            ("crystal_cif_page", "library_match"),
+            ("crystal_orientation_page", "orientation_grain"),
             ("crystal_strain_page", "strain"),
         ):
             pages[name] = StructuralPhasePage(
@@ -211,6 +207,10 @@ class ApplicationPages:
                 workspace=phase_workspace,
                 **common,
             )
+        pages["crystal_structure_page"] = pages["crystal_cif_page"]
+        pages["crystal_simulated_page"] = pages["crystal_cif_page"]
+        pages["crystal_phase_page"] = pages["crystal_cif_page"]
+        pages["crystal_grain_page"] = pages["crystal_orientation_page"]
         pages["structural_phase_library_page"] = pages["crystal_cif_page"]
         pages["structural_phase_match_page"] = pages["crystal_phase_page"]
         pages["structural_phase_page"] = pages["structural_phase_library_page"]

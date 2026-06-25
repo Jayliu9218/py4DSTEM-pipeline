@@ -114,7 +114,7 @@ class CrystalAnalysisService(PhaseMappingService):
             result.images["Composite Phase + Orientation"] = composite
         return result
 
-    def orientation_summary(self) -> CrystalAnalysisStageResult:
+    def orientation_summary(self, params: PhaseMatchParams | None = None) -> CrystalAnalysisStageResult:
         result = self.result
         if result is None:
             raise CrystalAnalysisServiceError("Run phase matching before orientation review.")
@@ -130,7 +130,18 @@ class CrystalAnalysisService(PhaseMappingService):
         return CrystalAnalysisStageResult(
             stage="orientation_matching",
             images={key: value for key, value in images.items() if value is not None},
-            metrics={"phases": ", ".join(result.phase_names)},
+            metrics={
+                "phases": ", ".join(result.phase_names),
+                **(
+                    {
+                        "candidates": params.num_matches_return,
+                        "min_angle": params.min_angle_between_matches_deg,
+                        "min_peaks": params.min_number_peaks,
+                    }
+                    if params is not None
+                    else {}
+                ),
+            },
             warnings=result.warnings,
         )
 
@@ -166,7 +177,11 @@ class CrystalAnalysisService(PhaseMappingService):
         )
         return self.grain_result
 
-    def run_strain_analysis(self, braggvectors: Any | None) -> CrystalAnalysisStageResult:
+    def run_strain_analysis(
+        self,
+        braggvectors: Any | None,
+        params: dict[str, object] | None = None,
+    ) -> CrystalAnalysisStageResult:
         if self.result is None:
             raise CrystalAnalysisServiceError("Run phase matching before strain analysis.")
         if braggvectors is None:
@@ -182,7 +197,12 @@ class CrystalAnalysisService(PhaseMappingService):
                 warnings.append(f"{entry.name}: strain calculation is unavailable in this py4DSTEM version.")
                 continue
             try:
-                strain_map = calculate(braggvectors, orientation_map, progress_bar=False)
+                kwargs = dict(params or {})
+                kwargs["progress_bar"] = False
+                try:
+                    strain_map = calculate(braggvectors, orientation_map, **kwargs)
+                except TypeError:
+                    strain_map = calculate(braggvectors, orientation_map, progress_bar=False)
                 array = self._coerce_strain_array(strain_map)
                 if array is not None:
                     images[f"{entry.name} Strain"] = self._phase_masked_array(

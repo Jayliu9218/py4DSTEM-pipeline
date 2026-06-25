@@ -82,20 +82,119 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
             [module.key for module in modules],
             [
                 "data_setup",
-                "virtual_imaging",
                 "bragg_detection",
                 "calibration",
-                "cif_manager",
-                "structure_factors",
-                "simulated_diffraction",
-                "phase_matching",
+                "phase_setup",
                 "orientation_matching",
-                "grain_analysis",
                 "strain_analysis",
-                "crystalline_results",
                 "export",
             ],
         )
+
+    def test_crystal_analysis_orientation_and_strain_pages_expose_parameters(self):
+        workflow_state = WorkflowState()
+        log_panel = LogPanel()
+        service = CrystalAnalysisService()
+        orientation_page = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=log_panel,
+            workflow_state=workflow_state,
+            service=service,
+            stage_mode="orientation_grain",
+        )
+        strain_page = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=log_panel,
+            workflow_state=workflow_state,
+            service=service,
+            stage_mode="strain",
+        )
+
+        try:
+            self.assertFalse(orientation_page.groups["orientation"].isHidden())
+            self.assertFalse(orientation_page.groups["grain"].isHidden())
+            self.assertIn("orientation_matches", orientation_page.params_snapshot())
+            self.assertFalse(strain_page.groups["strain"].isHidden())
+            snapshot = strain_page.params_snapshot()
+            self.assertIn("strain_coordinate_rotation", snapshot)
+            self.assertIn("strain_reference_mode", snapshot)
+        finally:
+            orientation_page.close()
+            strain_page.close()
+
+    def test_crystal_analysis_page_params_round_trip(self):
+        workflow_state = WorkflowState()
+        log_panel = LogPanel()
+        source = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=log_panel,
+            workflow_state=workflow_state,
+            service=CrystalAnalysisService(),
+            stage_mode="library_match",
+        )
+        restored = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=log_panel,
+            workflow_state=WorkflowState(),
+            service=CrystalAnalysisService(),
+            stage_mode="strain",
+        )
+
+        try:
+            source.run_mode.setCurrentText("Full Dataset")
+            source.roi_size.setValue(96)
+            source.orientation_matches.setValue(5)
+            source.orientation_min_angle.setValue(7.5)
+            source.orientation_inversion.setChecked(False)
+            source.strain_rotation.setValue(12.5)
+            source.strain_max_spacing.setValue(4.5)
+            source.strain_reference_mode.setCurrentText("ROI-derived g1/g2")
+            source.strain_roi_rx_start.setValue(3)
+            source.strain_roi_rx_end.setValue(9)
+
+            restored.apply_params_snapshot(source.params_snapshot())
+
+            self.assertEqual(restored.run_mode.currentText(), "Full Dataset")
+            self.assertEqual(restored.roi_size.value(), 96)
+            self.assertEqual(restored.orientation_matches.value(), 5)
+            self.assertEqual(restored.orientation_min_angle.value(), 7.5)
+            self.assertFalse(restored.orientation_inversion.isChecked())
+            self.assertEqual(restored.strain_rotation.value(), 12.5)
+            self.assertEqual(restored.strain_max_spacing.value(), 4.5)
+            self.assertEqual(restored.strain_reference_mode.currentText(), "ROI-derived g1/g2")
+            self.assertEqual(restored.strain_roi_rx_start.value(), 3)
+            self.assertEqual(restored.strain_roi_rx_end.value(), 9)
+        finally:
+            source.close()
+            restored.close()
+
+    def test_crystal_analysis_plan_changes_stale_crystal_downstream(self):
+        workflow_state = WorkflowState()
+        workflow_state.mark_completed_many({
+            WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
+            WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
+            WorkflowStep.CRYSTAL_PHASE,
+            WorkflowStep.CRYSTAL_ORIENTATION,
+            WorkflowStep.CRYSTAL_STRAIN,
+        })
+        page = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=LogPanel(),
+            workflow_state=workflow_state,
+            service=CrystalAnalysisService(),
+            stage_mode="library_match",
+        )
+
+        try:
+            page.k_max.setValue(2.0)
+            page._invalidate_plan()
+
+            self.assertTrue(workflow_state.is_stale(WorkflowStep.CRYSTAL_STRUCTURE_FACTORS))
+            self.assertTrue(workflow_state.is_stale(WorkflowStep.CRYSTAL_PHASE))
+            self.assertTrue(workflow_state.is_stale(WorkflowStep.CRYSTAL_ORIENTATION))
+            self.assertTrue(workflow_state.is_stale(WorkflowStep.CRYSTAL_STRAIN))
+        finally:
+            page.close()
 
     def test_roi_mode_is_centered_and_does_not_resize_source(self):
         service = CrystalAnalysisService()

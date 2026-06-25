@@ -43,7 +43,7 @@ class PipelineShellTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
-        self.window.project_toolbar.goal.setCurrentText("Strain Mapping")
+        self.window.project_toolbar.goal.setCurrentText("Crystal Analysis")
         self.window.current_route_key = "data_setup"
         self.window._refresh_pipeline_state()
 
@@ -52,12 +52,20 @@ class PipelineShellTests(unittest.TestCase):
 
         self.assertEqual(
             titles,
-            ["Data & Preprocess", "Virtual Imaging", "Probe & Bragg", "Calibration", "Strain Analysis", "Results & Quality", "Export"],
+            [
+                "Data, Preprocess & Virtual Image",
+                "Probe & Bragg",
+                "Calibration",
+                "Crystal Setup & Phase Matching",
+                "Orientation & Grain",
+                "Strain & Results",
+                "Export",
+            ],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
-        strain = next(module for module in self.window.route_modules if module.key == "crystal_analysis")
-        self.assertEqual(strain.prerequisite, "calibration")
-        self.assertIn("calibration is recommended", strain.requirements)
+        strain = next(module for module in self.window.route_modules if module.key == "strain_analysis")
+        self.assertEqual(strain.prerequisite, "orientation_matching")
+        self.assertIn("Phase masks", strain.requirements)
 
     def test_orientation_and_results_use_canonical_shared_workspaces(self) -> None:
         self.assertIs(self.window.orientation_page, self.window.orientation_setup_page)
@@ -98,11 +106,11 @@ class PipelineShellTests(unittest.TestCase):
 
     def test_crystalline_export_is_final_and_keeps_results_workspace(self) -> None:
         self.assertEqual(self.window.route_modules[-1].key, "export")
-        self.assertEqual(self.window.route_modules[-1].page_key, "crystalline_results")
+        self.assertEqual(self.window.route_modules[-1].page_key, "crystal_strain")
         self.window._select_route_module("export")
         self.assertIs(
             self.window.viewer_stack.currentWidget(),
-            self.window.crystalline_results_page,
+            self.window.crystal_strain_page,
         )
 
     def test_phase_retrieval_export_routes_use_dedicated_pages(self) -> None:
@@ -332,10 +340,10 @@ class PipelineShellTests(unittest.TestCase):
         for route in (
             "bragg_detection",
             "calibration",
-            "crystal_analysis",
+            "phase_setup",
             "bragg_detection",
             "calibration",
-            "crystal_analysis",
+            "strain_analysis",
         ):
             self.window._select_route_module(route)
             self.app.processEvents()
@@ -569,8 +577,8 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(page.viewers.results, before)
 
     def test_module_panel_gives_top_level_groups_comfortable_spacing(self) -> None:
-        self.window._select_route_module("crystal_analysis")
-        controls = self.window.strain_map_page.controls_panel
+        self.window._select_route_module("strain_analysis")
+        controls = self.window.crystal_strain_page.controls_panel
         self.assertEqual(controls.layout().spacing(), GROUP_SPACING)
         for index in range(controls.layout().count()):
             widget = controls.layout().itemAt(index).widget()
@@ -611,8 +619,8 @@ class PipelineShellTests(unittest.TestCase):
             self.assertEqual(workspace.layout_choice.width(), 80, key)
 
     def test_existing_parameter_tables_use_fixed_scrollable_style(self) -> None:
-        self.window.project_toolbar.goal.setCurrentText("Orientation Mapping")
-        self.window._select_route_module("orientation_setup")
+        self.window.project_toolbar.goal.setCurrentText("Crystal Analysis")
+        self.window.module_panel.set_module(self.window.route_modules[0], self.window.orientation_setup_page.controls_panel)
         table = self.window.orientation_setup_page.atom_table
         self.assertEqual(table.height(), PARAM_TABLE_HEIGHT)
         self.assertEqual(table.verticalScrollBarPolicy(), Qt.ScrollBarAsNeeded)
