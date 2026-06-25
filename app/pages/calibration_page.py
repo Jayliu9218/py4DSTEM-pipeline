@@ -88,6 +88,9 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.origin_center_x = self._float_input(-100000, 100000, 0, unit="px")
         self.origin_center_y = self._float_input(-100000, 100000, 0, unit="px")
         self.origin_use_guess = QCheckBox("Use center guess")
+        self.origin_use_guess.setChecked(True)
+        self.origin_guess_only = QCheckBox("Use guess only")
+        self.origin_guess_only.setChecked(True)
         self.origin_score = QComboBox()
         self.origin_score.addItems(["automatic", "distance", "intensity", "intensity weighted distance"])
         self.origin_find_center = QComboBox()
@@ -313,6 +316,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         origin_layout.addWidget(self.origin_measurement_label)
         origin_form = QFormLayout()
         origin_form.addRow("", self.origin_use_guess)
+        origin_form.addRow("", self.origin_guess_only)
         origin_form.addRow("center guess x", self.origin_center_x)
         origin_form.addRow("center guess y", self.origin_center_y)
         origin_form.addRow("score method", self.origin_score)
@@ -453,6 +457,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         return OriginCalibrationParams(
             center_guess_x=self.origin_center_x.value() if use_guess else None,
             center_guess_y=self.origin_center_y.value() if use_guess else None,
+            center_guess_only=self.origin_guess_only.isChecked(),
             score_method=None if self.origin_score.currentText() == "automatic" else self.origin_score.currentText(),
             find_center=self.origin_find_center.currentText(),
             fit_function=self.origin_fit_function.currentText(),
@@ -519,6 +524,7 @@ class CalibrationPage(QWidget, WorkerRunner):
             self.log_panel.log(f"Could not display BraggVectors histogram: {exc}")
             return
         self._set_viewer_tab("BraggVectors histogram", image, make_current=make_current)
+        self._set_default_origin_center(image)
         self._set_default_ellipse_center(image)
 
     def _apply_single_correction(self, calstate_name: str, process_name: str) -> None:
@@ -964,10 +970,21 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.ellipse_center_x.setValue(max((shape[0] - 1) / 2, 0))
         self.ellipse_center_y.setValue(max((shape[1] - 1) / 2, 0))
 
+    def _set_default_origin_center(self, image) -> None:
+        if self.origin_center_x.value() or self.origin_center_y.value():
+            return
+        try:
+            shape = image.shape
+        except Exception:
+            return
+        self.origin_center_x.setValue(max((shape[0] - 1) / 2, 0))
+        self.origin_center_y.setValue(max((shape[1] - 1) / 2, 0))
+
     def params_snapshot(self) -> dict[str, object]:
         return {
             "analysis_target": self.analysis_target.currentText(),
             "origin_use_guess": self.origin_use_guess.isChecked(),
+            "origin_guess_only": self.origin_guess_only.isChecked(),
             "origin_center_x": self.origin_center_x.value(),
             "origin_center_y": self.origin_center_y.value(),
             "origin_score": self.origin_score.currentText(),
@@ -1027,6 +1044,8 @@ class CalibrationPage(QWidget, WorkerRunner):
                 spin.setValue(float(params[key]))
         if "origin_use_guess" in params:
             self.origin_use_guess.setChecked(bool(params["origin_use_guess"]))
+        if "origin_guess_only" in params:
+            self.origin_guess_only.setChecked(bool(params["origin_guess_only"]))
         if "origin_robust" in params:
             self.origin_robust.setChecked(bool(params["origin_robust"]))
         for key, combo in [

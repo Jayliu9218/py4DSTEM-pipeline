@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from importlib import import_module
 from pathlib import Path
@@ -26,6 +27,7 @@ class DataCubeInfo:
     shape: tuple[int, int, int, int]
     scan_shape: tuple[int, int]
     diffraction_shape: tuple[int, int]
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,8 @@ class DirectDataCubeImportOptions:
     mem_mode: str = "MEMMAP"
     chunk_size: int = 32
     roi_tuning_mode: bool = True
+    preview_scan_stride: int = 4
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,58 @@ class ProbeGeometry:
     radius: float
     center_x: float
     center_y: float
+
+
+def parse_mib_filename_metadata(file_path: str | Path) -> dict[str, object]:
+    stem = Path(file_path).stem
+    metadata: dict[str, object] = {}
+    patterns = {
+        "scan_shape": r"(?P<x>\d+)x(?P<y>\d+)",
+        "scan_step_nm": r"(?:^|_)ss(?P<value>\d+(?:\.\d+)?)nm(?:_|$)",
+        "dwell_ms": r"(?:^|_)(?P<value>\d+(?:\.\d+)?)ms(?:_|$)",
+        "c2_aperture_um": r"(?:^|_)c2\s*(?P<value>\d+(?:\.\d+)?)um(?:_|$)",
+        "camera_length_mm": r"(?:^|_)CL(?P<value>\d+(?:\.\d+)?)mm(?:_|$)",
+        "convergence_mrad": r"(?:^|_)(?P<value>\d+(?:\.\d+)?)mrad(?:_|$)",
+        "spot_size": r"(?:^|_)spot(?P<value>\d+)(?:_|$)",
+        "beam_current_nA": r"(?:^|_)(?P<value>\d+(?:\.\d+)?)nA(?:_|$)",
+        "gun_lens": r"(?:^|_)GL(?P<value>\d+)(?:_|$)",
+        "magnification": r"(?:^|_)mag(?P<value>\d+(?:\.\d+)?k?)(?:_|$)",
+        "bit_depth": r"(?:^|_)(?P<value>\d+)b(?:\s|_|$)",
+    }
+    for key, pattern in patterns.items():
+        match = re.search(pattern, stem, flags=re.IGNORECASE)
+        if not match:
+            continue
+        if key == "scan_shape":
+            metadata[key] = (int(match.group("x")), int(match.group("y")))
+        elif key == "magnification":
+            metadata[key] = match.group("value")
+        elif key in {"spot_size", "gun_lens", "bit_depth"}:
+            metadata[key] = int(match.group("value"))
+        else:
+            metadata[key] = float(match.group("value"))
+    return metadata
+
+
+def mib_import_options_from_filename(file_path: str | Path) -> DirectDataCubeImportOptions:
+    metadata = parse_mib_filename_metadata(file_path)
+    scan_shape = metadata.get("scan_shape", DirectDataCubeImportOptions.scan_shape)
+    if not isinstance(scan_shape, tuple) or len(scan_shape) != 2:
+        scan_shape = DirectDataCubeImportOptions.scan_shape
+    return DirectDataCubeImportOptions(
+        scan_shape=(int(scan_shape[0]), int(scan_shape[1])),
+        preview_scan_stride=_recommended_preview_stride(scan_shape),
+        metadata=metadata,
+    )
+
+
+def _recommended_preview_stride(scan_shape: tuple[int, int]) -> int:
+    longest = max(int(scan_shape[0]), int(scan_shape[1]))
+    if longest >= 512:
+        return 4
+    if longest >= 256:
+        return 2
+    return 1
 
 
 class Py4DSTEMService:
@@ -131,12 +187,16 @@ class Py4DSTEMService:
             ) from exc
 
         shape = self.get_datacube_shape(obj)
+        metadata = dict(getattr(import_options, "metadata", {}) or {})
+        if not metadata:
+            metadata = parse_mib_filename_metadata(path)
         info = DataCubeInfo(
             name=str(getattr(obj, "name", "") or path.stem or "MIB DataCube"),
             datapath=str(path),
             shape=shape,
             scan_shape=shape[:2],
             diffraction_shape=shape[2:],
+            metadata=metadata,
         )
         self.file_path = path
         self.root = obj

@@ -48,6 +48,7 @@ from app.services.py4dstem_service import (
     DirectDataCubeImportOptions,
     Py4DSTEMService,
     Py4DSTEMServiceError,
+    mib_import_options_from_filename,
 )
 from app.services.report_service import ReportService
 from app.services.result_registry import ResultRegistry
@@ -979,7 +980,7 @@ class MainWindow(QMainWindow):
 
         import_options = None
         if self.py4dstem_service.can_open_direct_datacube(file_path):
-            import_options = self._prompt_mib_import_options()
+            import_options = self._prompt_mib_import_options(file_path)
             if import_options is None:
                 return
         self._open_file_path(file_path, import_options=import_options)
@@ -1026,22 +1027,30 @@ class MainWindow(QMainWindow):
             "do not trigger native library errors."
         )
 
-    def _prompt_mib_import_options(self) -> DirectDataCubeImportOptions | None:
+    def _prompt_mib_import_options(self, file_path: str) -> DirectDataCubeImportOptions | None:
+        defaults = mib_import_options_from_filename(file_path)
         dialog = QDialog(self)
         dialog.setWindowTitle("MIB Import Options")
         layout = QVBoxLayout(dialog)
         form = QFormLayout()
-        scan_x = NumericLineEdit(1, 100000, 512, integer=True)
-        scan_y = NumericLineEdit(1, 100000, 512, integer=True)
+        metadata_text = self._mib_metadata_summary(defaults.metadata)
+        metadata_label = QLabel(metadata_text)
+        metadata_label.setWordWrap(True)
+        scan_x = NumericLineEdit(1, 100000, defaults.scan_shape[0], integer=True)
+        scan_y = NumericLineEdit(1, 100000, defaults.scan_shape[1], integer=True)
         mem_mode = QComboBox()
         mem_mode.addItems(["MEMMAP", "RAM"])
+        mem_mode.setCurrentText(defaults.mem_mode)
         chunk_size = NumericLineEdit(1, 4096, 32, integer=True)
+        preview_scan_stride = NumericLineEdit(1, 64, defaults.preview_scan_stride, integer=True)
         roi_tuning = QCheckBox("Use 128 x 128 ROI for first crystal-analysis pass")
-        roi_tuning.setChecked(True)
+        roi_tuning.setChecked(defaults.roi_tuning_mode)
+        layout.addWidget(metadata_label)
         form.addRow("Scan X", scan_x)
         form.addRow("Scan Y", scan_y)
         form.addRow("Memory mode", mem_mode)
         form.addRow("Chunk size", chunk_size)
+        form.addRow("Show Data preview stride", preview_scan_stride)
         layout.addLayout(form)
         layout.addWidget(roi_tuning)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1055,6 +1064,8 @@ class MainWindow(QMainWindow):
             mem_mode=mem_mode.currentText(),
             chunk_size=int(chunk_size.value()),
             roi_tuning_mode=roi_tuning.isChecked(),
+            preview_scan_stride=int(preview_scan_stride.value()),
+            metadata=defaults.metadata,
         )
 
     def _open_direct_datacube_file_path(
@@ -1063,14 +1074,25 @@ class MainWindow(QMainWindow):
         *,
         import_options: DirectDataCubeImportOptions | None = None,
     ) -> None:
+        options = import_options or DirectDataCubeImportOptions()
+        self.log_panel.process_started(
+            "Open MIB DataCube",
+            f"scan={options.scan_shape}, mem={options.mem_mode}, preview_stride={options.preview_scan_stride}",
+        )
+        self.log_panel.process_progress("Preparing MIB import 5%")
         self.result_registry.clear()
         self.braggvectors_by_datacube.clear()
         self.reference_braggvectors_cache.clear()
         self._set_preview_empty("MIB DataCube loaded. Select a scan position to preview diffraction.")
         self._clear_dataset_info()
-        info = self.session.open_direct_datacube(file_path, import_options=import_options)
-        if import_options is not None:
-            self._apply_mib_crystal_defaults(import_options)
+        try:
+            info = self.session.open_direct_datacube(file_path, import_options=options)
+            self.log_panel.process_progress("MIB import complete 80%")
+            self._apply_mib_crystal_defaults(options)
+            self.preprocessing_page.preview_scan_stride.setValue(options.preview_scan_stride)
+        except Exception as exc:
+            self.log_panel.process_failed("Open MIB DataCube", str(exc))
+            raise
         self.current_file = None
         self.tree.populate_direct_source(f"{Path(file_path).name}  {info.shape}", info.datapath)
         self._clear_all_image_workspaces()
@@ -1093,7 +1115,35 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page.refresh_defaults_from_datacube()
         self.bragg_peaks_page.refresh_from_datacube()
         self.calibration_page.refresh_status()
+        if info.metadata:
+            self.log_panel.log(f"MIB filename metadata: {self._mib_metadata_summary(info.metadata)}")
         self.log_panel.log(f"Opened MIB DataCube: {file_path}")
+        self.log_panel.process_finished(
+            "Open MIB DataCube",
+            f"shape={info.shape}, preview_stride={options.preview_scan_stride}",
+        )
+
+    def _mib_metadata_summary(self, metadata: dict[str, object]) -> str:
+        if not metadata:
+            return "No MIB filename metadata detected; confirm scan shape before opening."
+        labels = {
+            "scan_shape": "scan",
+            "scan_step_nm": "step nm",
+            "dwell_ms": "dwell ms",
+            "c2_aperture_um": "C2 um",
+            "camera_length_mm": "CL mm",
+            "convergence_mrad": "conv mrad",
+            "spot_size": "spot",
+            "beam_current_nA": "current nA",
+            "gun_lens": "GL",
+            "magnification": "mag",
+            "bit_depth": "bit depth",
+        }
+        parts = []
+        for key, label in labels.items():
+            if key in metadata:
+                parts.append(f"{label}={metadata[key]}")
+        return ", ".join(parts)
 
     def _apply_mib_crystal_defaults(self, options: DirectDataCubeImportOptions) -> None:
         mode = "ROI 128x128" if options.roi_tuning_mode else "Full Dataset"

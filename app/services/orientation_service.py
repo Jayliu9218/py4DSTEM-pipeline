@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.cif_utils import load_py4dstem_crystal_from_cif
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,7 +129,7 @@ class OrientationService:
         if not path.exists():
             raise OrientationServiceError(f"CIF file does not exist: {path}")
         try:
-            crystal = self._py4dstem().process.diffraction.Crystal.from_CIF(path)
+            crystal = load_py4dstem_crystal_from_cif(self._py4dstem(), path)
         except Exception as exc:
             raise OrientationServiceError(f"Could not load crystal structure: {exc}") from exc
         self._set_crystal(crystal, f"CIF: {path.name}")

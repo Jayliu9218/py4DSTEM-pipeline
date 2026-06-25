@@ -44,6 +44,7 @@ class PreprocessingPage(QWidget, WorkerRunner):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.memory_budget_mb = NumericLineEdit(8, 1024, 64, decimals=0, unit="MB", integer=True)
+        self.preview_scan_stride = NumericLineEdit(1, 64, 1, decimals=0, integer=True)
         self.status = QLabel("Load and assign a Target DataCube.")
         self.status.setWordWrap(True)
         self.workspace = AdaptiveImageWorkspace()
@@ -56,6 +57,7 @@ class PreprocessingPage(QWidget, WorkerRunner):
         form = QFormLayout(controls)
         form.addRow("hot-pixel threshold", self.threshold)
         form.addRow("reduction memory budget", self.memory_budget_mb)
+        form.addRow("preview scan stride", self.preview_scan_stride)
         control_layout = QVBoxLayout()
         control_layout.addWidget(controls)
         
@@ -89,8 +91,9 @@ class PreprocessingPage(QWidget, WorkerRunner):
             QMessageBox.information(self, "Preprocess", "Select or assign a displayable data object first.")
             return
         budget_mb = int(self.memory_budget_mb.value())
+        scan_stride = int(self.preview_scan_stride.value())
         self._show_data_source = source
-        task = self.service.show_data_task(source, memory_budget_mb=budget_mb)
+        task = self.service.show_data_task(source, memory_budget_mb=budget_mb, scan_stride=scan_stride)
         self._start_background(
             task.name,
             task,
@@ -178,6 +181,7 @@ class PreprocessingPage(QWidget, WorkerRunner):
         return {
             "hot_pixel_threshold": self.threshold.value(),
             "reduction_memory_budget_mb": int(self.memory_budget_mb.value()),
+            "preview_scan_stride": int(self.preview_scan_stride.value()),
         }
 
     def apply_params_snapshot(self, params: dict[str, object]) -> None:
@@ -185,3 +189,5 @@ class PreprocessingPage(QWidget, WorkerRunner):
             self.threshold.setValue(float(params["hot_pixel_threshold"]))
         if "reduction_memory_budget_mb" in params:
             self.memory_budget_mb.setValue(int(params["reduction_memory_budget_mb"]))
+        if "preview_scan_stride" in params:
+            self.preview_scan_stride.setValue(int(params["preview_scan_stride"]))

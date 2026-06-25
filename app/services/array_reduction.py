@@ -20,6 +20,7 @@ class ReductionBackend(Protocol):
         source: Any,
         *,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         ...
@@ -29,6 +30,7 @@ class ReductionBackend(Protocol):
         source: Any,
         *,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         ...
@@ -39,6 +41,7 @@ class ReductionBackend(Protocol):
         *,
         dtype: np.dtype[Any] | type | None = None,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         ...
@@ -73,11 +76,13 @@ class PythonReductionBackend:
         source: Any,
         *,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         return _mean_diffraction_impl(
             source,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=progress_callback,
         )
 
@@ -86,11 +91,13 @@ class PythonReductionBackend:
         source: Any,
         *,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         return _max_diffraction_impl(
             source,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=progress_callback,
         )
 
@@ -100,12 +107,14 @@ class PythonReductionBackend:
         *,
         dtype: np.dtype[Any] | type | None = None,
         memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+        scan_stride: int = 1,
         progress_callback: ProgressCallback = None,
     ) -> np.ndarray:
         return _scan_sum_impl(
             source,
             dtype=dtype,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=progress_callback,
         )
 
@@ -157,30 +166,39 @@ def iter_scan_blocks(
     source: Any,
     *,
     target_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
 ) -> Iterator[tuple[slice, np.ndarray]]:
     shape = shape_4d(source)
+    scan_stride = _normal_scan_stride(scan_stride)
     itemsize = int(np.dtype(getattr(source, "dtype", np.float64)).itemsize)
-    bytes_per_row = max(int(np.prod(shape[1:], dtype=np.int64)) * itemsize, 1)
+    sampled_y = _sampled_length(shape[1], scan_stride)
+    bytes_per_row = max(int(sampled_y * np.prod(shape[2:], dtype=np.int64)) * itemsize, 1)
     rows = max(int(target_bytes) // bytes_per_row, 1)
-    if shape[0] > 1:
+    sampled_x = _sampled_length(shape[0], scan_stride)
+    if sampled_x > 1:
         # Keep disk-backed sources from ever materializing the complete 4D dataset.
-        rows = min(rows, shape[0] - 1)
+        rows = min(rows, sampled_x - 1)
 
-    for start in range(0, shape[0], rows):
-        stop = min(start + rows, shape[0])
-        selection = slice(start, stop)
-        yield selection, np.asarray(source[selection, :, :, :])
+    for output_start in range(0, sampled_x, rows):
+        output_stop = min(output_start + rows, sampled_x)
+        source_start = output_start * scan_stride
+        source_stop = min(output_stop * scan_stride, shape[0])
+        selection = slice(source_start, source_stop, scan_stride)
+        indexer = (selection, slice(None, None, scan_stride), slice(None), slice(None))
+        yield selection, np.asarray(source[indexer])
 
 
 def mean_diffraction(
     source: Any,
     *,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     return get_reduction_backend().mean_diffraction(
         source,
         memory_budget_bytes=memory_budget_bytes,
+        scan_stride=scan_stride,
         progress_callback=progress_callback,
     )
 
@@ -189,26 +207,35 @@ def _mean_diffraction_impl(
     source: Any,
     *,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     shape = shape_4d(source)
+    scan_stride = _normal_scan_stride(scan_stride)
     total = np.zeros(shape[2:], dtype=np.float64)
     emit = progress_callback or (lambda _message, _fraction: None)
-    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
+    count = _sampled_length(shape[0], scan_stride) * _sampled_length(shape[1], scan_stride)
+    for selection, block in iter_scan_blocks(
+        source,
+        target_bytes=max(int(memory_budget_bytes), 1),
+        scan_stride=scan_stride,
+    ):
         total += np.sum(block, axis=(0, 1), dtype=np.float64)
         emit("Calculating mean diffraction", selection.stop / max(shape[0], 1))
-    return total / max(shape[0] * shape[1], 1)
+    return total / max(count, 1)
 
 
 def max_diffraction(
     source: Any,
     *,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     return get_reduction_backend().max_diffraction(
         source,
         memory_budget_bytes=memory_budget_bytes,
+        scan_stride=scan_stride,
         progress_callback=progress_callback,
     )
 
@@ -217,12 +244,18 @@ def _max_diffraction_impl(
     source: Any,
     *,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     shape = shape_4d(source)
+    scan_stride = _normal_scan_stride(scan_stride)
     maximum: np.ndarray | None = None
     emit = progress_callback or (lambda _message, _fraction: None)
-    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
+    for selection, block in iter_scan_blocks(
+        source,
+        target_bytes=max(int(memory_budget_bytes), 1),
+        scan_stride=scan_stride,
+    ):
         block_maximum = np.max(block, axis=(0, 1))
         maximum = block_maximum if maximum is None else np.maximum(maximum, block_maximum)
         emit("Calculating maximum diffraction", selection.stop / max(shape[0], 1))
@@ -240,12 +273,14 @@ def scan_sum_with_progress(
     *,
     dtype: np.dtype[Any] | type | None = None,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     return get_reduction_backend().scan_sum(
         source,
         dtype=dtype,
         memory_budget_bytes=memory_budget_bytes,
+        scan_stride=scan_stride,
         progress_callback=progress_callback,
     )
 
@@ -255,15 +290,24 @@ def _scan_sum_impl(
     *,
     dtype: np.dtype[Any] | type | None = None,
     memory_budget_bytes: int = DEFAULT_BLOCK_BYTES,
+    scan_stride: int = 1,
     progress_callback=None,
 ) -> np.ndarray:
     shape = shape_4d(source)
+    scan_stride = _normal_scan_stride(scan_stride)
     output_dtype = np.dtype(dtype) if dtype is not None else _sum_dtype(source)
-    result = np.empty(shape[:2], dtype=output_dtype)
+    result_shape = (_sampled_length(shape[0], scan_stride), _sampled_length(shape[1], scan_stride))
+    result = np.empty(result_shape, dtype=output_dtype)
     emit = progress_callback or (lambda _message, _fraction: None)
     emit("Preparing scan overview", 0.0)
-    for selection, block in iter_scan_blocks(source, target_bytes=max(int(memory_budget_bytes), 1)):
-        result[selection, :] = np.sum(block, axis=(2, 3), dtype=output_dtype)
+    for selection, block in iter_scan_blocks(
+        source,
+        target_bytes=max(int(memory_budget_bytes), 1),
+        scan_stride=scan_stride,
+    ):
+        output_start = selection.start // scan_stride
+        output_stop = output_start + block.shape[0]
+        result[output_start:output_stop, :] = np.sum(block, axis=(2, 3), dtype=output_dtype)
         emit("Reducing scan overview", selection.stop / max(shape[0], 1))
     return result
 
@@ -332,3 +376,12 @@ def _sum_dtype(source: Any) -> np.dtype[Any]:
     if np.issubdtype(dtype, np.unsignedinteger):
         return np.dtype(np.uint64)
     return dtype
+
+
+def _normal_scan_stride(scan_stride: int) -> int:
+    return max(int(scan_stride), 1)
+
+
+def _sampled_length(length: int, scan_stride: int) -> int:
+    scan_stride = _normal_scan_stride(scan_stride)
+    return max((int(length) + scan_stride - 1) // scan_stride, 0)

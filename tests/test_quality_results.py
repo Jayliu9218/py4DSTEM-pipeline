@@ -11,7 +11,12 @@ sys.modules["py4DSTEM"] = types.SimpleNamespace(
     )
 )
 
-from app.services.bragg_strain_service import BasisSelectionParams, BraggStrainService, StrainMapParams
+from app.services.bragg_strain_service import (
+    BasisSelectionParams,
+    BraggStrainService,
+    OriginCalibrationParams,
+    StrainMapParams,
+)
 
 
 class _PeakCell:
@@ -107,7 +112,10 @@ class _BraggVectorsForEllipse:
 
 
 class _BraggVectorsForOrigin(_BraggVectorsForEllipse):
+    measured = False
+
     def measure_origin(self):
+        self.measured = True
         return np.ones((2, 2)), np.ones((2, 2)) * 2, np.ones((2, 2), dtype=bool)
 
     def fit_origin(self, **_kwargs):
@@ -272,7 +280,16 @@ class QualityResultTests(unittest.TestCase):
             list(comparison.images),
             ["raw Bragg vector map", "origin-centered Bragg vector map"],
         )
+        self.assertFalse(source.measured)
         self.assertEqual(source.calstate, previous)
+
+    def test_origin_calibration_can_opt_into_full_py4dstem_measurement(self) -> None:
+        service = BraggStrainService()
+        source = _BraggVectorsForOrigin()
+
+        service.calibrate_origin(source, OriginCalibrationParams(center_guess_only=False))
+
+        self.assertTrue(source.measured)
 
     def test_setting_qr_rotation_leaves_rotation_applied(self) -> None:
         service = BraggStrainService()

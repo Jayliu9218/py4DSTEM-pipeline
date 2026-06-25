@@ -14,6 +14,8 @@ from app.services.py4dstem_service import (
     DirectDataCubeImportOptions,
     Py4DSTEMService,
     Py4DSTEMServiceError,
+    mib_import_options_from_filename,
+    parse_mib_filename_metadata,
 )
 from app.widgets.adaptive_image_workspace import FigureResult
 
@@ -225,6 +227,52 @@ class FileOpenAndRolesTests(unittest.TestCase):
 
             np.testing.assert_array_equal(self.window.diffraction_viewer.raw_image, data[0, 0, :, :])
             self.assertIn("[0, 0]", self.window.preview_status)
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
+    def test_mib_filename_metadata_prefills_import_defaults(self) -> None:
+        path = self.path.parent / (
+            "1_512x512_ss15.63nm_0.55ms_c2 50um_CL91mm_"
+            "0.75mrad_spot7_0.022nA_GL3_mag12500k_12b 0913.mib"
+        )
+
+        metadata = parse_mib_filename_metadata(path)
+        options = mib_import_options_from_filename(path)
+
+        self.assertEqual(metadata["scan_shape"], (512, 512))
+        self.assertEqual(metadata["scan_step_nm"], 15.63)
+        self.assertEqual(metadata["dwell_ms"], 0.55)
+        self.assertEqual(metadata["camera_length_mm"], 91.0)
+        self.assertEqual(metadata["convergence_mrad"], 0.75)
+        self.assertEqual(metadata["beam_current_nA"], 0.022)
+        self.assertEqual(metadata["bit_depth"], 12)
+        self.assertEqual(options.scan_shape, (512, 512))
+        self.assertEqual(options.preview_scan_stride, 4)
+
+    def test_mib_open_applies_preview_stride_and_logs_metadata(self) -> None:
+        path = self.path.parent / (
+            "1_512x512_ss15.63nm_0.55ms_c2 50um_CL91mm_"
+            "0.75mrad_spot7_0.022nA_GL3_mag12500k_12b 0913.mib"
+        )
+        path.write_bytes(b"mib")
+        datacube = Mock(shape=(2, 3, 4, 5), name="direct_datacube", data=np.ones((2, 3, 4, 5)))
+        module = Mock()
+        module.import_file.return_value = datacube
+        try:
+            with (
+                patch.object(self.window.py4dstem_service, "_py4dstem", return_value=module),
+                patch.object(self.window.calibration_page, "refresh_status"),
+            ):
+                self.window._open_file_path(
+                    str(path),
+                    import_options=mib_import_options_from_filename(path),
+                )
+
+            self.assertEqual(int(self.window.preprocessing_page.preview_scan_stride.value()), 4)
+            self.assertIn("preview_stride=4", self.window.log_panel.status_line.text())
+            self.assertIn("scan=(512, 512)", self.window.log_panel.process_log.toPlainText())
+            self.assertIn("scan=(512, 512)", self.window.log_panel.event_log.toPlainText())
         finally:
             self.window._close_current_file()
             path.unlink(missing_ok=True)

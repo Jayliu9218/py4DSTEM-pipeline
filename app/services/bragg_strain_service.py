@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.cif_utils import load_py4dstem_crystal_from_cif
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,6 +161,7 @@ class CrystalPixelParams:
 class OriginCalibrationParams:
     center_guess_x: float | None = None
     center_guess_y: float | None = None
+    center_guess_only: bool = True
     score_method: str | None = None
     find_center: str = "max"
     fit_function: str = "plane"
@@ -493,29 +496,43 @@ class BraggStrainService:
             center_guess = None
             if params.center_guess_x is not None and params.center_guess_y is not None:
                 center_guess = (params.center_guess_x, params.center_guess_y)
-            try:
-                qx_meas, qy_meas, mask = source.measure_origin(
-                    center_guess=center_guess,
-                    score_method=params.score_method,
-                    findcenter=params.find_center,
-                )
-            except TypeError:
-                qx_meas, qy_meas, mask = source.measure_origin()
-            try:
-                qx_fit, qy_fit, qx_residuals, qy_residuals = source.fit_origin(
-                    fitfunction=params.fit_function,
-                    robust=params.robust,
-                    robust_steps=params.robust_steps,
-                    robust_thresh=params.robust_threshold,
-                    plot=False,
-                    returncalc=True,
-                )
-            except TypeError:
-                qx_fit, qy_fit, qx_residuals, qy_residuals = source.fit_origin(
-                    plot=False, returncalc=True
-                )
-            source.setcal(**previous_state)
             raw_bvm = np.asarray(source.histogram(mode="raw").data)
+            if params.center_guess_only:
+                if center_guess is None:
+                    center_guess = self._image_center(raw_bvm)
+                if not hasattr(source, "calibration") or not hasattr(source.calibration, "set_origin"):
+                    raise BraggStrainServiceError("BraggVectors calibration does not support origin setting.")
+                source.calibration.set_origin(center_guess)
+                qx_fit = np.full(raw_bvm.shape[:2], float(center_guess[0]), dtype=float)
+                qy_fit = np.full(raw_bvm.shape[:2], float(center_guess[1]), dtype=float)
+                qx_meas = qx_fit.copy()
+                qy_meas = qy_fit.copy()
+                qx_residuals = np.zeros(raw_bvm.shape[:2], dtype=float)
+                qy_residuals = np.zeros(raw_bvm.shape[:2], dtype=float)
+                mask = np.ones(raw_bvm.shape[:2], dtype=bool)
+            else:
+                try:
+                    qx_meas, qy_meas, mask = source.measure_origin(
+                        center_guess=center_guess,
+                        score_method=params.score_method,
+                        findcenter=params.find_center,
+                    )
+                except TypeError:
+                    qx_meas, qy_meas, mask = source.measure_origin()
+                try:
+                    qx_fit, qy_fit, qx_residuals, qy_residuals = source.fit_origin(
+                        fitfunction=params.fit_function,
+                        robust=params.robust,
+                        robust_steps=params.robust_steps,
+                        robust_thresh=params.robust_threshold,
+                        plot=False,
+                        returncalc=True,
+                    )
+                except TypeError:
+                    qx_fit, qy_fit, qx_residuals, qy_residuals = source.fit_origin(
+                        plot=False, returncalc=True
+                    )
+            source.setcal(**previous_state)
             measurements = self._origin_measurements(qx_fit, qy_fit, qx_residuals, qy_residuals, raw_bvm)
         except BraggStrainServiceError:
             source.setcal(**previous_state)
@@ -529,8 +546,8 @@ class BraggStrainService:
             raise BraggStrainServiceError(f"Origin calibration failed: {exc}") from exc
         return CalibrationActionResult(
             (
-                "Origin measured and fitted: "
-                f"x={measurements['x']:.4g}, y={measurements['y']:.4g}."
+                ("Origin set from center guess: " if params.center_guess_only else "Origin measured and fitted: ")
+                + f"x={measurements['x']:.4g}, y={measurements['y']:.4g}."
             ),
             {
                 "qx measured": self._center_origin_fit_map(qx_meas, mask),
@@ -543,9 +560,9 @@ class BraggStrainService:
             perf_counter() - start,
             measurements=measurements,
             quality={
-                "valid_coverage": float(np.mean(mask)),
-                "qx_residual_rms": float(np.sqrt(np.nanmean(np.asarray(qx_residuals) ** 2))),
-                "qy_residual_rms": float(np.sqrt(np.nanmean(np.asarray(qy_residuals) ** 2))),
+                "valid_coverage": self._valid_fraction(mask),
+                "qx_residual_rms": self._rms(qx_residuals),
+                "qy_residual_rms": self._rms(qy_residuals),
             },
         )
 
@@ -674,7 +691,7 @@ class BraggStrainService:
         try:
             py4DSTEM = self._py4dstem()
             if params.cif_path:
-                crystal = py4DSTEM.process.diffraction.Crystal.from_CIF(Path(params.cif_path))
+                crystal = load_py4dstem_crystal_from_cif(py4DSTEM, params.cif_path)
             else:
                 positions = np.array(
                     [[0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]]
@@ -1738,10 +1755,7 @@ class BraggStrainService:
             x = (raw_bvm.shape[0] - 1) / 2
         if not np.isfinite(y):
             y = (raw_bvm.shape[1] - 1) / 2
-        residual_radius = np.sqrt(
-            np.nanmean(np.asarray(qx_residuals, dtype=float) ** 2)
-            + np.nanmean(np.asarray(qy_residuals, dtype=float) ** 2)
-        )
+        residual_radius = np.sqrt(self._rms(qx_residuals) ** 2 + self._rms(qy_residuals) ** 2)
         if not np.isfinite(residual_radius) or residual_radius <= 0:
             residual_radius = max(min(raw_bvm.shape[:2]) * 0.03, 3.0)
         return {"x": float(x), "y": float(y), "r": float(residual_radius)}
@@ -1752,6 +1766,19 @@ class BraggStrainService:
         selected = array[valid] if valid.shape == array.shape and valid.any() else array[np.isfinite(array)]
         center = float(np.nanmedian(selected)) if selected.size else 0.0
         return array - center
+
+    def _rms(self, value: Any) -> float:
+        array = np.asarray(value, dtype=float)
+        finite = array[np.isfinite(array)]
+        if finite.size == 0:
+            return float("nan")
+        return float(np.sqrt(np.mean(finite ** 2)))
+
+    def _valid_fraction(self, mask: Any) -> float:
+        array = np.asarray(mask, dtype=bool)
+        if array.size == 0:
+            return 0.0
+        return float(np.mean(array))
 
     def _ellipse_measurements(self, p_ellipse: Any, raw_bvm: Any, calibrated_bvm: Any) -> dict[str, float]:
         values = self._numeric_sequence(p_ellipse)

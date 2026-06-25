@@ -14,6 +14,7 @@ from app.services.array_reduction import (
     max_diffraction,
     mean_diffraction,
     scan_sum,
+    scan_sum_with_progress,
     set_reduction_backend,
 )
 from app.services.hdf5_service import Hdf5Service
@@ -129,6 +130,37 @@ class ArrayReductionTests(unittest.TestCase):
         self.assertTrue(progress)
         self.assertEqual(progress[-1], ("Data display ready", 1.0))
         self.assertTrue(all(0 <= fraction <= 1 for _message, fraction in progress))
+
+    def test_show_data_scan_stride_samples_scan_positions(self) -> None:
+        source = RecordingDataset(self.data)
+
+        results = PreprocessingService().show_data(
+            source,
+            memory_budget_bytes=1,
+            scan_stride=2,
+        )
+
+        sampled = self.data[::2, ::2, :, :]
+        np.testing.assert_allclose(results["Scan overview"], sampled.sum(axis=(2, 3)))
+        np.testing.assert_allclose(results["Mean diffraction pattern"], sampled.mean(axis=(0, 1)))
+        np.testing.assert_allclose(results["Maximum diffraction pattern"], sampled.max(axis=(0, 1)))
+        self.assertEqual(results["Central real-space slice"].shape, sampled.shape[:2])
+
+    def test_scan_sum_stride_reports_downsampled_overview(self) -> None:
+        source = RecordingDataset(self.data)
+
+        result = scan_sum_with_progress(source, scan_stride=3)
+
+        np.testing.assert_allclose(result, self.data[::3, ::3, :, :].sum(axis=(2, 3)))
+        self.assertTrue(source.selections)
+        self.assertTrue(
+            any(
+                isinstance(selection, tuple)
+                and isinstance(selection[0], slice)
+                and selection[0].step == 3
+                for selection in source.selections
+            )
+        )
 
     def test_show_data_task_carries_metadata_and_matches_show_data(self) -> None:
         source = RecordingDataset(self.data)

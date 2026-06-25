@@ -34,6 +34,7 @@ class PreprocessingService:
         source: Any,
         *,
         memory_budget_mb: int,
+        scan_stride: int = 1,
     ) -> ComputationTask:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         shape = tuple(int(value) for value in getattr(data, "shape", ()))
@@ -44,6 +45,7 @@ class PreprocessingService:
             operation=lambda progress: self.show_data(
                 source,
                 memory_budget_bytes=max(int(memory_budget_mb), 1) * 1024 * 1024,
+                scan_stride=scan_stride,
                 progress_callback=progress,
             ),
             memory_budget_mb=memory_budget_mb,
@@ -52,6 +54,7 @@ class PreprocessingService:
             parameters={
                 "shape": shape or "-",
                 "dtype": str(dtype) if dtype is not None else "-",
+                "scan_stride": max(int(scan_stride), 1),
             },
         )
 
@@ -79,6 +82,7 @@ class PreprocessingService:
         source: Any,
         *,
         memory_budget_bytes: int,
+        scan_stride: int = 1,
         progress_callback=None,
     ) -> dict[str, np.ndarray]:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
@@ -90,25 +94,29 @@ class PreprocessingService:
                 f"Selected data must be a 4D DataCube or 2D DiffractionSlice, got shape {shape}."
             )
         emit = progress_callback or (lambda _message, _fraction: None)
+        scan_stride = max(int(scan_stride), 1)
         rx, ry = shape[0] // 2, shape[1] // 2
         qx, qy = shape[2] // 2, shape[3] // 2
         results = {
             "Central diffraction pattern": np.asarray(data[rx, ry]),
-            "Central real-space slice": np.asarray(data[:, :, qx, qy]),
+            "Central real-space slice": np.asarray(data[::scan_stride, ::scan_stride, qx, qy]),
         }
         results["Scan overview"] = scan_sum_with_progress(
             data,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=lambda message, fraction: emit(message, fraction * 0.6),
         )
         results["Mean diffraction pattern"] = mean_diffraction(
             data,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=lambda message, fraction: emit(message, 0.6 + fraction * 0.2),
         )
         results["Maximum diffraction pattern"] = max_diffraction(
             data,
             memory_budget_bytes=memory_budget_bytes,
+            scan_stride=scan_stride,
             progress_callback=lambda message, fraction: emit(message, 0.8 + fraction * 0.2),
         )
         emit("Data display ready", 1.0)

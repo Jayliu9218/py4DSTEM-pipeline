@@ -57,8 +57,7 @@ class LogPanel(QWidget):
 
     def process_started(self, name: str, details: str = "") -> None:
         self._current_progress = 0
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
+        self.progress.setRange(0, 0)
         suffix = f" | {details}" if details else ""
         self.status_line.setText(f"START {name}{suffix}")
         self.process(f"START {name}{suffix}")
@@ -86,6 +85,8 @@ class LogPanel(QWidget):
             self._current_progress = max(self._current_progress, int(value))
             self.progress.setRange(0, 100)
             self.progress.setValue(self._current_progress)
+        else:
+            self.progress.setRange(0, 0)
         self.status_line.setText(message)
         self.process(f"PROGRESS {message}")
 

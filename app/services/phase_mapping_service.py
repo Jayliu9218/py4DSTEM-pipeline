@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from app.services.cif_utils import load_py4dstem_crystal_from_cif
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,7 +96,7 @@ class PhaseMappingService:
         if not path.exists():
             raise PhaseMappingServiceError(f"CIF file does not exist: {path}")
         try:
-            crystal = self._py4dstem().process.diffraction.Crystal.from_CIF(path)
+            crystal = load_py4dstem_crystal_from_cif(self._py4dstem(), path)
         except Exception as exc:
             raise PhaseMappingServiceError(f"Could not load crystal structure: {exc}") from exc
         entry = CrystalEntry(name=path.stem, crystal=crystal, source=f"CIF: {path.name}")
