@@ -74,7 +74,7 @@ function Test-DevelopmentEnvironment([string]$AbsoluteEnvPath) {
     Assert-LastExitCode "pip dependency check"
     & $python scripts\check_runtime_dependencies.py
     Assert-LastExitCode "Runtime dependency check"
-    & $python scripts\check_packaging_env.py --expected-ref $Py4DSTEMRef
+    & $python scripts\check_py4dstem_source.py --expected-ref $Py4DSTEMRef
     Assert-LastExitCode "py4DSTEM source check"
 }
 

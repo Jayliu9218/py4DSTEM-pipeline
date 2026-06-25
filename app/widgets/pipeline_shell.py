@@ -256,8 +256,9 @@ class ModuleControlPanel(QWidget):
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
             form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
             form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            form.setVerticalSpacing(0)
-            form.setHorizontalSpacing(0)
+            form.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT)
+            form.setVerticalSpacing(6)
+            form.setHorizontalSpacing(10)
         group.setObjectName("paramForm")
 
         # Keep groups compact, but allow wrapped status/warning labels to grow

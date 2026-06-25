@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -99,6 +100,7 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
     def _build_layout(self) -> None:
         controls = QWidget()
         form = QFormLayout(controls)
+        self._controls_form = form
         form.addRow("Mode", self.mode_combo)
         form.addRow("center_x", self.center_x_spin)
         form.addRow("center_y", self.center_y_spin)
@@ -124,7 +126,7 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
         self.left_layout.addWidget(self.status_label)
         self.left_layout.addStretch(1)
 
-        left = QWidget()
+        left = QGroupBox("Virtual Detector")
         left.setLayout(self.left_layout)
         self.controls_panel = left
 
@@ -305,12 +307,18 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
         is_diffraction = mode == VirtualDetectorService.VIRTUAL_DIFFRACTION
         self.inner_radius_spin.setEnabled(not is_circle and not is_diffraction)
         for control in [self.center_x_spin, self.center_y_spin, self.inner_radius_spin, self.outer_radius_spin]:
-            control.setVisible(not is_diffraction)
+            self._set_form_control_visible(control, not is_diffraction)
         for control in [
             self.roi_rx_start, self.roi_rx_end, self.roi_ry_start, self.roi_ry_end,
             self.roi_mode_combo, self.roi_center_x, self.roi_center_y, self.roi_radius,
         ]:
-            control.setVisible(is_diffraction)
+            self._set_form_control_visible(control, is_diffraction)
+
+    def _set_form_control_visible(self, control: QWidget, visible: bool) -> None:
+        control.setVisible(visible)
+        label = self._controls_form.labelForField(control)
+        if label is not None:
+            label.setVisible(visible)
 
     def _watch_parameters(self) -> None:
         self.workflow_state.watch(

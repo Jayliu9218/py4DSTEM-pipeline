@@ -4,7 +4,7 @@ from typing import Callable
 
 import PySide6
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFormLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.services.preprocessing_service import HotPixelParams, HotPixelPreview, PreprocessingService
 from app.services.result_registry import ResultRegistry
@@ -78,7 +78,7 @@ class PreprocessingPage(QWidget, WorkerRunner):
         
         control_layout.addWidget(self.status)
         control_layout.addStretch(1)
-        self.controls_panel = QWidget()
+        self.controls_panel = QGroupBox("Data & Preprocessing")
         self.controls_panel.setLayout(control_layout)
         layout = QVBoxLayout(self)
         layout.addWidget(self.workspace)

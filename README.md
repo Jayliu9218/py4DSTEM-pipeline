@@ -173,24 +173,6 @@ development environment:
 & .\.conda\py4dstem-pipeline-dev\python.exe .\main.py
 ```
 
-Use the separate repository-local `.conda\py4dstem-pipeline-packaging`
-environment for release builds:
-
-```powershell
-.\scripts\setup_packaging_env.ps1
-.\packaging\build_pyinstaller.ps1
-```
-
-The packaging environment is created **from a clean Python 3.11 base** (not by
-cloning the development environment), then installs the pinned runtime
-dependencies in `requirements.txt` plus the packaging tools in
-`requirements.packaging.txt`, and finally ensures py4DSTEM is installed from the
-[`dev` branch](https://github.com/py4dstem/py4DSTEM/tree/dev). It disables
-Python user-site packages and validates the recorded Git source and commit.
-Building from a clean base keeps heavy dev-only tools (Jupyter, notebook,
-IPython, …) out of the distributable. PyInstaller builds also run a short
-packaged-application launch check by default.
-
 ## Project Layout
 
 ```text
@@ -248,13 +230,6 @@ app/
     progress_stream.py                    # Worker progress capture
     rgb_image_viewer.py                   # RGB composite viewer
     worker_runner.py                      # Shared background-worker mixin
-packaging/
-  py4dstem_pipeline.spec
-  build_pyinstaller.ps1
-  inno_setup.iss
-  build_portable.ps1
-  build_nuitka.ps1
-  README_packaging.md
 ```
 
 The reduction layer uses the tested Python/NumPy implementation as the stable
@@ -269,10 +244,9 @@ where practical without requiring compiled extensions.
 ## Release Roadmap
 
 Current planned GitHub release: **v0.1.0 preview**. Publish it as a GitHub
-prerelease with only the GitHub-generated **Source code** assets; do not attach
-the packaged executable, installer, or portable zip while the frozen app is too
-large for practical distribution. See [CHANGELOG.md](CHANGELOG.md) and
-[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before tagging.
+prerelease with only the GitHub-generated **Source code** assets. See
+[CHANGELOG.md](CHANGELOG.md) and [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+before tagging.
 
 ### 1. Development
 
@@ -282,60 +256,6 @@ Create, validate, and run the independent development environment:
 .\scripts\setup_dev_env.ps1
 & .\.conda\py4dstem-pipeline-dev\python.exe .\main.py
 ```
-
-### 2. MVP Testing
-
-Build a PyInstaller onedir package:
-
-```powershell
-.\packaging\build_pyinstaller.ps1
-```
-
-Output:
-
-```text
-dist\pyinstaller\py4DSTEM Pipeline\
-```
-
-### 3. Group Distribution
-
-Build the PyInstaller onedir package first, then build the installer with Inno Setup:
-
-```powershell
-.\packaging\build_pyinstaller.ps1
-```
-
-Open this file in Inno Setup Compiler:
-
-```text
-packaging\inno_setup.iss
-```
-
-### 4. Stable Release
-
-Use the portable zip for a no-install distribution (requires the PyInstaller
-build from step 2):
-
-```powershell
-.\packaging\build_pyinstaller.ps1
-.\packaging\build_portable.ps1
-```
-
-Output:
-
-```text
-dist\py4DSTEM-Pipeline-v0.1.0-portable.zip
-```
-
-Use Nuitka when a compiled distribution is preferred:
-
-```powershell
-.\packaging\build_nuitka.ps1
-```
-
-## Packaging Details
-
-See [packaging/README_packaging.md](packaging/README_packaging.md).
 
 ## License
 
@@ -357,5 +277,3 @@ kept free and open under a GPLv3 license.
   `app/controllers/route_coordinator.py`.
 - Add new workflow steps to `app/services/workflow_state.py`.
 - Test and debug inside `.conda\py4dstem-pipeline-dev`.
-- Keep packaging-only tools and release builds inside
-  `.conda\py4dstem-pipeline-packaging`.

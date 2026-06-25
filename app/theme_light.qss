@@ -132,14 +132,38 @@ QGroupBox#paramForm::title {
     border-bottom: 1px solid #777777;
     padding: 2px 6px;
 }
+QLabel#propertyGridLabel {
+    color: #111111;
+    border-right: 1px solid #c5c5c5;
+    border-bottom: 1px solid #d8d8d8;
+    padding: 3px 6px;
+    min-height: 22px;
+    font-weight: normal;
+}
+QLabel#propertyGridLabel[rowParity="even"],
+#propertyGridValue[rowParity="even"] {
+    background: #ffffff;
+}
+QLabel#propertyGridLabel[rowParity="odd"],
+#propertyGridValue[rowParity="odd"] {
+    background: #f2f2f2;
+}
+#propertyGridValue,
+QWidget#propertyGridAction {
+    border-bottom: 1px solid #d8d8d8;
+}
+QWidget#propertyGridAction {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background: #ffffff;
     color: #111111;
     border: 1px solid #8b8b8b;
     border-radius: 0;
     padding: 1px 4px;
-    min-height: 18px;
-    max-height: 20px;
+    min-height: 22px;
+    max-height: 24px;
     selection-background-color: #2d79b7;
     selection-color: #ffffff;
 }
@@ -161,7 +185,7 @@ QComboBox QAbstractItemView {
     selection-background-color: #2d79b7;
     selection-color: #ffffff;
 }
-QComboBox QAbstractItemView::item { min-height: 18px; padding: 1px 5px; }
+QComboBox QAbstractItemView::item { min-height: 22px; padding: 2px 5px; }
 
 QPushButton {
     background: #dddddd;

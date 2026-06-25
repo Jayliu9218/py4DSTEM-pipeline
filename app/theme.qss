@@ -233,8 +233,8 @@ QGroupBox#paramForm QSpinBox,
 QGroupBox#paramForm QDoubleSpinBox {
     background: #1a1a1a;
     border: 1px solid #555555;
-    min-height: 18px;
-    max-height: 20px;
+    min-height: 22px;
+    max-height: 24px;
     border-radius: 2px;
 }
 QGroupBox#paramForm QLineEdit:hover,
@@ -245,8 +245,32 @@ QGroupBox#paramForm QDoubleSpinBox:hover {
 }
 /* Flat buttons inside param-form boxes. */
 QGroupBox#paramForm QPushButton {
-    min-height: 20px;
+    min-height: 24px;
     border-radius: 2px;
+}
+QLabel#propertyGridLabel {
+    color: #e0e0e0;
+    border-right: 1px solid #444444;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 3px 6px;
+    min-height: 22px;
+    font-weight: normal;
+}
+QLabel#propertyGridLabel[rowParity="even"],
+#propertyGridValue[rowParity="even"] {
+    background: #303030;
+}
+QLabel#propertyGridLabel[rowParity="odd"],
+#propertyGridValue[rowParity="odd"] {
+    background: #383838;
+}
+#propertyGridValue,
+QWidget#propertyGridAction {
+    border-bottom: 1px solid #3c3c3c;
+}
+QWidget#propertyGridAction {
+    padding-top: 3px;
+    padding-bottom: 3px;
 }
 /* --- Tables -------------------------------------------------------------- */
 QTableWidget {
@@ -274,7 +298,7 @@ QLineEdit {
     border: 1px solid #404040;
     border-radius: 2px;
     padding: 1px 4px;
-    min-height: 18px;
+    min-height: 22px;
     selection-background-color: #4a9eff;
     selection-color: #ffffff;
 }

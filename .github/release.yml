@@ -5,9 +5,8 @@ changelog:
         - workflow
         - ui
         - enhancement
-    - title: Packaging and Release
+    - title: Release
       labels:
-        - packaging
         - release
         - ci
     - title: Fixes

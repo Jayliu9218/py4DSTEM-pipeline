@@ -6,7 +6,7 @@ from typing import Callable
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -230,11 +230,16 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("reference ROI ry end", self.strain_roi_ry_end),
             ("", self.strain_button),
         ])
+        self.status_group = self._group("Status", [
+            ("Message", self.status_label),
+        ])
+        self.status_label.setWordWrap(True)
         controls = QWidget()
         layout = QVBoxLayout(controls)
         layout.setContentsMargins(0, 0, 0, 0)
         for group in self.groups.values():
             layout.addWidget(group)
+        layout.addWidget(self.status_group)
         layout.addStretch(1)
         self.controls_panel = controls
         main = QVBoxLayout(self)
@@ -654,9 +659,30 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def _group(self, title: str, rows: list[tuple[str, QWidget]]) -> QGroupBox:
         group = QGroupBox(title)
-        form = QFormLayout(group)
-        for label, widget in rows:
-            form.addRow(label, widget)
+        group.setProperty("panelMode", "propertyGrid")
+        grid = QGridLayout(group)
+        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setHorizontalSpacing(0)
+        grid.setVerticalSpacing(0)
+        grid.setColumnMinimumWidth(0, 140)
+        grid.setColumnMinimumWidth(1, 120)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        for row, (label, widget) in enumerate(rows):
+            row_parity = "even" if row % 2 == 0 else "odd"
+            if label:
+                label_widget = QLabel(label)
+                label_widget.setObjectName("propertyGridLabel")
+                label_widget.setProperty("rowParity", row_parity)
+                label_widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                grid.addWidget(label_widget, row, 0)
+                widget.setObjectName(widget.objectName() or "propertyGridValue")
+                widget.setProperty("rowParity", row_parity)
+                widget.setAutoFillBackground(True)
+                grid.addWidget(widget, row, 1)
+            else:
+                widget.setObjectName(widget.objectName() or "propertyGridAction")
+                grid.addWidget(widget, row, 0, 1, 2)
         return group
 
     def _row(self, *widgets: QWidget) -> QWidget:

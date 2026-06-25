@@ -11,8 +11,7 @@ that need careful validation on representative 4D-STEM datasets.
 ### Summary
 
 - Source-code preview release for early validation.
-- Published as a GitHub prerelease with no exe, installer, or portable zip
-  asset.
+- Published as a source-only GitHub prerelease.
 
 ### Added
 
