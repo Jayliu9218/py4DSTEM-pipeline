@@ -10,7 +10,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 from app.main_window import MainWindow
-from app.services.py4dstem_service import Py4DSTEMService, Py4DSTEMServiceError
+from app.services.py4dstem_service import (
+    DirectDataCubeImportOptions,
+    Py4DSTEMService,
+    Py4DSTEMServiceError,
+)
 from app.widgets.adaptive_image_workspace import FigureResult
 
 
@@ -200,6 +204,33 @@ class FileOpenAndRolesTests(unittest.TestCase):
 
             np.testing.assert_array_equal(self.window.diffraction_viewer.raw_image, data[0, 0, :, :])
             self.assertIn("[0, 0]", self.window.preview_status)
+        finally:
+            self.window._close_current_file()
+            path.unlink(missing_ok=True)
+
+    def test_mib_full_dataset_option_updates_crystal_analysis_controls(self) -> None:
+        path = self.path.parent / "full_dataset_direct_datacube.mib"
+        path.write_bytes(b"mib")
+        datacube = Mock(shape=(2, 3, 4, 5), name="direct_datacube", data=np.ones((2, 3, 4, 5)))
+        module = Mock()
+        module.import_file.return_value = datacube
+        try:
+            with (
+                patch.object(self.window.py4dstem_service, "_py4dstem", return_value=module),
+                patch.object(self.window.calibration_page, "refresh_status"),
+            ):
+                self.window._open_file_path(
+                    str(path),
+                    import_options=DirectDataCubeImportOptions(
+                        scan_shape=(512, 512),
+                        mem_mode="MEMMAP",
+                        roi_tuning_mode=False,
+                    ),
+                )
+
+            self.assertEqual(self.window.crystal_cif_page.run_mode.currentText(), "Full Dataset")
+            self.assertEqual(self.window.crystal_phase_page.run_mode.currentText(), "Full Dataset")
+            self.assertIsNone(self.window.phase_mapping_service.analysis_roi((512, 512)))
         finally:
             self.window._close_current_file()
             path.unlink(missing_ok=True)

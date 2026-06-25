@@ -1062,6 +1062,8 @@ class MainWindow(QMainWindow):
         self._set_preview_empty("MIB DataCube loaded. Select a scan position to preview diffraction.")
         self._clear_dataset_info()
         info = self.session.open_direct_datacube(file_path, import_options=import_options)
+        if import_options is not None:
+            self._apply_mib_crystal_defaults(import_options)
         self.current_file = None
         self.tree.populate_direct_source(f"{Path(file_path).name}  {info.shape}", info.datapath)
         self._clear_all_image_workspaces()
@@ -1085,6 +1087,38 @@ class MainWindow(QMainWindow):
         self.bragg_peaks_page.refresh_from_datacube()
         self.calibration_page.refresh_status()
         self.log_panel.log(f"Opened MIB DataCube: {file_path}")
+
+    def _apply_mib_crystal_defaults(self, options: DirectDataCubeImportOptions) -> None:
+        mode = "ROI 128x128" if options.roi_tuning_mode else "Full Dataset"
+        roi_size = min(128, max(1, min(options.scan_shape)))
+        for page_name in (
+            "crystal_cif_page",
+            "crystal_structure_page",
+            "crystal_simulated_page",
+            "crystal_phase_page",
+            "crystal_orientation_page",
+            "crystal_grain_page",
+            "crystal_strain_page",
+        ):
+            page = getattr(self, page_name, None)
+            if page is None:
+                continue
+            page.run_mode.setCurrentText(mode)
+            page.roi_size.setValue(roi_size)
+        service = getattr(self, "phase_mapping_service", None)
+        if not hasattr(service, "set_run_config"):
+            return
+        try:
+            from app.services.crystal_analysis_service import CrystalAnalysisRunConfig
+
+            service.set_run_config(
+                CrystalAnalysisRunConfig(
+                    mode=mode,
+                    roi_size=roi_size,
+                )
+            )
+        except Exception:
+            return
 
     def save_project(self) -> None:
         output_dir = self.project_coordinator.save_project(

@@ -229,6 +229,12 @@ class PhaseMappingService:
             images[f"{entry.name} IPF"] = per_phase_rgb[i]
         low_conf_mask = confidence < params.low_confidence_threshold
         images["Low Confidence Mask"] = low_conf_mask
+        if np.any(low_conf_mask):
+            count = int(np.count_nonzero(low_conf_mask))
+            total = int(low_conf_mask.size)
+            warnings.append(
+                f"{count}/{total} scan positions are below the phase confidence threshold."
+            )
         if len(correlation_maps) < 2:
             warnings.append("Phase discrimination requires at least two enabled crystals.")
         result = PhaseMatchResult(

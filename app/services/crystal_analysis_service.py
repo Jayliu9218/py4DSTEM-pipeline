@@ -204,8 +204,7 @@ class CrystalAnalysisService(PhaseMappingService):
         return self.strain_result
 
     def _composite_phase_orientation(self, result: PhaseMatchResult) -> np.ndarray | None:
-        rgbs = [np.asarray(rgb, dtype=float) for rgb in result.per_phase_rgb if np.asarray(rgb).ndim == 3]
-        if not rgbs:
+        if not any(np.asarray(rgb).ndim == 3 for rgb in result.per_phase_rgb):
             return None
         composite = np.zeros(result.phase_label_map.shape, dtype=float)
         for index, rgb in enumerate(result.per_phase_rgb):

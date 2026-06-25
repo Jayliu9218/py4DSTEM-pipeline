@@ -2,11 +2,15 @@ import types
 import unittest
 
 import numpy as np
+from PySide6.QtWidgets import QApplication
 
 from app.controllers.route_coordinator import build_route_modules
+from app.pages.structural_phase_page import StructuralPhasePage
 from app.services.crystal_analysis_service import CrystalAnalysisService
 from app.services.phase_mapping_service import PhaseMatchParams, PhasePlanParams
 from app.services.workflow_state import WorkflowState, WorkflowStep
+from app.widgets.log_panel import LogPanel
+from app.widgets.numeric_line_edit import NumericLineEdit
 
 
 class _OrientationMap:
@@ -58,6 +62,10 @@ class _BraggVectors:
 
 
 class CrystalAnalysisServiceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
     def _add(self, service, crystal):
         service.context.crystals.append(
             types.SimpleNamespace(
@@ -108,7 +116,7 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         np.testing.assert_allclose(result.confidence_map, np.array([[0.5, 0.6], [0.4, 0.5]]))
         self.assertIn("Composite Phase + Orientation", result.images)
 
-    def test_low_confidence_mask_and_single_phase_orientation_summary(self):
+    def test_single_phase_orientation_summary_warns_without_discrimination(self):
         service = CrystalAnalysisService()
         self._add(service, _Crystal("Ti-hcp", [[0.55, 0.55], [0.55, 0.55]]))
         service.build_orientation_libraries(PhasePlanParams())
@@ -119,6 +127,17 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         self.assertFalse(np.any(result.images["Low Confidence Mask"]))
         self.assertIn("Phase discrimination requires at least two enabled crystals.", result.warnings)
         self.assertIn("Composite Phase + Orientation", service.orientation_summary().images)
+
+    def test_low_confidence_pixels_generate_warning(self):
+        service = CrystalAnalysisService()
+        self._add(service, _Crystal("Ti-fcc", [[0.55, 0.51], [0.80, 0.20]]))
+        self._add(service, _Crystal("Ti-hcp", [[0.50, 0.49], [0.10, 0.18]]))
+        service.build_orientation_libraries(PhasePlanParams())
+
+        result = service.match_phases(_BraggVectors(), PhaseMatchParams(low_confidence_threshold=0.05))
+
+        np.testing.assert_array_equal(result.images["Low Confidence Mask"], np.array([[False, True], [False, True]]))
+        self.assertIn("2/4 scan positions are below", " ".join(result.warnings))
 
     def test_optional_strain_warns_when_api_missing_and_masks_when_available(self):
         service = CrystalAnalysisService()
@@ -138,6 +157,21 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         state.mark_completed(WorkflowStep.CRYSTAL_PHASE)
         state.parameters_updated(WorkflowStep.CALIBRATION_APPLY)
         self.assertTrue(state.is_stale(WorkflowStep.CRYSTAL_PHASE))
+
+    def test_crystal_stage_groups_do_not_reparent_shared_parameter_widgets(self):
+        service = CrystalAnalysisService()
+        page = StructuralPhasePage(lambda: None, LogPanel(), WorkflowState(), service=service)
+        try:
+            plan_widgets = set(page.groups["plan"].findChildren(NumericLineEdit))
+            structure_widgets = set(page.groups["structure"].findChildren(NumericLineEdit))
+            simulated_widgets = set(page.groups["simulated"].findChildren(NumericLineEdit))
+
+            self.assertIn(page.k_max, plan_widgets)
+            self.assertIn(page.zone_step, plan_widgets)
+            self.assertNotIn(page.k_max, structure_widgets)
+            self.assertNotIn(page.zone_step, simulated_widgets)
+        finally:
+            page.close()
 
 
 if __name__ == "__main__":

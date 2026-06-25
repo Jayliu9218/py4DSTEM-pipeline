@@ -165,13 +165,11 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("Fiber symmetry order", self.symmetry_order), ("", self.plan_button),
         ])
         self.groups["structure"] = self._group("Structure Factors", [
-            ("k_max", self.k_max),
-            ("Accelerating voltage", self.voltage),
+            ("Parameters", QLabel("Uses voltage and k_max from the CIF planning controls.")),
             ("", self.structure_button),
         ])
         self.groups["simulated"] = self._group("Simulated Diffraction", [
-            ("Mode", self.mode), ("Zone-axis step", self.zone_step),
-            ("In-plane step", self.plane_step), ("Correlation kernel", self.corr_kernel_size),
+            ("Parameters", QLabel("Uses mode, angular steps, and kernel settings from the CIF plan.")),
             ("", self.simulate_button),
         ])
         self.groups["match"] = self._group("Phase Matching", [
