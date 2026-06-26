@@ -14,9 +14,9 @@ from app.widgets.pipeline_shell import (
 
 
 GOALS_BY_STRUCTURE = {
-    "Crystalline / Bragg-based": ["Crystal Analysis"],
-    "Amorphous / Diffuse-scattering": ["RDF", "FEM", "Amorphous Strain"],
-    "Phase Retrieval / Ptychography": [
+    "Crystalline": ["Crystal Analysis"],
+    "Amorphous": ["RDF", "FEM", "Amorphous Strain"],
+    "Phase Retrieval": [
         "DPC / CoM",
         "Parallax",
         "Ptychography",
@@ -26,10 +26,10 @@ GOALS_BY_STRUCTURE = {
 
 
 def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
-    crystalline_route = structure == "Crystalline / Bragg-based"
+    crystalline_route = structure == "Crystalline"
     common = RouteModule(
         "data_setup",
-        "Data, Preprocess & Virtual Image" if crystalline_route else "Data Setup",
+        "Preprocess" if crystalline_route else "Data Setup",
         "virtual" if crystalline_route else "overview",
         "Open an HDF5 / EMD / MIB file, assign dataset roles, inspect the DataCube, preview/apply preprocessing, and generate a virtual image.",
         "Validated roles, DataCube diagnostics, preprocessing preview, and a virtual image for Bragg detection.",
@@ -37,23 +37,25 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
     )
     if crystalline_route:
         modules = _crystalline_modules(common, goal)
-    elif structure == "Amorphous / Diffuse-scattering":
+    elif structure == "Amorphous":
         modules = _amorphous_modules(common, goal)
-    elif structure == "Phase Retrieval / Ptychography":
+    elif structure == "Phase Retrieval":
         modules = _phase_retrieval_modules(common, goal)
     else:
         return [common]
-    export_page = {
+    dedicated_export_page = {
         "Parallax": "parallax_export",
         "Ptychography": "ptychography_export",
-    }.get(goal, modules[-1].page_key)
+    }.get(goal)
+    if dedicated_export_page is None:
+        return modules
     return modules + [
         RouteModule(
             "export",
             "Export",
-            export_page,
-            "Registered workflow results.",
-            "Saved project, report, or exported result files.",
+            dedicated_export_page,
+            "Workflow-specific export package settings.",
+            "Saved workflow-specific export package.",
             prerequisite=modules[-1].key,
         )
     ]
@@ -62,7 +64,7 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
 def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
     shared = [
         common,
-        RouteModule("bragg_detection", "Probe & Bragg", "bragg",
+        RouteModule("bragg_detection", "Bragg", "bragg",
             "Virtual image and target DataCube; vacuum probe or vacuum ROI recommended.",
             "Probe kernel, target/reference BraggVectors, histograms, and diagnostics.",
             WorkflowStep.BRAGG_FULL, "data_setup"),
@@ -72,15 +74,15 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
             WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
     ]
     return shared + [
-        RouteModule("phase_setup", "Crystal Setup & Phase Matching", "crystal_cif",
+        RouteModule("phase_setup", "Phases", "crystal_cif",
             "Calibrated BraggVectors; add CIF crystal structures, calculate structure factors, build libraries, and match phases.",
             "Enabled phase candidates, simulated diffraction libraries, phase ID map, confidence gap map, and masks.",
             WorkflowStep.CRYSTAL_PHASE, "calibration"),
-        RouteModule("orientation_matching", "Orientation & Grain", "crystal_orientation",
+        RouteModule("orientation_matching", "Orientation", "crystal_orientation",
             "Phase-matching result and winning phase masks.",
             "Phase-conditioned orientation maps, orientation quality review, and optional grain labels.",
             WorkflowStep.CRYSTAL_ORIENTATION, "phase_setup"),
-        RouteModule("strain_analysis", "Strain & Results", "crystal_strain",
+        RouteModule("strain_analysis", "Strain", "crystal_strain",
             "Phase masks, orientation outputs, and calibrated BraggVectors.",
             "Phase-masked strain maps and final crystal-analysis quality figures.",
             WorkflowStep.CRYSTAL_STRAIN, "orientation_matching"),

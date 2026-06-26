@@ -177,6 +177,7 @@ class ModuleControlPanel(QWidget):
         self.setObjectName("moduleControlPanel")
         self.title = QLabel("Data Setup")
         self.title.setObjectName("moduleTitle")
+        self.title.hide()
         self.controls_stack = QStackedWidget()
         self.controls_stack.setObjectName("moduleControlsSurface")
         self._controls: dict[int, QWidget] = {}
@@ -187,9 +188,6 @@ class ModuleControlPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN, PANEL_MARGIN)
         layout.setSpacing(GROUP_SPACING)
-        header = QHBoxLayout()
-        header.addWidget(self.title, 1)
-        layout.addLayout(header)
         layout.addWidget(self.controls_stack, 1)
 
     def set_module(self, module: RouteModule, controls: QWidget | None) -> None:
@@ -321,7 +319,7 @@ class ProjectToolbar(QWidget):
         super().__init__()
         self.setObjectName("projectToolbar")
         self.structure = QComboBox()
-        self.structure.addItems(["Crystalline / Bragg-based", "Amorphous / Diffuse-scattering", "Phase Retrieval / Ptychography"])
+        self.structure.addItems(["Crystalline", "Amorphous", "Phase Retrieval"])
         self.goal = QComboBox()
         self.structure.currentTextChanged.connect(self.structure_changed)
         self.goal.currentTextChanged.connect(self.goal_changed)

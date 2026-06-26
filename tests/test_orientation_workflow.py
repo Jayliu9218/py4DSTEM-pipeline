@@ -142,11 +142,11 @@ class OrientationWorkflowTests(unittest.TestCase):
         self.assertIn("Low Confidence Mask", result.images)
 
     def test_route_and_state_follow_shared_crystalline_acceptance_gate(self):
-        modules = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
+        modules = build_route_modules("Crystalline", "Crystal Analysis")
         self.assertEqual(
             [module.key for module in modules],
             ["data_setup", "bragg_detection", "calibration", "phase_setup",
-             "orientation_matching", "strain_analysis", "export"],
+             "orientation_matching", "strain_analysis"],
         )
         state = WorkflowState()
         state.mark_completed_many({

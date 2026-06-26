@@ -11,21 +11,20 @@ class RouteDefinitionTests(unittest.TestCase):
                     modules = build_route_modules(structure, goal)
                     keys = [module.key for module in modules]
                     self.assertEqual(keys[0], "data_setup")
-                    self.assertEqual(keys[-1], "export")
                     self.assertEqual(len(keys), len(set(keys)))
                     for module in modules:
                         if module.prerequisite:
                             self.assertIn(module.prerequisite, keys)
 
     def test_focused_routes_keep_expected_stage_order(self) -> None:
-        dpc = build_route_modules("Phase Retrieval / Ptychography", "DPC / CoM")
-        parallax = build_route_modules("Phase Retrieval / Ptychography", "Parallax")
-        ptychography = build_route_modules("Phase Retrieval / Ptychography", "Ptychography")
-        crystal = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
+        dpc = build_route_modules("Phase Retrieval", "DPC / CoM")
+        parallax = build_route_modules("Phase Retrieval", "Parallax")
+        ptychography = build_route_modules("Phase Retrieval", "Ptychography")
+        crystal = build_route_modules("Crystalline", "Crystal Analysis")
 
         self.assertEqual(
             [module.key for module in dpc],
-            ["data_setup", "bf_df_preview", "dpc_segmented", "dpc_preprocess", "dpc", "export"],
+            ["data_setup", "bf_df_preview", "dpc_segmented", "dpc_preprocess", "dpc"],
         )
         self.assertEqual(
             [module.key for module in parallax],
@@ -49,7 +48,7 @@ class RouteDefinitionTests(unittest.TestCase):
         self.assertEqual(
             [module.key for module in crystal],
             ["data_setup", "bragg_detection", "calibration", "phase_setup",
-             "orientation_matching", "strain_analysis", "export"],
+             "orientation_matching", "strain_analysis"],
         )
 
 if __name__ == "__main__":

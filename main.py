@@ -33,7 +33,7 @@ def main() -> int:
     app = QApplication([])
     # Fusion gives a consistent cross-platform base for the custom QSS theme.
     app.setStyle("Fusion")
-    font = QFont("Segoe UI", 9)
+    font = QFont("Segoe UI", 8)
     app.setFont(font)
     app.setApplicationName("4D-STEM Analysis Pipeline")
     app.setApplicationVersion(__version__)

@@ -46,9 +46,9 @@ class SplashScreen(QSplashScreen):
         logo_w = _LOGO_WIDTH
         logo_h = int(logo.height() * logo_w / max(logo.width(), 1)) if not logo.isNull() else 0
 
-        title_font = QFont("Segoe UI", 20)
+        title_font = QFont("Segoe UI", 19)
         title_font.setBold(True)
-        subtitle_font = QFont("Segoe UI", 10)
+        subtitle_font = QFont("Segoe UI", 9)
 
         # Width is driven by logo + side padding; height by the vertical stack.
         width = logo_w + _SIDE_PAD * 2

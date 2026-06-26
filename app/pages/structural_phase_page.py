@@ -79,7 +79,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
     def _create_controls(self) -> None:
         self.crystal_list = QListWidget()
         self.crystal_list.setMaximumHeight(140)
-        self.add_cif_button = QPushButton("Add Crystal CIF")
+        self.add_cif_button = QPushButton("Add Phase CIF")
         self.add_cif_button.clicked.connect(self.add_crystal)
         self.remove_crystal_button = QPushButton("Remove Selected")
         self.remove_crystal_button.clicked.connect(self.remove_crystal)
@@ -130,7 +130,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.low_confidence = self._float(-1000, 1000, 0.1, 4, unit="ratio")
         self.match_button = QPushButton("Match All Phases")
         self.match_button.clicked.connect(
-            lambda: self._start("Phase Matching", lambda: self.service.match_phases(self.braggvectors_provider(), self._match_params()))
+            lambda: self._start("Phases", lambda: self.service.match_phases(self.braggvectors_provider(), self._match_params()))
         )
         self.orientation_button = QPushButton("Review Phase-Conditioned Orientation")
         self.orientation_button.clicked.connect(
@@ -202,7 +202,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("Parameters", QLabel("Uses mode, angular steps, and kernel settings from the CIF plan.")),
             ("", self.simulate_button),
         ])
-        self.groups["match"] = section("Phase Matching", [
+        self.groups["match"] = section("Phases", [
             ("Candidates", self.match_matches), ("Min candidate angle", self.match_min_angle),
             ("Min peaks", self.match_min_peaks), ("Low-confidence threshold", self.low_confidence),
             ("", self.match_inversion), ("", self.corr_normalize), ("", self.match_button),
@@ -284,7 +284,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self.crystal_list.addItem(item)
 
     def add_crystal(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Add crystal structure", "", "CIF files (*.cif)")
+        path, _ = QFileDialog.getOpenFileName(self, "Add phase crystal CIF", "", "CIF files (*.cif)")
         if not path:
             return
         try:
@@ -312,7 +312,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self._failed(str(exc))
 
     def _start(self, name: str, operation) -> None:
-        if name == "Phase Matching":
+        if name == "Phases":
             self.workspace.lock_auto_layout()
         self._sync_run_config()
         self.pending_name = name

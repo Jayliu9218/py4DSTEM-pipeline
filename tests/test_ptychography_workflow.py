@@ -72,7 +72,7 @@ class PtychographyWorkflowTests(unittest.TestCase):
         self.service.advanced_reconstruct(PtychographyReconstructionParams())
 
     def test_focused_route_is_standalone_eight_stage_template(self) -> None:
-        modules = build_route_modules("Phase Retrieval / Ptychography", "Ptychography")
+        modules = build_route_modules("Phase Retrieval", "Ptychography")
         self.assertEqual(
             [module.key for module in modules],
             [

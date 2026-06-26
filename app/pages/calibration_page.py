@@ -129,7 +129,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.draw_ellipse_circle_button = QPushButton("Draw ROI")
         self.ellipse_button = QPushButton("Fit")
         self.pixel_button = QPushButton("Set Q Pixel Size")
-        self.load_cif_button = QPushButton("Load Crystal CIF")
+        self.load_cif_button = QPushButton("Load Pixel-Size CIF")
         self.fit_pixel_button = QPushButton("Fit Pixel Size")
         self.rotation_button = QPushButton("Set QR Rotation")
         self.apply_origin_button = QPushButton("Apply")
@@ -282,7 +282,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.show_braggvectors_histogram()
 
     def _load_crystal_cif(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Load crystal CIF", "", "CIF files (*.cif)")
+        path, _ = QFileDialog.getOpenFileName(self, "Load pixel-size calibration CIF", "", "CIF files (*.cif)")
         if path:
             self.crystal_cif_path = path
             self.crystal_path_label.setText(path)

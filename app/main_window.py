@@ -395,9 +395,9 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
 
         self.mode_menu = self.menuBar().addMenu("&Mode")
-        self.crystalline_mode_action = self.mode_menu.addAction("Crystalline / Bragg-based")
-        self.amorphous_mode_action = self.mode_menu.addAction("Amorphous / Diffuse-scattering")
-        self.phase_retrieval_mode_action = self.mode_menu.addAction("Phase Retrieval / Ptychography")
+        self.crystalline_mode_action = self.mode_menu.addAction("Crystalline")
+        self.amorphous_mode_action = self.mode_menu.addAction("Amorphous")
+        self.phase_retrieval_mode_action = self.mode_menu.addAction("Phase Retrieval")
 
         self.layout_menu = self.menuBar().addMenu("&Layout")
         self.reset_layout_action = self.layout_menu.addAction("Reset &Layout")
@@ -725,13 +725,13 @@ class MainWindow(QMainWindow):
         self.project_toolbar.export_clicked.connect(self._show_export_workspace)
         self.route_bar.module_selected.connect(self._select_route_module)
         self.crystalline_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+            lambda: self.project_toolbar.structure.setCurrentText("Crystalline")
         )
         self.amorphous_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
+            lambda: self.project_toolbar.structure.setCurrentText("Amorphous")
         )
         self.phase_retrieval_mode_action.triggered.connect(
-            lambda: self.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+            lambda: self.project_toolbar.structure.setCurrentText("Phase Retrieval")
         )
 
         # --- Central widget: top toolbar/route bar + viewer stack ---

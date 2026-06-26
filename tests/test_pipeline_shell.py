@@ -47,9 +47,15 @@ class PipelineShellTests(unittest.TestCase):
         cls.window.close()
 
     def setUp(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+        self.window.project_toolbar.structure.setCurrentText("Crystalline")
         self.window.project_toolbar.goal.setCurrentText("Crystal Analysis")
         self.window.current_route_key = "data_setup"
+        for page in (
+            self.window.crystal_cif_page,
+            self.window.crystal_orientation_page,
+            self.window.crystal_strain_page,
+        ):
+            page.workspace.set_layout("4")
         self.window._refresh_pipeline_state()
 
     def test_crystalline_route_uses_named_modules_not_numbered_steps(self) -> None:
@@ -58,13 +64,12 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(
             titles,
             [
-                "Data, Preprocess & Virtual Image",
-                "Probe & Bragg",
+                "Preprocess",
+                "Bragg",
                 "Calibration",
-                "Crystal Setup & Phase Matching",
-                "Orientation & Grain",
-                "Strain & Results",
-                "Export",
+                "Phases",
+                "Orientation",
+                "Strain",
             ],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
@@ -109,17 +114,14 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(results.layout_choice.currentText(), "1")
         self.assertEqual(results.current_page, 1)
 
-    def test_crystalline_export_is_final_and_keeps_results_workspace(self) -> None:
-        self.assertEqual(self.window.route_modules[-1].key, "export")
-        self.assertEqual(self.window.route_modules[-1].page_key, "crystal_strain")
-        self.window._select_route_module("export")
-        self.assertIs(
-            self.window.viewer_stack.currentWidget(),
-            self.window.crystal_strain_page,
-        )
+    def test_crystalline_route_uses_toolbar_export_instead_of_duplicate_tab(self) -> None:
+        self.assertEqual(self.window.route_modules[-1].key, "strain_analysis")
+        self.assertNotIn("export", [module.key for module in self.window.route_modules])
+        self.window._show_export_workspace()
+        self.assertIs(self.window.viewer_stack.currentWidget(), self.window.main_view)
 
     def test_phase_retrieval_export_routes_use_dedicated_pages(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval")
         for goal, page in (
             ("Parallax", self.window.parallax_export_page),
             ("Ptychography", self.window.ptychography_export_page),
@@ -131,17 +133,17 @@ class PipelineShellTests(unittest.TestCase):
             self.assertIs(self.window.viewer_stack.currentWidget(), page)
 
     def test_structure_and_goal_change_rebuilds_route(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Amorphous / Diffuse-scattering")
+        self.window.project_toolbar.structure.setCurrentText("Amorphous")
         self.window.project_toolbar.goal.setCurrentText("FEM")
 
         titles = [module.title for module in self.window.route_modules]
         self.assertEqual(
             titles,
-            ["Data Setup", "Radial Profile", "FEM", "Export"],
+            ["Data Setup", "Radial Profile", "FEM"],
         )
 
     def test_phase_retrieval_route_builds_correctly(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval")
         self.window.project_toolbar.goal.setCurrentText("DPC / CoM")
 
         titles = [module.title for module in self.window.route_modules]
@@ -153,7 +155,6 @@ class PipelineShellTests(unittest.TestCase):
                 "Segmented DPC",
                 "CoM Preprocessing & Review",
                 "Integrated Reconstruction",
-                "Export",
             ],
         )
         segmented = next(module for module in self.window.route_modules if module.key == "dpc_segmented")
@@ -244,7 +245,7 @@ class PipelineShellTests(unittest.TestCase):
         self.assertIn("explicitly accept preprocessing", preprocess.status_label.text())
 
     def test_parallax_goal_uses_focused_six_module_route(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval")
         self.window.project_toolbar.goal.setCurrentText("Parallax")
 
         self.assertEqual(
@@ -594,7 +595,7 @@ class PipelineShellTests(unittest.TestCase):
                 self.assertLess(widget.minimumHeight(), widget.maximumHeight())
 
     def test_dynamic_parameter_group_grows_for_multiline_warnings(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval")
         self.window.project_toolbar.goal.setCurrentText("Ptychography")
         self.window._select_route_module("ptychography_data")
         page = self.window.ptychography_data_page
@@ -631,6 +632,10 @@ class PipelineShellTests(unittest.TestCase):
         table = self.window.orientation_setup_page.atom_table
         self.assertEqual(table.height(), PARAM_TABLE_HEIGHT)
         self.assertEqual(table.verticalScrollBarPolicy(), Qt.ScrollBarAsNeeded)
+
+    def test_controls_panel_does_not_repeat_route_title(self) -> None:
+        self.window._select_route_module("strain_analysis")
+        self.assertTrue(self.window.module_panel.title.isHidden())
 
     def test_shared_shell_uses_compact_industrial_density(self) -> None:
         self.window._select_route_module("calibration")
@@ -678,7 +683,7 @@ class PipelineShellTests(unittest.TestCase):
         )
 
     def test_bf_df_controls_use_shared_parameter_group_frame(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval / Ptychography")
+        self.window.project_toolbar.structure.setCurrentText("Phase Retrieval")
         self.window._select_route_module("bf_df_preview")
         panel = self.window.bf_df_preview_page.controls_panel
 
@@ -711,7 +716,7 @@ class PipelineShellTests(unittest.TestCase):
         self.assertTrue(any(label.property("rowParity") == "odd" for label in dense_labels))
         self.assertTrue(all(label.autoFillBackground() for label in dense_labels))
 
-        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+        self.window.project_toolbar.structure.setCurrentText("Crystalline")
         self.window._select_route_module("data_setup")
         compact_labels = [
             label
@@ -736,13 +741,15 @@ class PipelineShellTests(unittest.TestCase):
             self.assertIn(f"background: {odd};", qss)
 
     def test_crystal_analysis_workspace_exposes_default_grid_controls(self) -> None:
-        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+        self.window.project_toolbar.structure.setCurrentText("Crystalline")
 
         for key in ("phase_setup", "orientation_matching"):
             with self.subTest(route=key):
                 self.window._select_route_module(key)
                 workspace = self.window.viewer_stack.currentWidget().workspace
                 self.assertEqual(workspace.layout_choice.currentText(), "4")
+                self.assertIs(workspace.parent(), self.window.viewer_stack.currentWidget())
+                self.assertIs(self.window.viewer_stack.currentWidget().layout().itemAt(0).widget(), workspace)
                 self.assertFalse(workspace.layout_choice.isHidden())
                 self.assertFalse(workspace.reset_button.isHidden())
                 self.assertEqual(

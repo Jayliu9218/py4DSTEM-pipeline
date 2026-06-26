@@ -21,9 +21,9 @@ class LogPanelTests(unittest.TestCase):
 
     def test_failure_keeps_progress_until_next_calculation(self) -> None:
         panel = LogPanel()
-        panel.process_started("Probe & Bragg")
+        panel.process_started("Bragg")
         panel.process_progress("45%")
-        panel.process_failed("Probe & Bragg", "failed")
+        panel.process_failed("Bragg", "failed")
         self.assertEqual(panel.progress.value(), 45)
         panel.process_started("Results")
         self.assertEqual((panel.progress.minimum(), panel.progress.maximum()), (0, 0))

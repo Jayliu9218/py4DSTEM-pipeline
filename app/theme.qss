@@ -12,7 +12,7 @@ QMainWindow,
 QWidget {
     background: #2b2b2b;
     color: #e0e0e0;
-    font-size: 11pt;
+    font-size: 10pt;
 }
 
 QDialog {
@@ -91,7 +91,7 @@ QToolButton#routeButton {
     border: none;
     padding: 3px 5px;
     color: #c0c0c0;
-    font-size: 10pt;
+    font-size: 9pt;
 }
 QToolButton#routeButton:checked {
     background: #4a6878;
@@ -114,7 +114,7 @@ QToolButton#routeButton[implemented="false"]:checked {
 }
 QLabel#routeArrow {
     color: #666666;
-    font-size: 12pt;
+    font-size: 11pt;
 }
 
 /* --- Dividers ------------------------------------------------------------ */
@@ -178,13 +178,13 @@ QWidget#moduleControlsContent {
     background: #1e1e1e;
 }
 QLabel#moduleTitle {
-    font-size: 12pt;
+    font-size: 11pt;
     font-weight: bold;
     color: #e0e0e0;
     padding: 2px 0;
 }
 QLabel#sectionTitle {
-    font-size: 11pt;
+    font-size: 10pt;
     font-weight: bold;
     color: #b0b0b0;
 }
@@ -502,7 +502,7 @@ QWidget#dataPreviewBar {
 }
 QLabel#dataPreviewHint {
     color: #a8a8a8;
-    font-size: 10pt;
+    font-size: 9pt;
     padding-left: 1px;
 }
 QPushButton#previewSelectedButton {
@@ -631,7 +631,7 @@ QTextEdit {
     border: 1px solid #3c3c3c;
     border-radius: 2px;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 11pt;
+    font-size: 10pt;
 }
 /* --- Status bar ---------------------------------------------------------- */
 QStatusBar {

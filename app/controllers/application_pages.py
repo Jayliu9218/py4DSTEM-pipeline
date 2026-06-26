@@ -194,8 +194,14 @@ class ApplicationPages:
             workflow_state=workflow_state,
         )
         phase_mapping_service = CrystalAnalysisService()
-        phase_workspace = AdaptiveImageWorkspace()
-        phase_workspace.apply_layout_preference("4")
+        phase_workspaces = {
+            "crystal_cif_page": AdaptiveImageWorkspace(),
+            "crystal_orientation_page": AdaptiveImageWorkspace(),
+            "crystal_strain_page": AdaptiveImageWorkspace(),
+        }
+        ApplicationPages._sync_workspace_layouts(list(phase_workspaces.values()))
+        for workspace in phase_workspaces.values():
+            workspace.apply_layout_preference("4")
         for name, stage in (
             ("crystal_cif_page", "library_match"),
             ("crystal_orientation_page", "orientation_grain"),
@@ -205,7 +211,7 @@ class ApplicationPages:
                 braggvectors_provider=providers["braggvectors"],
                 service=phase_mapping_service,
                 stage_mode=stage,
-                workspace=phase_workspace,
+                workspace=phase_workspaces[name],
                 **common,
             )
         pages["crystal_structure_page"] = pages["crystal_cif_page"]
@@ -232,6 +238,14 @@ class ApplicationPages:
             if ApplicationPages.workspace_for_page(page) is None or page.layout() is None:
                 continue
             page.layout().setContentsMargins(0, 0, 0, 0)
+
+    @staticmethod
+    def _sync_workspace_layouts(workspaces: list[AdaptiveImageWorkspace]) -> None:
+        for source in workspaces:
+            for target in workspaces:
+                if source is target:
+                    continue
+                source.layout_changed.connect(target.apply_layout_preference)
 
     def controls_for_route(self, key: str, goal: str) -> QWidget | None:
         if key == "crystal_analysis":

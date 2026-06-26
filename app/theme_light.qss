@@ -3,7 +3,7 @@
 QMainWindow, QWidget {
     background: #dedede;
     color: #111111;
-    font-size: 11pt;
+    font-size: 10pt;
 }
 QDialog { background: #dedede; color: #111111; }
 QLabel { color: #111111; background: transparent; }
@@ -57,7 +57,7 @@ QToolButton#routeButton {
     color: #303030;
     border: 1px solid #8d8d8d;
     padding: 3px 5px;
-    font-size: 10pt;
+    font-size: 9pt;
 }
 QToolButton#routeButton:checked {
     background: #d7e8f4;
@@ -68,7 +68,7 @@ QToolButton#routeButton:checked {
 QToolButton#routeButton:hover:!checked { background: #f1f1f1; border-color: #2d79b7; }
 QToolButton#routeButton[implemented="false"] { color: #929292; background: #d3d3d3; }
 QToolButton#routeButton[implemented="false"]:checked { color: #929292; background: #d3d3d3; }
-QLabel#routeArrow { color: #555555; font-size: 11pt; }
+QLabel#routeArrow { color: #555555; font-size: 10pt; }
 
 QFrame#workflowDivider, QFrame#logDivider {
     background: #777777;
@@ -97,11 +97,11 @@ QLabel#moduleTitle {
     background: #a9a9a9;
     color: #111111;
     border: 1px solid #777777;
-    font-size: 11pt;
+    font-size: 10pt;
     font-weight: bold;
     padding: 3px 5px;
 }
-QLabel#sectionTitle { color: #333333; font-size: 11pt; font-weight: bold; }
+QLabel#sectionTitle { color: #333333; font-size: 10pt; font-weight: bold; }
 
 QWidget#ScientificControlsPanel {
     background: transparent;
@@ -367,7 +367,7 @@ QWidget#dataPreviewBar {
 }
 QLabel#dataPreviewHint {
     color: #4f4f4f;
-    font-size: 10pt;
+    font-size: 9pt;
     padding-left: 1px;
 }
 QPushButton#previewSelectedButton {
@@ -491,7 +491,7 @@ QPlainTextEdit, QTextEdit, QTextBrowser {
     border: 1px solid #858585;
     border-radius: 0;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 11pt;
+    font-size: 10pt;
 }
 QScrollArea { background: transparent; border: none; }
 QScrollBar:vertical { background: #d4d4d4; width: 12px; border: 1px solid #a0a0a0; }

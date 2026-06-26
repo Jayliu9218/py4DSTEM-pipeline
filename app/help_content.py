@@ -46,12 +46,12 @@ optional reference roles, then choose a structure type and analysis workflow.</p
 the Target DataCube. Tree selection remains lazy; <b>Preview Selected</b>
 displays only the selected slice or scan position. Review preprocessing and
 apply corrections explicitly before downstream analysis.</p>
-<h3>Crystalline / Bragg-based</h3>
+<h3>Crystalline</h3>
 <p><b>Crystal Analysis:</b> the unified Bragg-based route for crystalline
 materials. Open MIB with MEMMAP and scan shape, tune on an ROI, then continue
-through Data / Preprocess / Virtual Image, Probe & Bragg, Calibration, Crystal
-Setup & Phase Matching, Orientation & Grain, Strain & Results, and Export.</p>
-<h3>Phase Retrieval / Ptychography</h3>
+through Preprocess, Bragg, Calibration, Phases, Orientation, and Strain.
+Use the top Export action for registered results and project outputs.</p>
+<h3>Phase Retrieval</h3>
 <p><b>DPC / CoM:</b> preview BF/DF contrast, inspect segmented DPC, preprocess
 and accept CoM fields, then run integrated reconstruction.</p>
 <p><b>Parallax:</b> accept a bright-field disk, align virtual BF images, review
@@ -65,7 +65,7 @@ inside the Advanced background task, while batch/probe options transfer directly
 The best self-consistency value is diagnostic and is not proof of physical accuracy.</p>
 <p><b>Method Comparison:</b> compare retained DPC and Ptychography results when
 both are available.</p>
-<h3>Amorphous / Diffuse-scattering</h3>
+<h3>Amorphous</h3>
 <p>Radial Profile, RDF, FEM, and Amorphous Strain routes are planned workflows
 and are not yet production-ready.</p>
 <h3>Reading Workflow Status</h3>

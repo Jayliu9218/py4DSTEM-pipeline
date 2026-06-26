@@ -10,7 +10,6 @@ from app.services.crystal_analysis_service import CrystalAnalysisService
 from app.services.phase_mapping_service import PhaseMatchParams, PhasePlanParams
 from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.log_panel import LogPanel
-from app.widgets.numeric_line_edit import NumericLineEdit
 
 
 class _OrientationMap:
@@ -77,7 +76,7 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         )
 
     def test_crystal_analysis_route_uses_full_stage_order(self):
-        modules = build_route_modules("Crystalline / Bragg-based", "Crystal Analysis")
+        modules = build_route_modules("Crystalline", "Crystal Analysis")
         self.assertEqual(
             [module.key for module in modules],
             [
@@ -87,7 +86,6 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
                 "phase_setup",
                 "orientation_matching",
                 "strain_analysis",
-                "export",
             ],
         )
 
@@ -261,14 +259,10 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         service = CrystalAnalysisService()
         page = StructuralPhasePage(lambda: None, LogPanel(), WorkflowState(), service=service)
         try:
-            plan_widgets = set(page.groups["plan"].findChildren(NumericLineEdit))
-            structure_widgets = set(page.groups["structure"].findChildren(NumericLineEdit))
-            simulated_widgets = set(page.groups["simulated"].findChildren(NumericLineEdit))
-
-            self.assertIn(page.k_max, plan_widgets)
-            self.assertIn(page.zone_step, plan_widgets)
-            self.assertNotIn(page.k_max, structure_widgets)
-            self.assertNotIn(page.zone_step, simulated_widgets)
+            self.assertIsNotNone(page.groups["plan"].value_for_field(page.k_max))
+            self.assertIsNotNone(page.groups["plan"].value_for_field(page.zone_step))
+            self.assertIsNone(page.groups["structure"].value_for_field(page.k_max))
+            self.assertIsNone(page.groups["simulated"].value_for_field(page.zone_step))
         finally:
             page.close()
 

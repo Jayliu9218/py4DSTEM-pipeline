@@ -137,6 +137,21 @@ class ProjectCoordinator:
             crystalline_results.restore_grid_state(
                 {"layout": orientation.grid_state()["layout"], "page": results_page}
             )
+        crystal_layout = next(
+            (
+                workspaces[key].grid_state()["layout"]
+                for key in ("crystal_cif", "crystal_phase", "crystal_orientation", "crystal_strain")
+                if key in canonical_states and key in workspaces
+            ),
+            None,
+        )
+        if crystal_layout is not None:
+            for key in ("crystal_cif", "crystal_phase", "crystal_orientation", "crystal_strain"):
+                workspace = workspaces.get(key)
+                if workspace is not None:
+                    workspace.restore_grid_state(
+                        {"layout": crystal_layout, "page": workspace.current_page}
+                    )
 
     def dpc_params_snapshot(self) -> dict[str, object]:
         snapshot: dict[str, object] = {}
