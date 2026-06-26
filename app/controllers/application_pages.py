@@ -195,6 +195,7 @@ class ApplicationPages:
         )
         phase_mapping_service = CrystalAnalysisService()
         phase_workspace = AdaptiveImageWorkspace()
+        phase_workspace.apply_layout_preference("4")
         for name, stage in (
             ("crystal_cif_page", "library_match"),
             ("crystal_orientation_page", "orientation_grain"),

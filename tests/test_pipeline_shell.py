@@ -616,7 +616,7 @@ class PipelineShellTests(unittest.TestCase):
                 (0, 0, 0, 0),
                 key,
             )
-            self.assertEqual(workspace.layout_choice.width(), 80, key)
+            self.assertEqual(workspace.layout_choice.width(), 66, key)
 
     def test_existing_parameter_tables_use_fixed_scrollable_style(self) -> None:
         self.window.project_toolbar.goal.setCurrentText("Crystal Analysis")
@@ -692,12 +692,76 @@ class PipelineShellTests(unittest.TestCase):
         self.assertNotIn("QCheckBox::indicator:checked { background: #2d79b7", light_qss)
         self.assertNotIn("background: #4a9eff;\n    border: 1px solid #4a9eff;", dark_qss)
 
-    def test_parameter_form_labels_do_not_use_zebra_backgrounds(self) -> None:
+    def test_parameter_forms_with_more_than_four_parameters_use_zebra_rows(self) -> None:
         self.window._select_route_module("calibration")
-        labels = self.window.calibration_page.controls_panel.findChildren(QLabel)
+        dense_labels = [
+            label
+            for label in self.window.calibration_page.controls_panel.findChildren(QLabel)
+            if label.objectName() == "propertyGridLabel"
+        ]
 
-        self.assertFalse(any(label.objectName() == "paramRowOdd" for label in labels))
-        self.assertFalse(any(label.autoFillBackground() for label in labels))
+        self.assertTrue(any(label.property("rowParity") == "even" for label in dense_labels))
+        self.assertTrue(any(label.property("rowParity") == "odd" for label in dense_labels))
+        self.assertTrue(all(label.autoFillBackground() for label in dense_labels))
+
+        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+        self.window._select_route_module("data_setup")
+        compact_labels = [
+            label
+            for label in self.window.preprocessing_page.controls_panel.findChildren(QLabel)
+            if label.text().strip()
+        ]
+        self.assertFalse(any(label.property("rowParity") for label in compact_labels))
+
+    def test_property_grid_name_and_value_cells_share_row_backgrounds(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent / "app"
+        light_qss = (root / "theme_light.qss").read_text(encoding="utf-8")
+        dark_qss = (root / "theme.qss").read_text(encoding="utf-8")
+
+        for qss, even, odd in ((light_qss, "#ffffff", "#f2f2f2"), (dark_qss, "#303030", "#383838")):
+            self.assertIn('QLabel#propertyGridLabel[rowParity="even"]', qss)
+            self.assertIn('QComboBox#propertyGridValue[rowParity="even"]', qss)
+            self.assertIn(f"background: {even};", qss)
+            self.assertIn('QLabel#propertyGridLabel[rowParity="odd"]', qss)
+            self.assertIn('QLineEdit#propertyGridValue[rowParity="odd"]', qss)
+            self.assertIn(f"background: {odd};", qss)
+
+    def test_crystal_analysis_workspace_exposes_default_grid_controls(self) -> None:
+        self.window.project_toolbar.structure.setCurrentText("Crystalline / Bragg-based")
+
+        for key in ("phase_setup", "orientation_matching"):
+            with self.subTest(route=key):
+                self.window._select_route_module(key)
+                workspace = self.window.viewer_stack.currentWidget().workspace
+                self.assertEqual(workspace.layout_choice.currentText(), "4")
+                self.assertFalse(workspace.layout_choice.isHidden())
+                self.assertFalse(workspace.reset_button.isHidden())
+                self.assertEqual(
+                    [workspace.layout_choice.itemText(index) for index in range(workspace.layout_choice.count())],
+                    ["Auto", "1", "2", "4", "6"],
+                )
+
+    def test_crystal_analysis_grid_state_restore_overrides_default(self) -> None:
+        self.window.project_coordinator.restore_grid_states(
+            {"crystal_cif": {"layout": "2", "page": 0}}
+        )
+
+        self.assertEqual(self.window.crystal_cif_page.workspace.grid_state()["layout"], "2")
+        self.assertEqual(self.window.crystal_orientation_page.workspace.grid_state()["layout"], "2")
+        self.window.crystal_cif_page.workspace.apply_layout_preference("4")
+
+    def test_crystal_analysis_controls_show_representative_units(self) -> None:
+        page = self.window.crystal_cif_page
+
+        self.assertEqual(page.voltage.unit_label.text(), "V")
+        self.assertEqual(page.k_max.unit_label.text(), "A^-1")
+        self.assertEqual(page.zone_step.unit_label.text(), "deg")
+        self.assertEqual(page.match_matches.unit_label.text(), "matches")
+        self.assertEqual(page.match_min_peaks.unit_label.text(), "peaks")
+        self.assertEqual(page.low_confidence.unit_label.text(), "ratio")
+        self.assertEqual(page.strain_roi_rx_start.unit_label.text(), "px")
 
     def test_orientation_rgb_map_click_returns_to_single_pattern_review(self) -> None:
         target = self.window.orientation_setup_page

@@ -24,17 +24,17 @@ class AdaptiveImageWorkspaceTests(unittest.TestCase):
         margins = workspace.layout().contentsMargins()
         self.assertEqual(
             (margins.left(), margins.top(), margins.right(), margins.bottom()),
-            (8, 8, 8, 8),
+            (0, 8, 0, 8),
         )
 
     def test_grid_toolbar_controls_have_stable_default_geometry(self) -> None:
         workspace = AdaptiveImageWorkspace()
 
-        self.assertEqual(workspace.layout_choice.width(), 80)
-        self.assertEqual(workspace.reset_button.width(), 100)
-        self.assertEqual(workspace.previous_button.width(), 90)
-        self.assertEqual(workspace.page_label.width(), 80)
-        self.assertEqual(workspace.next_button.width(), 70)
+        self.assertEqual(workspace.layout_choice.width(), 66)
+        self.assertEqual(workspace.reset_button.width(), 126)
+        self.assertEqual(workspace.previous_button.width(), 112)
+        self.assertEqual(workspace.page_label.width(), 100)
+        self.assertEqual(workspace.next_button.width(), 88)
 
     def test_set_results_is_capped_at_six(self) -> None:
         workspace = AdaptiveImageWorkspace()

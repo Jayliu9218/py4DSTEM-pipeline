@@ -81,22 +81,22 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.remove_crystal_button.clicked.connect(self.remove_crystal)
         self.run_mode = QComboBox()
         self.run_mode.addItems(["ROI 128x128", "Full Dataset"])
-        self.roi_size = self._int(16, 100000, 128)
+        self.roi_size = self._int(16, 100000, 128, unit="px")
 
         self.mode = QComboBox()
         self.mode.addItems(["General 3D", "Fiber"])
-        self.voltage = self._float(1000, 1_000_000, 300_000, 0)
-        self.k_max = self._float(0.1, 10, 1.5, 3)
-        self.zone_step = self._float(0.1, 30, 2, 2)
-        self.plane_step = self._float(0.1, 30, 2, 2)
-        self.corr_kernel_size = self._float(0.001, 10, 0.08, 4)
-        self.sigma = self._float(0.001, 10, 0.02, 4)
+        self.voltage = self._float(1000, 1_000_000, 300_000, 0, unit="V")
+        self.k_max = self._float(0.1, 10, 1.5, 3, unit="A^-1")
+        self.zone_step = self._float(0.1, 30, 2, 2, unit="deg")
+        self.plane_step = self._float(0.1, 30, 2, 2, unit="deg")
+        self.corr_kernel_size = self._float(0.001, 10, 0.08, 4, unit="A^-1")
+        self.sigma = self._float(0.001, 10, 0.02, 4, unit="A^-1")
         self.fiber_x = self._float(-100, 100, 0, 3)
         self.fiber_y = self._float(-100, 100, 0, 3)
         self.fiber_z = self._float(-100, 100, 1, 3)
-        self.fiber_start = self._float(-360, 360, 0, 2)
-        self.fiber_end = self._float(-360, 360, 360, 2)
-        self.symmetry_order = self._int(1, 24, 6)
+        self.fiber_start = self._float(-360, 360, 0, 2, unit="deg")
+        self.fiber_end = self._float(-360, 360, 360, 2, unit="deg")
+        self.symmetry_order = self._int(1, 24, 6, unit="count")
         self.plan_button = QPushButton("Create Multi-Phase Plan")
         self.plan_button.clicked.connect(
             lambda: self._start("Multi-Phase Plan", lambda: self.service.create_multi_phase_plan(self._plan_params()))
@@ -116,14 +116,14 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             )
         )
 
-        self.match_matches = self._int(1, 20, 2)
-        self.match_min_angle = self._float(0, 180, 5, 2)
-        self.match_min_peaks = self._int(1, 1000, 3)
+        self.match_matches = self._int(1, 20, 2, unit="matches")
+        self.match_min_angle = self._float(0, 180, 5, 2, unit="deg")
+        self.match_min_peaks = self._int(1, 1000, 3, unit="peaks")
         self.match_inversion = QCheckBox("Use inversion symmetry")
         self.match_inversion.setChecked(True)
         self.corr_normalize = QCheckBox("Normalize correlation")
         self.corr_normalize.setChecked(True)
-        self.low_confidence = self._float(-1000, 1000, 0.1, 4)
+        self.low_confidence = self._float(-1000, 1000, 0.1, 4, unit="ratio")
         self.match_button = QPushButton("Match All Phases")
         self.match_button.clicked.connect(
             lambda: self._start("Phase Matching", lambda: self.service.match_phases(self.braggvectors_provider(), self._match_params()))
@@ -135,10 +135,10 @@ class StructuralPhasePage(QWidget, WorkerRunner):
                 lambda: self._crystal_service().orientation_summary(self._orientation_params()),
             )
         )
-        self.orientation_matches = self._int(1, 20, 2)
-        self.orientation_min_angle = self._float(0, 180, 5, 2)
-        self.orientation_min_peaks = self._int(1, 1000, 3)
-        self.orientation_low_confidence = self._float(-1000, 1000, 0.1, 4)
+        self.orientation_matches = self._int(1, 20, 2, unit="matches")
+        self.orientation_min_angle = self._float(0, 180, 5, 2, unit="deg")
+        self.orientation_min_peaks = self._int(1, 1000, 3, unit="peaks")
+        self.orientation_low_confidence = self._float(-1000, 1000, 0.1, 4, unit="ratio")
         self.orientation_inversion = QCheckBox("Use inversion symmetry")
         self.orientation_inversion.setChecked(True)
         self.orientation_normalize = QCheckBox("Normalize correlation")
@@ -159,20 +159,20 @@ class StructuralPhasePage(QWidget, WorkerRunner):
                 ),
             )
         )
-        self.strain_rotation = self._float(-360, 360, -21.5, 2)
-        self.strain_max_spacing = self._float(0.1, 1000, 3, 2)
-        self.strain_min_abs = self._float(0, 1e12, 1200, 2)
-        self.strain_min_rel = self._float(0, 1, 0, 4)
-        self.strain_min_spacing = self._float(0, 1000, 2, 2)
-        self.strain_edge = self._int(0, 10000, 1)
-        self.strain_max_peaks = self._int(1, 10000, 150)
+        self.strain_rotation = self._float(-360, 360, -21.5, 2, unit="deg")
+        self.strain_max_spacing = self._float(0.1, 1000, 3, 2, unit="px")
+        self.strain_min_abs = self._float(0, 1e12, 1200, 2, unit="int.")
+        self.strain_min_rel = self._float(0, 1, 0, 4, unit="ratio")
+        self.strain_min_spacing = self._float(0, 1000, 2, 2, unit="px")
+        self.strain_edge = self._int(0, 10000, 1, unit="px")
+        self.strain_max_peaks = self._int(1, 10000, 150, unit="peaks")
         self.strain_reference_mode = QComboBox()
         self.strain_reference_mode.addItem("Global mean", "global_none")
         self.strain_reference_mode.addItem("ROI-derived g1/g2", "roi_g1g2")
-        self.strain_roi_rx_start = self._int(0, 100000, 34)
-        self.strain_roi_rx_end = self._int(0, 100000, 42)
-        self.strain_roi_ry_start = self._int(0, 100000, 8)
-        self.strain_roi_ry_end = self._int(0, 100000, 16)
+        self.strain_roi_rx_start = self._int(0, 100000, 34, unit="px")
+        self.strain_roi_rx_end = self._int(0, 100000, 42, unit="px")
+        self.strain_roi_ry_start = self._int(0, 100000, 8, unit="px")
+        self.strain_roi_ry_end = self._int(0, 100000, 16, unit="px")
 
     def _build_layout(self) -> None:
         self.groups: dict[str, QGroupBox] = {}
@@ -661,25 +661,28 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         group = QGroupBox(title)
         group.setProperty("panelMode", "propertyGrid")
         grid = QGridLayout(group)
-        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(0)
         grid.setVerticalSpacing(0)
         grid.setColumnMinimumWidth(0, 140)
-        grid.setColumnMinimumWidth(1, 120)
+        grid.setColumnMinimumWidth(1, 156)
         grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 1)
+        parameter_row = 0
         for row, (label, widget) in enumerate(rows):
-            row_parity = "even" if row % 2 == 0 else "odd"
             if label:
+                row_parity = "even" if parameter_row % 2 == 0 else "odd"
                 label_widget = QLabel(label)
                 label_widget.setObjectName("propertyGridLabel")
                 label_widget.setProperty("rowParity", row_parity)
+                label_widget.setAutoFillBackground(True)
                 label_widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 grid.addWidget(label_widget, row, 0)
                 widget.setObjectName(widget.objectName() or "propertyGridValue")
                 widget.setProperty("rowParity", row_parity)
                 widget.setAutoFillBackground(True)
                 grid.addWidget(widget, row, 1)
+                parameter_row += 1
             else:
                 widget.setObjectName(widget.objectName() or "propertyGridAction")
                 grid.addWidget(widget, row, 0, 1, 2)
@@ -693,8 +696,15 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             layout.addWidget(widget)
         return container
 
-    def _float(self, minimum: float, maximum: float, value: float, decimals: int) -> NumericLineEdit:
-        return NumericLineEdit(minimum, maximum, value, decimals=decimals)
+    def _float(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        decimals: int,
+        unit: str = "",
+    ) -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=decimals, unit=unit)
 
-    def _int(self, minimum: int, maximum: int, value: int) -> NumericLineEdit:
-        return NumericLineEdit(minimum, maximum, value, decimals=0, integer=True)
+    def _int(self, minimum: int, maximum: int, value: int, unit: str = "") -> NumericLineEdit:
+        return NumericLineEdit(minimum, maximum, value, decimals=0, unit=unit, integer=True)

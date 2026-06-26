@@ -252,7 +252,7 @@ QLabel#propertyGridLabel {
     color: #e0e0e0;
     border-right: 1px solid #444444;
     border-bottom: 1px solid #3c3c3c;
-    padding: 3px 6px;
+    padding: 2px 8px;
     min-height: 22px;
     font-weight: normal;
 }
@@ -267,6 +267,19 @@ QLabel#propertyGridLabel[rowParity="odd"],
 #propertyGridValue,
 QWidget#propertyGridAction {
     border-bottom: 1px solid #3c3c3c;
+}
+#propertyGridValue {
+    border-left: 1px solid #3c3c3c;
+    padding-left: 8px;
+}
+QWidget#propertyGridValue QLineEdit,
+QWidget#propertyGridValue QComboBox,
+QLineEdit#propertyGridValue,
+QComboBox#propertyGridValue {
+    background: transparent;
+    border: none;
+    padding-left: 0;
+    padding-right: 2px;
 }
 QWidget#propertyGridAction {
     padding-top: 3px;
@@ -323,6 +336,27 @@ QComboBox QAbstractItemView {
 }
 QComboBox QAbstractItemView::item {
     padding: 1px 5px;
+}
+
+QLabel#propertyGridLabel[rowParity="even"],
+QWidget#propertyGridValue[rowParity="even"],
+QLineEdit#propertyGridValue[rowParity="even"],
+QComboBox#propertyGridValue[rowParity="even"] {
+    background: #303030;
+}
+QLabel#propertyGridLabel[rowParity="odd"],
+QWidget#propertyGridValue[rowParity="odd"],
+QLineEdit#propertyGridValue[rowParity="odd"],
+QComboBox#propertyGridValue[rowParity="odd"] {
+    background: #383838;
+}
+QLineEdit#propertyGridValue,
+QComboBox#propertyGridValue {
+    border: none;
+    border-left: 1px solid #3c3c3c;
+    border-bottom: 1px solid #3c3c3c;
+    border-radius: 0;
+    padding-left: 8px;
 }
 
 /* --- Buttons ------------------------------------------------------------- */

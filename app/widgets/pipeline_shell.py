@@ -257,8 +257,14 @@ class ModuleControlPanel(QWidget):
             form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
             form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             form.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT)
-            form.setVerticalSpacing(6)
-            form.setHorizontalSpacing(10)
+            if ModuleControlPanel._labeled_parameter_count(form) > 4:
+                form.setContentsMargins(0, 0, 0, 0)
+                form.setVerticalSpacing(0)
+                form.setHorizontalSpacing(0)
+                ModuleControlPanel._apply_property_grid_rows(form)
+            else:
+                form.setVerticalSpacing(6)
+                form.setHorizontalSpacing(10)
         group.setObjectName("paramForm")
 
         # Keep groups compact, but allow wrapped status/warning labels to grow
@@ -267,6 +273,39 @@ class ModuleControlPanel(QWidget):
         group.setMinimumHeight(0)
         group.setMaximumHeight(16777215)
 
+    @staticmethod
+    def _form_widget(form: QFormLayout, row: int, role: QFormLayout.ItemRole) -> QWidget | None:
+        item = form.itemAt(row, role)
+        return item.widget() if item is not None else None
+
+    @staticmethod
+    def _labeled_parameter_count(form: QFormLayout) -> int:
+        total = 0
+        for row in range(form.rowCount()):
+            label = ModuleControlPanel._form_widget(form, row, QFormLayout.LabelRole)
+            field = ModuleControlPanel._form_widget(form, row, QFormLayout.FieldRole)
+            if isinstance(label, QLabel) and label.text().strip() and field is not None:
+                total += 1
+        return total
+
+    @staticmethod
+    def _apply_property_grid_rows(form: QFormLayout) -> None:
+        parameter_row = 0
+        for row in range(form.rowCount()):
+            label = ModuleControlPanel._form_widget(form, row, QFormLayout.LabelRole)
+            field = ModuleControlPanel._form_widget(form, row, QFormLayout.FieldRole)
+            if isinstance(label, QLabel) and label.text().strip() and field is not None:
+                row_parity = "even" if parameter_row % 2 == 0 else "odd"
+                label.setObjectName("propertyGridLabel")
+                label.setProperty("rowParity", row_parity)
+                label.setAutoFillBackground(True)
+                label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                field.setObjectName(field.objectName() or "propertyGridValue")
+                field.setProperty("rowParity", row_parity)
+                field.setAutoFillBackground(True)
+                parameter_row += 1
+            elif field is not None:
+                field.setObjectName(field.objectName() or "propertyGridAction")
 
 
 class ProjectToolbar(QWidget):
