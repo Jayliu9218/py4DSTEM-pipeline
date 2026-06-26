@@ -29,6 +29,11 @@ from app.services.bragg_strain_service import CalibrationActionResult
 from app.services.phase_contrast_service import DPCStageResult, PhaseContrastResult
 from app.services.workflow_state import WorkflowStep
 from app.widgets.adaptive_image_workspace import FigureResult
+from app.widgets.scientific_controls import (
+    SCI_CONTROLS_PANEL,
+    SCI_PROPERTY_LABEL,
+    SCI_SECTION,
+)
 
 
 class PipelineShellTests(unittest.TestCase):
@@ -380,19 +385,21 @@ class PipelineShellTests(unittest.TestCase):
             "Reset Applied Calibration",
         )
 
-    def test_only_existing_calibration_form_wraps(self) -> None:
+    def test_calibration_uses_scientific_sections(self) -> None:
         page = self.window.calibration_page
-        expected = {
-            "Existing Calibration": QFormLayout.WrapAllRows,
-            "Origin Calibration": QFormLayout.DontWrapRows,
-            "Ellipse Calibration": QFormLayout.DontWrapRows,
-            "Q Pixel Size": QFormLayout.DontWrapRows,
-            "QR Rotation": QFormLayout.DontWrapRows,
-            "Transfer": QFormLayout.DontWrapRows,
-        }
-        for title, policy in expected.items():
-            form = page.calibration_forms[title]
-            self.assertEqual(form.rowWrapPolicy(), policy)
+        expected = [
+            "Existing Calibration",
+            "Origin Calibration",
+            "Ellipse Calibration",
+            "Q Pixel Size",
+            "QR Rotation",
+            "Transfer",
+        ]
+        self.assertEqual(page.controls_panel.objectName(), SCI_CONTROLS_PANEL)
+        self.assertEqual(
+            [page.calibration_forms[title].objectName() for title in expected],
+            [SCI_SECTION] * len(expected),
+        )
 
     def test_calibration_uses_one_width_following_scroll_area(self) -> None:
         self.window.resize(1366, 768)
@@ -663,7 +670,7 @@ class PipelineShellTests(unittest.TestCase):
 
         self.assertEqual(surface.objectName(), "moduleControlsSurface")
         self.assertEqual(scroll.objectName(), "moduleControlsScroll")
-        self.assertEqual(scroll.widget().objectName(), "moduleControlsContent")
+        self.assertIn(scroll.widget().objectName(), {"moduleControlsContent", SCI_CONTROLS_PANEL})
         margins = scroll.widget().layout().contentsMargins()
         self.assertEqual(
             (margins.left(), margins.top(), margins.right(), margins.bottom()),
@@ -697,7 +704,7 @@ class PipelineShellTests(unittest.TestCase):
         dense_labels = [
             label
             for label in self.window.calibration_page.controls_panel.findChildren(QLabel)
-            if label.objectName() == "propertyGridLabel"
+            if label.objectName() == SCI_PROPERTY_LABEL
         ]
 
         self.assertTrue(any(label.property("rowParity") == "even" for label in dense_labels))
@@ -709,9 +716,9 @@ class PipelineShellTests(unittest.TestCase):
         compact_labels = [
             label
             for label in self.window.preprocessing_page.controls_panel.findChildren(QLabel)
-            if label.text().strip()
+            if label.objectName() == SCI_PROPERTY_LABEL
         ]
-        self.assertFalse(any(label.property("rowParity") for label in compact_labels))
+        self.assertTrue(any(label.property("rowParity") == "even" for label in compact_labels))
 
     def test_property_grid_name_and_value_cells_share_row_backgrounds(self) -> None:
         from pathlib import Path

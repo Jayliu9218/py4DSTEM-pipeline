@@ -8,8 +8,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -28,6 +26,13 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    property_row,
+    section,
+    status_row,
+)
 from app.widgets.worker_runner import WorkerRunner
 
 
@@ -98,43 +103,35 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
         self._sync_mode_state()
 
     def _build_layout(self) -> None:
-        controls = QWidget()
-        form = QFormLayout(controls)
-        self._controls_form = form
-        form.addRow("Mode", self.mode_combo)
-        form.addRow("center_x", self.center_x_spin)
-        form.addRow("center_y", self.center_y_spin)
-        form.addRow("inner_radius", self.inner_radius_spin)
-        form.addRow("outer_radius", self.outer_radius_spin)
-        form.addRow("", self.notebook_preset_button)
-        form.addRow("real-space ROI mode", self.roi_mode_combo)
-        form.addRow("ROI rx start", self.roi_rx_start)
-        form.addRow("ROI rx end", self.roi_rx_end)
-        form.addRow("ROI ry start", self.roi_ry_start)
-        form.addRow("ROI ry end", self.roi_ry_end)
-        form.addRow("ROI center x", self.roi_center_x)
-        form.addRow("ROI center y", self.roi_center_y)
-        form.addRow("ROI radius", self.roi_radius)
-
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.run_button)
-        button_row.addWidget(self.export_button)
-
-        self.left_layout = QVBoxLayout()
-        self.left_layout.addWidget(controls)
-        self.left_layout.addLayout(button_row)
-        self.left_layout.addWidget(self.status_label)
-        self.left_layout.addStretch(1)
-
-        left = QGroupBox("Virtual Detector")
-        left.setLayout(self.left_layout)
-        self.controls_panel = left
+        self.detector_section = section("Virtual Detector", [
+            property_row("Mode", self.mode_combo),
+            property_row("center_x", self.center_x_spin),
+            property_row("center_y", self.center_y_spin),
+            property_row("inner_radius", self.inner_radius_spin),
+            property_row("outer_radius", self.outer_radius_spin),
+            property_row("", action_row(self.notebook_preset_button)),
+            property_row("real-space ROI mode", self.roi_mode_combo),
+            property_row("ROI rx start", self.roi_rx_start),
+            property_row("ROI rx end", self.roi_rx_end),
+            property_row("ROI ry start", self.roi_ry_start),
+            property_row("ROI ry end", self.roi_ry_end),
+            property_row("ROI center x", self.roi_center_x),
+            property_row("ROI center y", self.roi_center_y),
+            property_row("ROI radius", self.roi_radius),
+            property_row("", action_row(self.run_button, self.export_button)),
+        ], number=3)
+        self.controls_panel = ScientificControlsPanel([
+            self.detector_section,
+            section("Status", [
+                property_row("", status_row(self.status_label)),
+            ]),
+        ])
 
         layout = QHBoxLayout(self)
         layout.addWidget(self.workspace)
 
     def add_controls_widget(self, widget: QWidget) -> None:
-        self.left_layout.insertWidget(max(self.left_layout.count() - 1, 0), widget)
+        self.controls_panel.add_section(widget)
 
     def _make_float_input(
         self,
@@ -315,8 +312,12 @@ class VirtualDetectorPage(QWidget, WorkerRunner):
             self._set_form_control_visible(control, is_diffraction)
 
     def _set_form_control_visible(self, control: QWidget, visible: bool) -> None:
-        control.setVisible(visible)
-        label = self._controls_form.labelForField(control)
+        value = self.detector_section.value_for_field(control)
+        (value or control).setVisible(visible)
+        unit = self.detector_section.unit_for_field(control)
+        if unit is not None:
+            unit.setVisible(visible)
+        label = self.detector_section.label_for_field(control)
         if label is not None:
             label.setVisible(visible)
 

@@ -12,7 +12,7 @@ QMainWindow,
 QWidget {
     background: #2b2b2b;
     color: #e0e0e0;
-    font-size: 9pt;
+    font-size: 11pt;
 }
 
 QDialog {
@@ -91,7 +91,7 @@ QToolButton#routeButton {
     border: none;
     padding: 3px 5px;
     color: #c0c0c0;
-    font-size: 8pt;
+    font-size: 10pt;
 }
 QToolButton#routeButton:checked {
     background: #4a6878;
@@ -114,7 +114,7 @@ QToolButton#routeButton[implemented="false"]:checked {
 }
 QLabel#routeArrow {
     color: #666666;
-    font-size: 10pt;
+    font-size: 12pt;
 }
 
 /* --- Dividers ------------------------------------------------------------ */
@@ -178,15 +178,131 @@ QWidget#moduleControlsContent {
     background: #1e1e1e;
 }
 QLabel#moduleTitle {
-    font-size: 10pt;
+    font-size: 12pt;
     font-weight: bold;
     color: #e0e0e0;
     padding: 2px 0;
 }
 QLabel#sectionTitle {
-    font-size: 9pt;
+    font-size: 11pt;
     font-weight: bold;
     color: #b0b0b0;
+}
+
+/* --- Reusable scientific control template -------------------------------- */
+QWidget#ScientificControlsPanel {
+    background: transparent;
+}
+QGroupBox#ScientificSection {
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
+    margin-top: 5px;
+    padding: 5px;
+    padding-top: 19px;
+    background: #2b2b2b;
+    color: #e0e0e0;
+    font-weight: bold;
+}
+QGroupBox#ScientificSection::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 0px;
+    margin-left: 0px;
+    padding: 2px 6px;
+    background: #333333;
+    border-bottom: 1px solid #3c3c3c;
+    border-radius: 0px;
+    color: #e0e0e0;
+}
+QLabel#ScientificPropertyLabel {
+    color: #e0e0e0;
+    border-right: 1px solid #444444;
+    border-bottom: none;
+    padding: 1px 7px;
+    min-height: 24px;
+    font-weight: normal;
+}
+QLabel#ScientificPropertyLabel[rowParity="even"],
+QWidget#ScientificPropertyValue[rowParity="even"],
+QLabel#ScientificPropertyValue[rowParity="even"],
+QLabel#ScientificPropertyUnit[rowParity="even"],
+QComboBox#ScientificPropertyValue[rowParity="even"],
+QLineEdit#ScientificPropertyValue[rowParity="even"] {
+    background: #303030;
+}
+QLabel#ScientificPropertyLabel[rowParity="odd"],
+QWidget#ScientificPropertyValue[rowParity="odd"],
+QLabel#ScientificPropertyValue[rowParity="odd"],
+QLabel#ScientificPropertyUnit[rowParity="odd"],
+QComboBox#ScientificPropertyValue[rowParity="odd"],
+QLineEdit#ScientificPropertyValue[rowParity="odd"] {
+    background: #383838;
+}
+QWidget#ScientificPropertyValue,
+QLabel#ScientificPropertyValue,
+QLabel#ScientificPropertyUnit,
+QComboBox#ScientificPropertyValue,
+QLineEdit#ScientificPropertyValue,
+QWidget#ScientificActionRow,
+QWidget#ScientificStatusRow {
+    border-bottom: none;
+}
+QWidget#ScientificPropertyValue,
+QLabel#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue,
+QLineEdit#ScientificPropertyValue {
+    border-left: 1px solid #3c3c3c;
+}
+QWidget#ScientificPropertyValue QLineEdit,
+QWidget#ScientificPropertyValue QComboBox,
+QLineEdit#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue {
+    background: transparent;
+    border: none;
+    padding-left: 7px;
+    padding-right: 4px;
+    min-height: 24px;
+    max-height: 24px;
+}
+QLabel#ScientificPropertyUnit {
+    padding-left: 3px;
+    padding-right: 4px;
+    min-height: 24px;
+}
+QLineEdit#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue {
+    border-left: 1px solid #3c3c3c;
+}
+QWidget#ScientificPropertyValue[rowParity="even"] QLineEdit,
+QWidget#ScientificPropertyValue[rowParity="even"] QComboBox,
+QWidget#ScientificPropertyValue[rowParity="even"] QLabel {
+    background: #303030;
+}
+QWidget#ScientificPropertyValue[rowParity="odd"] QLineEdit,
+QWidget#ScientificPropertyValue[rowParity="odd"] QComboBox,
+QWidget#ScientificPropertyValue[rowParity="odd"] QLabel {
+    background: #383838;
+}
+QWidget#ScientificActionRow,
+QWidget#ScientificStatusRow {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+QLabel#ScientificStatusMessage {
+    color: #c8c8c8;
+    font-weight: normal;
+}
+QPushButton#ScientificPrimaryButton,
+QPushButton#ScientificSecondaryButton {
+    min-height: 24px;
+    max-height: 24px;
+    border-radius: 2px;
+}
+QPushButton#ScientificPrimaryButton:disabled,
+QPushButton#ScientificSecondaryButton:disabled {
+    background: #2b2b2b;
+    color: #666666;
+    border: 1px solid #333333;
 }
 
 /* --- Group boxes (flat cards) ------------------------------------------- */
@@ -386,7 +502,7 @@ QWidget#dataPreviewBar {
 }
 QLabel#dataPreviewHint {
     color: #a8a8a8;
-    font-size: 8pt;
+    font-size: 10pt;
     padding-left: 1px;
 }
 QPushButton#previewSelectedButton {
@@ -515,7 +631,7 @@ QTextEdit {
     border: 1px solid #3c3c3c;
     border-radius: 2px;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 9pt;
+    font-size: 11pt;
 }
 /* --- Status bar ---------------------------------------------------------- */
 QStatusBar {

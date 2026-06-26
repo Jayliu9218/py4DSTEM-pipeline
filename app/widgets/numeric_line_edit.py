@@ -25,7 +25,8 @@ class NumericLineEdit(QWidget):
         self._value = 0.0
 
         self.line_edit = QLineEdit()
-        self.line_edit.setMinimumWidth(0)
+        self.line_edit.setMinimumWidth(90)
+        self.line_edit.setMaximumWidth(16777215)
         self.line_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.line_edit.setAlignment(Qt.AlignLeft)
         self.line_edit.setValidator(self._validator())
@@ -33,7 +34,7 @@ class NumericLineEdit(QWidget):
         self.line_edit.textChanged.connect(self._handle_text_changed)
 
         self.unit_label = QLabel(unit)
-        self.unit_label.setMinimumWidth(34 if unit else 0)
+        self.unit_label.setMinimumWidth(0)
         self.unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
 
         layout = QHBoxLayout(self)
@@ -42,6 +43,7 @@ class NumericLineEdit(QWidget):
         layout.addWidget(self.line_edit, 1)
         layout.addWidget(self.unit_label)
         self.setMinimumWidth(0)
+        self.setMaximumWidth(16777215)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setValue(value)
 

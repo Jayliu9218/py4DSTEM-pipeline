@@ -65,6 +65,12 @@ from app.widgets.pipeline_shell import (
     RouteModule,
     TechnicalRouteBar,
 )
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    property_row,
+    section,
+)
 
 
 class MainWindow(QMainWindow):
@@ -880,8 +886,7 @@ class MainWindow(QMainWindow):
         return self.pages.controls_for_route(key, self.project_toolbar.goal.currentText())
 
     def _build_role_panel(self) -> QWidget:
-        roles_group = QGroupBox("Dataset Roles / Sources")
-        roles_layout = QVBoxLayout(roles_group)
+        role_rows = []
         for label, role in [
             ("Set as Target", "target_datacube"),
             ("Vacuum Probe", "vacuum_probe"),
@@ -890,17 +895,12 @@ class MainWindow(QMainWindow):
         ]:
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
-            roles_layout.addWidget(button)
-        
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.preprocessing_page.controls_panel)
-        layout.addStretch(1)
-        layout.addWidget(roles_group)
-        layout.addStretch(1)
-        layout.addWidget(self.virtual_detector_page.controls_panel)
-        layout.addStretch(1)
+            role_rows.append(property_row("", action_row(button)))
+        panel = ScientificControlsPanel([
+            self.preprocessing_page.controls_panel,
+            section("Dataset Roles / Sources", role_rows, number=2),
+            self.virtual_detector_page.controls_panel,
+        ])
         return panel
 
     def _build_export_panel(self) -> QWidget:

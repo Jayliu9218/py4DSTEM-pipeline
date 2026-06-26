@@ -6,9 +6,8 @@ from typing import Callable
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QLabel,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from app.services.phase_mapping_service import (
@@ -25,6 +24,11 @@ from app.services.workflow_state import STALE_RESULTS_MESSAGE, WorkflowState, Wo
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    section,
+)
 from app.widgets.worker_runner import WorkerRunner
 
 
@@ -175,14 +179,14 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.strain_roi_ry_end = self._int(0, 100000, 16, unit="px")
 
     def _build_layout(self) -> None:
-        self.groups: dict[str, QGroupBox] = {}
-        self.groups["library"] = self._group("Crystal Library", [
+        self.groups: dict[str, QWidget] = {}
+        self.groups["library"] = section("Crystal Library", [
             ("Analysis mode", self.run_mode),
             ("ROI size", self.roi_size),
             ("Loaded crystals", self.crystal_list),
-            ("", self._row(self.add_cif_button, self.remove_crystal_button)),
+            ("", action_row(self.add_cif_button, self.remove_crystal_button)),
         ])
-        self.groups["plan"] = self._group("Multi-Phase Orientation Plan", [
+        self.groups["plan"] = section("Multi-Phase Orientation Plan", [
             ("Mode", self.mode), ("Accelerating voltage", self.voltage), ("k_max", self.k_max),
             ("Zone-axis step", self.zone_step), ("In-plane step", self.plane_step),
             ("Correlation kernel", self.corr_kernel_size), ("Excitation sigma", self.sigma),
@@ -190,20 +194,20 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("Fiber angle start", self.fiber_start), ("Fiber angle end", self.fiber_end),
             ("Fiber symmetry order", self.symmetry_order), ("", self.plan_button),
         ])
-        self.groups["structure"] = self._group("Structure Factors", [
+        self.groups["structure"] = section("Structure Factors", [
             ("Parameters", QLabel("Uses voltage and k_max from the CIF planning controls.")),
             ("", self.structure_button),
         ])
-        self.groups["simulated"] = self._group("Simulated Diffraction", [
+        self.groups["simulated"] = section("Simulated Diffraction", [
             ("Parameters", QLabel("Uses mode, angular steps, and kernel settings from the CIF plan.")),
             ("", self.simulate_button),
         ])
-        self.groups["match"] = self._group("Phase Matching", [
+        self.groups["match"] = section("Phase Matching", [
             ("Candidates", self.match_matches), ("Min candidate angle", self.match_min_angle),
             ("Min peaks", self.match_min_peaks), ("Low-confidence threshold", self.low_confidence),
             ("", self.match_inversion), ("", self.corr_normalize), ("", self.match_button),
         ])
-        self.groups["orientation"] = self._group("Orientation Mapping Review", [
+        self.groups["orientation"] = section("Orientation Mapping Review", [
             ("Candidates", self.orientation_matches),
             ("Min candidate angle", self.orientation_min_angle),
             ("Min peaks", self.orientation_min_peaks),
@@ -212,10 +216,10 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("", self.orientation_normalize),
             ("", self.orientation_button),
         ])
-        self.groups["grain"] = self._group("Grain Analysis", [
+        self.groups["grain"] = section("Grain Analysis", [
             ("", self.grain_button),
         ])
-        self.groups["strain"] = self._group("Phase-Masked Strain Mapping", [
+        self.groups["strain"] = section("Phase-Masked Strain Mapping", [
             ("coordinate_rotation", self.strain_rotation),
             ("max_peak_spacing", self.strain_max_spacing),
             ("minAbsoluteIntensity", self.strain_min_abs),
@@ -230,18 +234,14 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             ("reference ROI ry end", self.strain_roi_ry_end),
             ("", self.strain_button),
         ])
-        self.status_group = self._group("Status", [
+        self.status_group = section("Status", [
             ("Message", self.status_label),
         ])
         self.status_label.setWordWrap(True)
-        controls = QWidget()
-        layout = QVBoxLayout(controls)
-        layout.setContentsMargins(0, 0, 0, 0)
-        for group in self.groups.values():
-            layout.addWidget(group)
-        layout.addWidget(self.status_group)
-        layout.addStretch(1)
-        self.controls_panel = controls
+        self.controls_panel = ScientificControlsPanel([
+            *self.groups.values(),
+            self.status_group,
+        ])
         main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
         main.addWidget(self.workspace)
@@ -656,45 +656,6 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def _notify(self, message: str, level: str = "info") -> None:
         self.status_label.setText(message)
-
-    def _group(self, title: str, rows: list[tuple[str, QWidget]]) -> QGroupBox:
-        group = QGroupBox(title)
-        group.setProperty("panelMode", "propertyGrid")
-        grid = QGridLayout(group)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(0)
-        grid.setVerticalSpacing(0)
-        grid.setColumnMinimumWidth(0, 140)
-        grid.setColumnMinimumWidth(1, 156)
-        grid.setColumnStretch(0, 0)
-        grid.setColumnStretch(1, 1)
-        parameter_row = 0
-        for row, (label, widget) in enumerate(rows):
-            if label:
-                row_parity = "even" if parameter_row % 2 == 0 else "odd"
-                label_widget = QLabel(label)
-                label_widget.setObjectName("propertyGridLabel")
-                label_widget.setProperty("rowParity", row_parity)
-                label_widget.setAutoFillBackground(True)
-                label_widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                grid.addWidget(label_widget, row, 0)
-                widget.setObjectName(widget.objectName() or "propertyGridValue")
-                widget.setProperty("rowParity", row_parity)
-                widget.setAutoFillBackground(True)
-                grid.addWidget(widget, row, 1)
-                parameter_row += 1
-            else:
-                widget.setObjectName(widget.objectName() or "propertyGridAction")
-                grid.addWidget(widget, row, 0, 1, 2)
-        return group
-
-    def _row(self, *widgets: QWidget) -> QWidget:
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        for widget in widgets:
-            layout.addWidget(widget)
-        return container
 
     def _float(
         self,

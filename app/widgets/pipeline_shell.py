@@ -265,7 +265,8 @@ class ModuleControlPanel(QWidget):
             else:
                 form.setVerticalSpacing(6)
                 form.setHorizontalSpacing(10)
-        group.setObjectName("paramForm")
+        if group.objectName() != "ScientificSection":
+            group.setObjectName("paramForm")
 
         # Keep groups compact, but allow wrapped status/warning labels to grow
         # after a calculation updates their text.

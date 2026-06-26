@@ -3,7 +3,7 @@
 QMainWindow, QWidget {
     background: #dedede;
     color: #111111;
-    font-size: 9pt;
+    font-size: 11pt;
 }
 QDialog { background: #dedede; color: #111111; }
 QLabel { color: #111111; background: transparent; }
@@ -57,7 +57,7 @@ QToolButton#routeButton {
     color: #303030;
     border: 1px solid #8d8d8d;
     padding: 3px 5px;
-    font-size: 8pt;
+    font-size: 10pt;
 }
 QToolButton#routeButton:checked {
     background: #d7e8f4;
@@ -68,7 +68,7 @@ QToolButton#routeButton:checked {
 QToolButton#routeButton:hover:!checked { background: #f1f1f1; border-color: #2d79b7; }
 QToolButton#routeButton[implemented="false"] { color: #929292; background: #d3d3d3; }
 QToolButton#routeButton[implemented="false"]:checked { color: #929292; background: #d3d3d3; }
-QLabel#routeArrow { color: #555555; font-size: 9pt; }
+QLabel#routeArrow { color: #555555; font-size: 11pt; }
 
 QFrame#workflowDivider, QFrame#logDivider {
     background: #777777;
@@ -97,11 +97,127 @@ QLabel#moduleTitle {
     background: #a9a9a9;
     color: #111111;
     border: 1px solid #777777;
-    font-size: 9pt;
+    font-size: 11pt;
     font-weight: bold;
     padding: 3px 5px;
 }
-QLabel#sectionTitle { color: #333333; font-size: 9pt; font-weight: bold; }
+QLabel#sectionTitle { color: #333333; font-size: 11pt; font-weight: bold; }
+
+QWidget#ScientificControlsPanel {
+    background: transparent;
+}
+QGroupBox#ScientificSection {
+    background: #e8e8e8;
+    color: #111111;
+    border: 1px solid #858585;
+    border-radius: 0;
+    margin-top: 5px;
+    padding: 5px;
+    padding-top: 19px;
+    font-weight: normal;
+}
+QGroupBox#ScientificSection::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 0;
+    right: 0;
+    background: #a6a6a6;
+    color: #111111;
+    border: none;
+    border-bottom: 1px solid #777777;
+    padding: 2px 6px;
+    font-weight: bold;
+}
+QLabel#ScientificPropertyLabel {
+    color: #111111;
+    border-right: 1px solid #c5c5c5;
+    border-bottom: none;
+    padding: 1px 7px;
+    min-height: 24px;
+    font-weight: normal;
+}
+QLabel#ScientificPropertyLabel[rowParity="even"],
+QWidget#ScientificPropertyValue[rowParity="even"],
+QLabel#ScientificPropertyValue[rowParity="even"],
+QLabel#ScientificPropertyUnit[rowParity="even"],
+QComboBox#ScientificPropertyValue[rowParity="even"],
+QLineEdit#ScientificPropertyValue[rowParity="even"] {
+    background: #ffffff;
+}
+QLabel#ScientificPropertyLabel[rowParity="odd"],
+QWidget#ScientificPropertyValue[rowParity="odd"],
+QLabel#ScientificPropertyValue[rowParity="odd"],
+QLabel#ScientificPropertyUnit[rowParity="odd"],
+QComboBox#ScientificPropertyValue[rowParity="odd"],
+QLineEdit#ScientificPropertyValue[rowParity="odd"] {
+    background: #f2f2f2;
+}
+QWidget#ScientificPropertyValue,
+QLabel#ScientificPropertyValue,
+QLabel#ScientificPropertyUnit,
+QComboBox#ScientificPropertyValue,
+QLineEdit#ScientificPropertyValue,
+QWidget#ScientificActionRow,
+QWidget#ScientificStatusRow {
+    border-bottom: none;
+}
+QWidget#ScientificPropertyValue,
+QLabel#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue,
+QLineEdit#ScientificPropertyValue {
+    border-left: 1px solid #d8d8d8;
+}
+QWidget#ScientificPropertyValue QLineEdit,
+QWidget#ScientificPropertyValue QComboBox,
+QLineEdit#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue {
+    background: transparent;
+    border: none;
+    padding-left: 7px;
+    padding-right: 4px;
+    min-height: 24px;
+    max-height: 24px;
+}
+QLabel#ScientificPropertyUnit {
+    padding-left: 3px;
+    padding-right: 4px;
+    min-height: 24px;
+}
+QLineEdit#ScientificPropertyValue,
+QComboBox#ScientificPropertyValue {
+    border-left: 1px solid #d8d8d8;
+}
+QWidget#ScientificPropertyValue[rowParity="even"] QLineEdit,
+QWidget#ScientificPropertyValue[rowParity="even"] QComboBox,
+QWidget#ScientificPropertyValue[rowParity="even"] QLabel {
+    background: #ffffff;
+}
+QWidget#ScientificPropertyValue[rowParity="odd"] QLineEdit,
+QWidget#ScientificPropertyValue[rowParity="odd"] QComboBox,
+QWidget#ScientificPropertyValue[rowParity="odd"] QLabel {
+    background: #f2f2f2;
+}
+QWidget#ScientificActionRow,
+QWidget#ScientificStatusRow {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+QLabel#ScientificStatusMessage {
+    color: #333333;
+    font-weight: normal;
+}
+QPushButton#ScientificPrimaryButton,
+QPushButton#ScientificSecondaryButton {
+    min-height: 24px;
+    max-height: 24px;
+    border-radius: 0;
+}
+QPushButton#ScientificPrimaryButton:disabled,
+QPushButton#ScientificSecondaryButton:disabled {
+    background: #d2d2d2;
+    color: #929292;
+    border: 1px solid #b2b2b2;
+}
 
 QGroupBox {
     background: #e5e5e5;
@@ -251,7 +367,7 @@ QWidget#dataPreviewBar {
 }
 QLabel#dataPreviewHint {
     color: #4f4f4f;
-    font-size: 8pt;
+    font-size: 10pt;
     padding-left: 1px;
 }
 QPushButton#previewSelectedButton {
@@ -375,7 +491,7 @@ QPlainTextEdit, QTextEdit, QTextBrowser {
     border: 1px solid #858585;
     border-radius: 0;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 9pt;
+    font-size: 11pt;
 }
 QScrollArea { background: transparent; border: none; }
 QScrollBar:vertical { background: #d4d4d4; width: 12px; border: 1px solid #a0a0a0; }

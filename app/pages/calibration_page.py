@@ -3,20 +3,16 @@ from __future__ import annotations
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLayout,
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -34,6 +30,13 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    property_row,
+    section,
+    status_row,
+)
 from app.widgets.worker_runner import WorkerRunner
 
 
@@ -286,125 +289,87 @@ class CalibrationPage(QWidget, WorkerRunner):
             self.workflow_state.parameters_updated(WorkflowStep.CALIBRATION_PIXEL)
 
     def _build_layout(self) -> None:
-        status_group = QGroupBox("Existing Calibration")
-        status_layout = QVBoxLayout(status_group)
-        status_form = QFormLayout()
-        status_form.addRow("Analysis target", self.analysis_target)
-        for name, label in [
-            ("Origin", self.decision_labels["origin"]),
-            ("Ellipse", self.decision_labels["ellipse"]),
-            ("Q pixel size", self.decision_labels["pixel"]),
-            ("QR rotation", self.decision_labels["rotate"]),
-        ]:
-            status_form.addRow(name, label)
-        for label, widget in [
-            ("Source", self.source_label),
-            ("origin", self.origin_label),
-            ("ellipse", self.ellipse_label),
-            ("pixel", self.pixel_label),
-            ("rotate", self.rotate_label),
-            ("measurements", self.complete_label),
-            ("applied", self.applied_label),
-        ]:
-            status_form.addRow(label, widget)
-        status_layout.addLayout(status_form)
-        status_layout.addWidget(self.refresh_button)
-        status_layout.addWidget(self.reset_button)
-
-        origin_group = QGroupBox("Origin Calibration")
-        origin_layout = QVBoxLayout(origin_group)
-        origin_layout.addWidget(self.origin_measurement_label)
-        origin_form = QFormLayout()
-        origin_form.addRow("", self.origin_use_guess)
-        origin_form.addRow("", self.origin_guess_only)
-        origin_form.addRow("center guess x", self.origin_center_x)
-        origin_form.addRow("center guess y", self.origin_center_y)
-        origin_form.addRow("score method", self.origin_score)
-        origin_form.addRow("find center", self.origin_find_center)
-        origin_form.addRow("fit function", self.origin_fit_function)
-        origin_form.addRow("", self.origin_robust)
-        origin_form.addRow("robust steps", self.origin_robust_steps)
-        origin_form.addRow("robust threshold", self.origin_robust_threshold)
-        origin_layout.addLayout(origin_form)
-        
-        """
-        origin_layout.addWidget(self.origin_button)
-        origin_layout.addWidget(self.compare_origin_button)
-        origin_layout.addWidget(self.apply_origin_button)
-        """
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.origin_button)
-        button_row.addWidget(self.compare_origin_button)
-        origin_layout.addLayout(button_row)
-        origin_layout.addWidget(self.apply_origin_button)
-
-        ellipse_group = QGroupBox("Ellipse Calibration")
-        ellipse_layout = QFormLayout(ellipse_group)
-        ellipse_layout.addRow("fit result", self.ellipse_measurement_label)
-        ellipse_layout.addRow("fit center x", self.ellipse_center_x)
-        ellipse_layout.addRow("fit center y", self.ellipse_center_y)
-        ellipse_layout.addRow("inner radius", self.ellipse_inner)
-        ellipse_layout.addRow("outer radius", self.ellipse_outer)
-        ellipse_layout.addRow("BVM sampling", self.sampling_spin)
-        
-        """
-        ellipse_layout.addRow("", self.draw_ellipse_circle_button)
-        ellipse_layout.addRow("", self.ellipse_button)
-        """
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.draw_ellipse_circle_button)
-        button_row.addWidget(self.ellipse_button)
-        ellipse_layout.addRow(button_row)
-        
-        ellipse_layout.addRow(self.apply_ellipse_button)
-
-        pixel_group = QGroupBox("Q Pixel Size")
-        pixel_layout = QFormLayout(pixel_group)
-        pixel_layout.addRow("Q pixel size", self.pixel_spin)
-        pixel_layout.addRow("", self.pixel_button)
-        pixel_layout.addRow("crystal source", self.crystal_path_label)
-        pixel_layout.addRow("", self.load_cif_button)
-        pixel_layout.addRow("FCC lattice a", self.crystal_lattice)
-        pixel_layout.addRow("atomic number", self.crystal_atomic_number)
-        pixel_layout.addRow("k max", self.crystal_k_max)
-        pixel_layout.addRow("", self.fit_pixel_button)
-        pixel_layout.addRow("", self.apply_pixel_button)
-
-        rotation_group = QGroupBox("QR Rotation")
-        rotation_layout = QFormLayout(rotation_group)
-        rotation_layout.addRow("QR rotation", self.rotation_spin)
-        rotation_layout.addRow("R direction", self.rotation_real_direction)
-        rotation_layout.addRow("R x", self.rotation_real_x)
-        rotation_layout.addRow("R y", self.rotation_real_y)
-        rotation_layout.addRow("Q x", self.rotation_q_x)
-        rotation_layout.addRow("Q y", self.rotation_q_y)
-        rotation_layout.addRow("R length", self.rotation_real_length)
-        rotation_layout.addRow("Q length", self.rotation_q_length)
-        rotation_layout.addRow("", self.rotation_button)
-        rotation_layout.addRow("", self.apply_rotation_button)
-
-        transfer_group = QGroupBox("Transfer")
-        transfer_layout = QFormLayout(transfer_group)
-        transfer_layout.addRow("correction", self.transfer_correction)
-        transfer_layout.addRow("target DataCube", self.transfer_target)
-        transfer_layout.addRow("", self.transfer_button)
+        status_group = section("Existing Calibration", [
+            property_row("Analysis target", self.analysis_target),
+            property_row("Origin", self.decision_labels["origin"]),
+            property_row("Ellipse", self.decision_labels["ellipse"]),
+            property_row("Q pixel size", self.decision_labels["pixel"]),
+            property_row("QR rotation", self.decision_labels["rotate"]),
+            property_row("Source", self.source_label),
+            property_row("origin", self.origin_label),
+            property_row("ellipse", self.ellipse_label),
+            property_row("pixel", self.pixel_label),
+            property_row("rotate", self.rotate_label),
+            property_row("measurements", self.complete_label),
+            property_row("applied", self.applied_label),
+            property_row("", action_row(self.refresh_button, self.reset_button)),
+        ])
+        origin_group = section("Origin Calibration", [
+            property_row("", status_row(self.origin_measurement_label)),
+            property_row("", self.origin_use_guess),
+            property_row("", self.origin_guess_only),
+            property_row("center guess x", self.origin_center_x),
+            property_row("center guess y", self.origin_center_y),
+            property_row("score method", self.origin_score),
+            property_row("find center", self.origin_find_center),
+            property_row("fit function", self.origin_fit_function),
+            property_row("", self.origin_robust),
+            property_row("robust steps", self.origin_robust_steps),
+            property_row("robust threshold", self.origin_robust_threshold),
+            property_row("", action_row(self.origin_button, self.compare_origin_button)),
+            property_row("", action_row(self.apply_origin_button)),
+        ])
+        ellipse_group = section("Ellipse Calibration", [
+            property_row("fit result", self.ellipse_measurement_label),
+            property_row("fit center x", self.ellipse_center_x),
+            property_row("fit center y", self.ellipse_center_y),
+            property_row("inner radius", self.ellipse_inner),
+            property_row("outer radius", self.ellipse_outer),
+            property_row("BVM sampling", self.sampling_spin),
+            property_row("", action_row(self.draw_ellipse_circle_button, self.ellipse_button)),
+            property_row("", action_row(self.apply_ellipse_button)),
+        ])
+        pixel_group = section("Q Pixel Size", [
+            property_row("Q pixel size", self.pixel_spin),
+            property_row("", action_row(self.pixel_button)),
+            property_row("crystal source", self.crystal_path_label),
+            property_row("", action_row(self.load_cif_button)),
+            property_row("FCC lattice a", self.crystal_lattice),
+            property_row("atomic number", self.crystal_atomic_number),
+            property_row("k max", self.crystal_k_max),
+            property_row("", action_row(self.fit_pixel_button)),
+            property_row("", action_row(self.apply_pixel_button)),
+        ])
+        rotation_group = section("QR Rotation", [
+            property_row("QR rotation", self.rotation_spin),
+            property_row("R direction", self.rotation_real_direction),
+            property_row("R x", self.rotation_real_x),
+            property_row("R y", self.rotation_real_y),
+            property_row("Q x", self.rotation_q_x),
+            property_row("Q y", self.rotation_q_y),
+            property_row("R length", self.rotation_real_length),
+            property_row("Q length", self.rotation_q_length),
+            property_row("", action_row(self.rotation_button)),
+            property_row("", action_row(self.apply_rotation_button)),
+        ])
+        transfer_group = section("Transfer", [
+            property_row("correction", self.transfer_correction),
+            property_row("target DataCube", self.transfer_target),
+            property_row("", action_row(self.transfer_button)),
+        ])
         self.calibration_forms = {
-            "Existing Calibration": status_form,
-            "Origin Calibration": origin_form,
-            "Ellipse Calibration": ellipse_layout,
-            "Q Pixel Size": pixel_layout,
-            "QR Rotation": rotation_layout,
-            "Transfer": transfer_layout,
+            "Existing Calibration": status_group,
+            "Origin Calibration": origin_group,
+            "Ellipse Calibration": ellipse_group,
+            "Q Pixel Size": pixel_group,
+            "QR Rotation": rotation_group,
+            "Transfer": transfer_group,
         }
 
-        validate_group = QGroupBox("Validate")
-        validate_layout = QVBoxLayout(validate_group)
-        validate_layout.addWidget(self.validate_button)
-
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setSizeConstraint(QLayout.SetNoConstraint)
-        for group in [
+        validate_group = section("Validate", [
+            property_row("", action_row(self.validate_button)),
+        ])
+        self.controls_panel = ScientificControlsPanel([
             status_group,
             origin_group,
             ellipse_group,
@@ -412,31 +377,20 @@ class CalibrationPage(QWidget, WorkerRunner):
             rotation_group,
             transfer_group,
             validate_group,
-        ]:
-            left_layout.addWidget(group)
-        left_layout.addWidget(self.status_label)
-        left_layout.addStretch(1)
-        left.setMinimumSize(0, 0)
-        left.setMaximumWidth(16777215)
-        left.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.controls_panel = left
+            section("Status", [
+                property_row("", status_row(self.status_label)),
+            ]),
+        ])
         layout = QHBoxLayout(self)
         layout.addWidget(self.viewers)
-        status_form.setRowWrapPolicy(QFormLayout.WrapAllRows)
-        status_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        for name, form in self.calibration_forms.items():
-            if name == "Existing Calibration":
-                continue
-            form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         for control in [
-            *left.findChildren(NumericLineEdit),
-            *left.findChildren(QComboBox),
+            *self.controls_panel.findChildren(NumericLineEdit),
+            *self.controls_panel.findChildren(QComboBox),
         ]:
             control.setMinimumWidth(0)
             control.setMaximumWidth(16777215)
             control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        for control in left.findChildren(QComboBox):
+        for control in self.controls_panel.findChildren(QComboBox):
             control.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
             control.setMinimumContentsLength(0)
         for label in [

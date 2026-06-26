@@ -3,20 +3,16 @@ from __future__ import annotations
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -35,6 +31,13 @@ from app.widgets.image_viewer import ImageViewer
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel, ProcessSnapshot
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    property_row,
+    section,
+    status_row,
+)
 from app.widgets.worker_runner import WorkerRunner
 
 
@@ -262,56 +265,46 @@ class BraggPeaksPage(QWidget, WorkerRunner):
         )
 
     def _build_layout(self) -> None:
-        probe_group = QGroupBox("1 Probe / Kernel Preparation")
-        probe_layout = QFormLayout(probe_group)
-        probe_layout.addRow("ROI rx start", self.roi_rx_start)
-        probe_layout.addRow("ROI rx end", self.roi_rx_end)
-        probe_layout.addRow("ROI ry start", self.roi_ry_start)
-        probe_layout.addRow("ROI ry end", self.roi_ry_end)
-        probe_layout.addRow("", self.pick_roi_button)
-        probe_layout.addRow("", self.prepare_kernel_button)
-
-        params_group = QGroupBox("2 Bragg Detection Parameters")
-        params_layout = QFormLayout(params_group)
-        params_layout.addRow("preset", self.preset_combo)
-        params_layout.addRow("", self.apply_preset_button)
-        params_layout.addRow("minAbsoluteIntensity", self.min_abs_spin)
-        params_layout.addRow("minRelativeIntensity", self.min_rel_spin)
-        params_layout.addRow("minPeakSpacing", self.spacing_spin)
-        params_layout.addRow("edgeBoundary", self.edge_spin)
-        params_layout.addRow("maxNumPeaks", self.max_peaks_spin)
-        params_layout.addRow("sigma_cc", self.sigma_spin)
-        params_layout.addRow("sigma_dp", self.sigma_dp_spin)
-        params_layout.addRow("corrPower", self.corr_power_spin)
-        params_layout.addRow("upsample_factor", self.upsample_spin)
-        params_layout.addRow("radial background", self.radial_background_check)
-        params_layout.addRow("Gaussian fallback", self.gaussian_fallback_check)
-        params_layout.addRow("subpixel", self.subpixel_combo)
-
-        diagnostics_group = QGroupBox("3 Diagnostics")
-        diagnostics_layout = QFormLayout(diagnostics_group)
-        diagnostics_layout.addRow("rx", self.rx_spin)
-        diagnostics_layout.addRow("ry", self.ry_spin)
-        diagnostics_layout.addRow("six-points", self.selection_mode)
-        diagnostics_layout.addRow("", self.run_current_button)
-        diagnostics_layout.addRow("", self.run_selected_button)
-
-        full_group = QGroupBox("4 Full BraggVectors")
-        full_layout = QVBoxLayout(full_group)
-        full_layout.addWidget(self.run_full_button)
-
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(probe_group)
-        left_layout.addWidget(params_group)
-        left_layout.addWidget(diagnostics_group)
-        left_layout.addWidget(full_group)
-        left_layout.addWidget(self.status_label)
-        left_layout.addWidget(self.count_label)
-        left_layout.addWidget(self.quality_label)
-        left_layout.addWidget(self.table)
-        left = QWidget()
-        left.setLayout(left_layout)
-        self.controls_panel = left
+        self.controls_panel = ScientificControlsPanel([
+            section("Probe / Kernel Preparation", [
+                property_row("ROI rx start", self.roi_rx_start),
+                property_row("ROI rx end", self.roi_rx_end),
+                property_row("ROI ry start", self.roi_ry_start),
+                property_row("ROI ry end", self.roi_ry_end),
+                property_row("", action_row(self.pick_roi_button, self.prepare_kernel_button)),
+            ], number=1),
+            section("Bragg Detection Parameters", [
+                property_row("preset", self.preset_combo),
+                property_row("", action_row(self.apply_preset_button)),
+                property_row("minAbsoluteIntensity", self.min_abs_spin),
+                property_row("minRelativeIntensity", self.min_rel_spin),
+                property_row("minPeakSpacing", self.spacing_spin),
+                property_row("edgeBoundary", self.edge_spin),
+                property_row("maxNumPeaks", self.max_peaks_spin),
+                property_row("sigma_cc", self.sigma_spin),
+                property_row("sigma_dp", self.sigma_dp_spin),
+                property_row("corrPower", self.corr_power_spin),
+                property_row("upsample_factor", self.upsample_spin),
+                property_row("radial background", self.radial_background_check),
+                property_row("Gaussian fallback", self.gaussian_fallback_check),
+                property_row("subpixel", self.subpixel_combo),
+            ], number=2),
+            section("Diagnostics", [
+                property_row("rx", self.rx_spin),
+                property_row("ry", self.ry_spin),
+                property_row("six-points", self.selection_mode),
+                property_row("", action_row(self.run_current_button, self.run_selected_button)),
+            ], number=3),
+            section("Full BraggVectors", [
+                property_row("", action_row(self.run_full_button)),
+            ], number=4),
+            section("Status", [
+                property_row("", status_row(self.status_label)),
+                property_row("", status_row(self.count_label)),
+                property_row("", status_row(self.quality_label)),
+                property_row("", self.table),
+            ]),
+        ])
 
         layout = QHBoxLayout(self)
         layout.addWidget(self.workspace)

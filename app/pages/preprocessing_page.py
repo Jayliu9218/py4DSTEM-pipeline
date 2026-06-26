@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Callable
 
-import PySide6
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from app.services.preprocessing_service import HotPixelParams, HotPixelPreview, PreprocessingService
 from app.services.result_registry import ResultRegistry
@@ -12,6 +11,13 @@ from app.services.workflow_state import WorkflowState, WorkflowStep
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
 from app.widgets.log_panel import LogPanel
 from app.widgets.numeric_line_edit import NumericLineEdit
+from app.widgets.scientific_controls import (
+    ScientificControlsPanel,
+    action_row,
+    property_row,
+    section,
+    status_row,
+)
 from app.widgets.worker_runner import WorkerRunner
 
 
@@ -53,33 +59,18 @@ class PreprocessingPage(QWidget, WorkerRunner):
         self.show_data_button.clicked.connect(self.show_data)
         self.cancel_button.clicked.connect(self.cancel_background)
         self.threshold.valueChanged.connect(self._threshold_changed)
-        controls = QWidget()
-        form = QFormLayout(controls)
-        form.addRow("hot-pixel threshold", self.threshold)
-        form.addRow("reduction memory budget", self.memory_budget_mb)
-        form.addRow("preview scan stride", self.preview_scan_stride)
-        control_layout = QVBoxLayout()
-        control_layout.addWidget(controls)
-        
-        button_row = PySide6.QtWidgets.QHBoxLayout()
-        button_row.addWidget(self.show_data_button)
-        button_row.addWidget(self.cancel_button)
-        control_layout.addLayout(button_row)
-        
-        """
-        control_layout.addWidget(self.preview_button)
-        control_layout.addWidget(self.apply_button)
-        """
-        
-        button_row = PySide6.QtWidgets.QHBoxLayout()
-        button_row.addWidget(self.preview_button)
-        button_row.addWidget(self.apply_button)
-        control_layout.addLayout(button_row)
-        
-        control_layout.addWidget(self.status)
-        control_layout.addStretch(1)
-        self.controls_panel = QGroupBox("Data & Preprocessing")
-        self.controls_panel.setLayout(control_layout)
+        self.controls_panel = ScientificControlsPanel([
+            section("Data Preprocessing", [
+                property_row("hot-pixel threshold", self.threshold),
+                property_row("reduction memory budget", self.memory_budget_mb),
+                property_row("preview scan stride", self.preview_scan_stride),
+                property_row("", action_row(self.show_data_button, self.cancel_button)),
+                property_row("", action_row(self.preview_button, self.apply_button)),
+            ], number=1),
+            section("Status", [
+                property_row("", status_row(self.status)),
+            ]),
+        ])
         layout = QVBoxLayout(self)
         layout.addWidget(self.workspace)
 
