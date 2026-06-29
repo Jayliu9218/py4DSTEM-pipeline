@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 
 from app.services.array_reduction import scan_sum_with_progress
+from app.services.datacube_binning import bin_4d, binning_output_shape
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ class DirectDataCubeImportOptions:
     chunk_size: int = 32
     roi_tuning_mode: bool = True
     preview_scan_stride: int = 4
+    r_bin: int = 1  # binning factor for scan (real-space) axes
+    q_bin: int = 1  # binning factor for detector (reciprocal-space) axes
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -374,7 +377,10 @@ class Py4DSTEMService:
         if len(shape) != 4:
             raise Py4DSTEMServiceError(f"Expected a 4D array, got shape {shape}.")
 
-        self.datacube = None
+        # Store the raw 4D data so apply_binning can access it.
+        # For h5py datasets this is a lazy reference — no data is read yet.
+        raw = data if hasattr(data, "shape") and hasattr(data, "dtype") else np.asarray(data)
+        self.datacube = raw
         self.probe_geometry = None
         info = DataCubeInfo(
             name=Path(datapath).name or "4D dataset",
@@ -408,6 +414,14 @@ class Py4DSTEMService:
             raise Py4DSTEMServiceError(f"Expected DataCube shape with 4 axes, got {shape}.")
         return tuple(int(dim) for dim in shape)
 
+    def _raw_4d_data(self) -> Any:
+        """Return the underlying 4D array, unwrapping a py4DSTEM DataCube if needed."""
+        if self.datacube is None:
+            raise Py4DSTEMServiceError("No DataCube is loaded.")
+        if not isinstance(self.datacube, np.ndarray) and hasattr(self.datacube, "data"):
+            return self.datacube.data
+        return self.datacube
+
     def get_scan_image(self) -> np.ndarray:
         if self.datacube is None:
             raise Py4DSTEMServiceError("No py4DSTEM DataCube is loaded.")
@@ -421,7 +435,7 @@ class Py4DSTEMService:
             return np.asarray(getattr(virtual_image, "data", virtual_image))
         except (AttributeError, TypeError, ValueError, RuntimeError):
             logger.debug("get_virtual_image failed, falling back to raw sum", exc_info=True)
-            return scan_sum_with_progress(self.datacube.data)
+            return scan_sum_with_progress(self._raw_4d_data())
 
     def get_diffraction_pattern(self, rx: int, ry: int) -> np.ndarray:
         if self.datacube is None:
@@ -429,7 +443,7 @@ class Py4DSTEMService:
 
         shape = self.get_datacube_shape()
         self._validate_scan_coordinates(rx, ry, shape[:2])
-        return np.asarray(self.datacube.data[rx, ry, :, :])
+        return np.asarray(self._raw_4d_data()[rx, ry, :, :])
 
     def measure_probe_geometry(self) -> ProbeGeometry:
         if self.datacube is None:
@@ -465,6 +479,76 @@ class Py4DSTEMService:
             "scan_shape": self.datacube_info.scan_shape,
             "diffraction_shape": self.datacube_info.diffraction_shape,
         }
+
+    def apply_binning(
+        self,
+        r_bin: int,
+        q_bin: int,
+        *,
+        progress_callback: Any = None,
+    ) -> DataCubeInfo:
+        """Bin the currently loaded DataCube in-place.
+
+        Reads the raw 4D data (which may be a memmap or HDF5 dataset),
+        creates a block-averaged copy in memory, and replaces the internal
+        ``datacube.data`` with the binned array.
+
+        Parameters
+        ----------
+        r_bin : binning factor for scan (real-space) axes.
+        q_bin : binning factor for detector (reciprocal-space) axes.
+        progress_callback : optional ``callable(message, fraction)``.
+
+        Returns
+        -------
+        DataCubeInfo reflecting the binned shape.
+
+        Raises
+        ------
+        Py4DSTEMServiceError if no DataCube is loaded or binning fails.
+        """
+        if self.datacube is None or self.datacube_info is None:
+            raise Py4DSTEMServiceError("No DataCube is loaded.")
+
+        if r_bin <= 1 and q_bin <= 1:
+            return self.datacube_info
+
+        # Get the raw 4D array data, handling both py4DSTEM DataCube objects
+        # (which wrap data in .data) and plain numpy/h5py arrays.
+        raw_data = self.datacube
+        if not isinstance(raw_data, np.ndarray) and hasattr(raw_data, "data"):
+            raw_data = raw_data.data
+        try:
+            binned = bin_4d(
+                raw_data,
+                r_bin=r_bin,
+                q_bin=q_bin,
+                progress_callback=progress_callback,
+            )
+        except ValueError as exc:
+            raise Py4DSTEMServiceError(str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Unexpected error during 4D binning")
+            raise Py4DSTEMServiceError(f"Binning failed: {exc}") from exc
+
+        # Attach the binned array back to the DataCube.
+        # For py4DSTEM DataCube objects, replace .data; for raw arrays, replace entirely.
+        if not isinstance(self.datacube, np.ndarray) and hasattr(self.datacube, "data"):
+            self.datacube.data = binned
+        else:
+            self.datacube = binned
+
+        new_shape = binning_output_shape(self.datacube_info.shape, r_bin, q_bin)
+        info = DataCubeInfo(
+            name=f"{self.datacube_info.name} (R{r_bin}Q{q_bin})",
+            datapath=self.datacube_info.datapath,
+            shape=new_shape,
+            scan_shape=new_shape[:2],
+            diffraction_shape=new_shape[2:],
+            metadata=dict(self.datacube_info.metadata),
+        )
+        self.datacube_info = info
+        return info
 
     def _shape_is_4d(self, shape: Any) -> bool:
         return shape is not None and len(tuple(shape)) == 4

@@ -50,6 +50,7 @@ from app.services.py4dstem_service import (
     Py4DSTEMServiceError,
     mib_import_options_from_filename,
 )
+from app.services.datacube_binning import BINNING_PRESETS
 from app.services.report_service import ReportService
 from app.services.result_registry import ResultRegistry
 from app.services.workflow_state import WorkflowState, WorkflowStep
@@ -896,9 +897,20 @@ class MainWindow(QMainWindow):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, role=role: self._assign_current_role(role))
             role_rows.append(property_row("", action_row(button)))
+        self.binning_combo = QComboBox()
+        self.binning_combo.addItems([preset.label for preset in BINNING_PRESETS.values()])
+        self.binning_combo.setCurrentText(BINNING_PRESETS["none"].label)
+        self.binning_apply_button = QPushButton("Apply Binning")
+        self.binning_apply_button.clicked.connect(self._apply_binning_to_current_datacube)
+        self.binning_apply_button.setEnabled(False)
+        binning_rows = [
+            property_row("Binning level", self.binning_combo),
+            property_row("", action_row(self.binning_apply_button)),
+        ]
         panel = ScientificControlsPanel([
             self.preprocessing_page.controls_panel,
             section("Dataset Roles / Sources", role_rows, number=2),
+            section("4D Binning (Downsampling)", binning_rows, number=3),
             self.virtual_detector_page.controls_panel,
         ])
         return panel
@@ -1045,12 +1057,24 @@ class MainWindow(QMainWindow):
         preview_scan_stride = NumericLineEdit(1, 64, defaults.preview_scan_stride, integer=True)
         roi_tuning = QCheckBox("Use 128 x 128 ROI for first crystal-analysis pass")
         roi_tuning.setChecked(defaults.roi_tuning_mode)
+        binning_combo = QComboBox()
+        binning_combo.addItems([preset.label for preset in BINNING_PRESETS.values()])
+        binning_combo.setCurrentText(BINNING_PRESETS["level_b"].label)
+        binning_hint = QLabel(
+            "Downsample the 4D data to make large-file computation feasible.\n"
+            "Level A (Fast Preview): R_BIN=4/8 Q_BIN=2 → 128×128×128×128\n"
+            "Level B (Phase Map):    R_BIN=2 Q_BIN=2 → 256×256×128×128"
+        )
+        binning_hint.setWordWrap(True)
+        binning_hint.setObjectName("dataPreviewHint")
         layout.addWidget(metadata_label)
         form.addRow("Scan X", scan_x)
         form.addRow("Scan Y", scan_y)
         form.addRow("Memory mode", mem_mode)
         form.addRow("Chunk size", chunk_size)
         form.addRow("Show Data preview stride", preview_scan_stride)
+        form.addRow("Binning", binning_combo)
+        form.addRow("", binning_hint)
         layout.addLayout(form)
         layout.addWidget(roi_tuning)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1059,12 +1083,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
         if dialog.exec() != QDialog.Accepted:
             return None
+        preset_key = _binning_key_for_label(binning_combo.currentText())
+        preset = BINNING_PRESETS.get(preset_key, BINNING_PRESETS["none"])
         return DirectDataCubeImportOptions(
             scan_shape=(int(scan_x.value()), int(scan_y.value())),
             mem_mode=mem_mode.currentText(),
             chunk_size=int(chunk_size.value()),
             roi_tuning_mode=roi_tuning.isChecked(),
             preview_scan_stride=int(preview_scan_stride.value()),
+            r_bin=preset.r_bin,
+            q_bin=preset.q_bin,
             metadata=defaults.metadata,
         )
 
@@ -1077,7 +1105,8 @@ class MainWindow(QMainWindow):
         options = import_options or DirectDataCubeImportOptions()
         self.log_panel.process_started(
             "Open MIB DataCube",
-            f"scan={options.scan_shape}, mem={options.mem_mode}, preview_stride={options.preview_scan_stride}",
+            f"scan={options.scan_shape}, mem={options.mem_mode}, preview_stride={options.preview_scan_stride}, "
+            f"R_BIN={options.r_bin}, Q_BIN={options.q_bin}",
         )
         self.log_panel.process_progress("Preparing MIB import 5%")
         self.result_registry.clear()
@@ -1088,6 +1117,25 @@ class MainWindow(QMainWindow):
         try:
             info = self.session.open_direct_datacube(file_path, import_options=options)
             self.log_panel.process_progress("MIB import complete 80%")
+
+            # ---- Apply 4D binning (downsampling) ----
+            if options.r_bin > 1 or options.q_bin > 1:
+                self.log_panel.process_progress(
+                    f"Binning 4D data R_BIN={options.r_bin} Q_BIN={options.q_bin}..."
+                )
+                bin_info = self.py4dstem_service.apply_binning(
+                    r_bin=options.r_bin,
+                    q_bin=options.q_bin,
+                    progress_callback=lambda msg, frac: self.log_panel.process_progress(
+                        f"{msg} {frac*100:.0f}%"
+                    ),
+                )
+                info = bin_info
+                self.log_panel.log(
+                    f"Binned DataCube: {info.shape} (R_BIN={options.r_bin}, Q_BIN={options.q_bin})"
+                )
+                self.log_panel.process_progress("Binning complete 95%")
+
             self._apply_mib_crystal_defaults(options)
             self.preprocessing_page.preview_scan_stride.setValue(options.preview_scan_stride)
         except Exception as exc:
@@ -1115,12 +1163,13 @@ class MainWindow(QMainWindow):
         self.virtual_detector_page.refresh_defaults_from_datacube()
         self.bragg_peaks_page.refresh_from_datacube()
         self.calibration_page.refresh_status()
+        self._update_binning_button()
         if info.metadata:
             self.log_panel.log(f"MIB filename metadata: {self._mib_metadata_summary(info.metadata)}")
         self.log_panel.log(f"Opened MIB DataCube: {file_path}")
         self.log_panel.process_finished(
             "Open MIB DataCube",
-            f"shape={info.shape}, preview_stride={options.preview_scan_stride}",
+            f"shape={info.shape}, R_BIN={options.r_bin}, Q_BIN={options.q_bin}",
         )
 
     def _mib_metadata_summary(self, metadata: dict[str, object]) -> str:
@@ -1144,6 +1193,64 @@ class MainWindow(QMainWindow):
             if key in metadata:
                 parts.append(f"{label}={metadata[key]}")
         return ", ".join(parts)
+
+    def _update_binning_button(self) -> None:
+        """Enable the binning button when a py4DSTEM DataCube is available."""
+        has_datacube = (
+            self.py4dstem_service.datacube is not None
+            and self.py4dstem_service.datacube_info is not None
+        )
+        self.binning_apply_button.setEnabled(has_datacube)
+
+    def _apply_binning_to_current_datacube(self) -> None:
+        """Apply the currently selected binning level to the loaded DataCube."""
+        preset = _preset_for_label(self.binning_combo.currentText())
+        if preset.r_bin <= 1 and preset.q_bin <= 1:
+            QMessageBox.information(
+                self, "Binning",
+                "Select a binning level (Level A or Level B) to downsample the data."
+            )
+            return
+        if self.py4dstem_service.datacube is None:
+            QMessageBox.information(self, "Binning", "No DataCube is loaded.")
+            return
+
+        try:
+            self.log_panel.process_started(
+                "Apply Binning",
+                f"R_BIN={preset.r_bin}, Q_BIN={preset.q_bin}",
+            )
+            info = self.py4dstem_service.apply_binning(
+                r_bin=preset.r_bin,
+                q_bin=preset.q_bin,
+                progress_callback=lambda msg, frac: self.log_panel.process_progress(
+                    f"{msg} {frac*100:.0f}%"
+                ),
+            )
+        except Exception as exc:
+            self.log_panel.process_failed("Apply Binning", str(exc))
+            QMessageBox.warning(self, "Binning failed", str(exc))
+            return
+
+        # Update all shape-dependent UI elements
+        self.current_dataset_shape = info.shape
+        self.workflow_state.data_source_updated()
+        self.workflow_state.set_dataset_role("target_datacube", info.datapath)
+        self._refresh_role_labels()
+        self._show_datacube_info(info.name, info.scan_shape, info.diffraction_shape)
+        self.path_label.setText(info.datapath)
+        self.shape_label.setText(str(info.shape))
+        self._configure_4d_controls(info.shape)
+        self.virtual_detector_page.refresh_defaults_from_datacube()
+        self.bragg_peaks_page.refresh_from_datacube()
+        self.calibration_page.refresh_status()
+        self.log_panel.process_finished(
+            "Apply Binning",
+            f"shape={info.shape}, R_BIN={preset.r_bin}, Q_BIN={preset.q_bin}",
+        )
+        self.log_panel.log(
+            f"Binned DataCube to {info.shape} (R_BIN={preset.r_bin}, Q_BIN={preset.q_bin})"
+        )
 
     def _apply_mib_crystal_defaults(self, options: DirectDataCubeImportOptions) -> None:
         mode = "ROI 128x128" if options.roi_tuning_mode else "Full Dataset"
@@ -1402,6 +1509,7 @@ class MainWindow(QMainWindow):
             self.virtual_detector_page.refresh_defaults_from_datacube()
             self.bragg_peaks_page.refresh_from_datacube()
             self.calibration_page.refresh_status()
+            self._update_binning_button()
             self.log_panel.log(f"Loaded py4DSTEM DataCube: {info.name} at {hdf5_path}")
             return True
         except Py4DSTEMServiceError as exc:
@@ -1803,3 +1911,17 @@ class MainWindow(QMainWindow):
 
     def _path_with_supported_suffix(self, path: Path, extension: str) -> Path:
         return self.project_coordinator.path_with_supported_suffix(path, extension)
+
+
+def _binning_key_for_label(label: str) -> str:
+    """Reverse-lookup a binning preset key from its display label."""
+    for preset in BINNING_PRESETS.values():
+        if preset.label == label:
+            return preset.key
+    return "none"
+
+
+def _preset_for_label(label: str):
+    """Return the full BinningPreset for a display label."""
+    key = _binning_key_for_label(label)
+    return BINNING_PRESETS.get(key, BINNING_PRESETS["none"])
