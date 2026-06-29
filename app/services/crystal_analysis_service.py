@@ -107,8 +107,9 @@ class CrystalAnalysisService(PhaseMappingService):
         self,
         braggvectors: Any | None,
         params: PhaseMatchParams,
+        progress_callback: Any = None,
     ) -> PhaseMatchResult:
-        result = super().match_phases(braggvectors, params)
+        result = super().match_phases(braggvectors, params, progress_callback=progress_callback)
         composite = self._composite_phase_orientation(result)
         if composite is not None:
             result.images["Composite Phase + Orientation"] = composite

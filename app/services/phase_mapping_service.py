@@ -126,11 +126,16 @@ class PhaseMappingService:
             if entry.enabled
         ]
 
-    def create_multi_phase_plan(self, params: PhasePlanParams) -> float:
+    def create_multi_phase_plan(
+        self,
+        params: PhasePlanParams,
+        progress_callback: Any = None,
+    ) -> float:
         entries = self.enabled_crystals()
         if not entries:
             raise PhaseMappingServiceError("Add at least one crystal to the library first.")
         start = perf_counter()
+        emit = progress_callback or (lambda _m, _f: None)
         kwargs: dict[str, Any] = {
             "zone_axis_range": "fiber" if params.mode == "Fiber" else "auto",
             "angle_step_zone_axis": params.angle_step_zone_axis,
@@ -142,13 +147,15 @@ class PhaseMappingService:
             "power_intensity": 0.0,
             "power_intensity_experiment": 0.0,
             "CUDA": params.cuda,
-            "progress_bar": False,
+            "progress_bar": True,
         }
         if params.mode == "Fiber":
             if np.linalg.norm(params.fiber_axis) == 0:
                 raise PhaseMappingServiceError("Fiber axis cannot be the zero vector.")
             kwargs.update(fiber_axis=list(params.fiber_axis), fiber_angles=list(params.fiber_angles))
-        for _index, entry in entries:
+        total = len(entries)
+        for idx, (_index, entry) in enumerate(entries):
+            emit(f"Planning {entry.name} ({idx+1}/{total})", idx / max(total, 1))
             try:
                 crystal = entry.crystal
                 setup = getattr(crystal, "setup_diffraction", None)
@@ -166,7 +173,10 @@ class PhaseMappingService:
         return perf_counter() - start
 
     def match_phases(
-        self, braggvectors: Any | None, params: PhaseMatchParams
+        self,
+        braggvectors: Any | None,
+        params: PhaseMatchParams,
+        progress_callback: Any = None,
     ) -> PhaseMatchResult:
         entries = self.enabled_crystals()
         if not entries:
@@ -176,6 +186,7 @@ class PhaseMappingService:
         if braggvectors is None:
             raise PhaseMappingServiceError("Run full BraggVectors before phase matching.")
         start = perf_counter()
+        emit = progress_callback or (lambda _m, _f: None)
         warnings: list[str] = []
         calibration_warning = self._calibration_warning(getattr(braggvectors, "calstate", {}))
         if calibration_warning:
@@ -185,8 +196,10 @@ class PhaseMappingService:
         per_phase_orientation: list[Any] = []
         per_phase_rgb: list[np.ndarray] = []
         phase_names: list[str] = []
-        for _index, entry in entries:
+        total = len(entries)
+        for idx, (_index, entry) in enumerate(entries):
             crystal = entry.crystal
+            emit(f"Matching {entry.name} ({idx+1}/{total})", idx / max(total, 1))
             try:
                 orientation_map = crystal.match_orientations(
                     braggvectors,
@@ -194,7 +207,7 @@ class PhaseMappingService:
                     min_angle_between_matches_deg=params.min_angle_between_matches_deg,
                     min_number_peaks=params.min_number_peaks,
                     inversion_symmetry=params.inversion_symmetry,
-                    progress_bar=False,
+                    progress_bar=True,
                 )
             except Exception as exc:
                 raise PhaseMappingServiceError(
@@ -206,6 +219,7 @@ class PhaseMappingService:
             correlation_maps.append(corr_map)
             rgb = self._plot_map(crystal, orientation_map, params)
             per_phase_rgb.append(rgb)
+        emit("Assembling phase maps...", 0.85)
         correlation_stack = np.stack(correlation_maps, axis=0)
         best_index = np.argmax(correlation_stack, axis=0)
         best_correlation = np.max(correlation_stack, axis=0)
@@ -239,6 +253,7 @@ class PhaseMappingService:
             )
         if len(correlation_maps) < 2:
             warnings.append("Phase discrimination requires at least two enabled crystals.")
+        emit("Phase matching complete", 1.0)
         result = PhaseMatchResult(
             phase_id_map=phase_id_map,
             phase_label_map=phase_label_map,

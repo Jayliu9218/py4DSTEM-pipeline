@@ -103,7 +103,10 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.symmetry_order = self._int(1, 24, 6, unit="count")
         self.plan_button = QPushButton("Create Multi-Phase Plan")
         self.plan_button.clicked.connect(
-            lambda: self._start("Multi-Phase Plan", lambda: self.service.create_multi_phase_plan(self._plan_params()))
+            lambda: self._start(
+                "Multi-Phase Plan",
+                lambda cb: self.service.create_multi_phase_plan(self._plan_params(), progress_callback=cb),
+            )
         )
         self.structure_button = QPushButton("Calculate Structure Factors")
         self.structure_button.clicked.connect(
@@ -130,7 +133,12 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.low_confidence = self._float(-1000, 1000, 0.1, 4, unit="ratio")
         self.match_button = QPushButton("Match All Phases")
         self.match_button.clicked.connect(
-            lambda: self._start("Phases", lambda: self.service.match_phases(self.braggvectors_provider(), self._match_params()))
+            lambda: self._start(
+                "Phases",
+                lambda cb: self.service.match_phases(
+                    self.braggvectors_provider(), self._match_params(), progress_callback=cb
+                ),
+            )
         )
         self.orientation_button = QPushButton("Review Phase-Conditioned Orientation")
         self.orientation_button.clicked.connect(
@@ -316,7 +324,15 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             self.workspace.lock_auto_layout()
         self._sync_run_config()
         self.pending_name = name
-        self._start_background(name, lambda _cb: operation(), parameters=self.params_snapshot())
+
+        def _run(cb):
+            """Invoke *operation* with *cb* when it accepts one, otherwise call it bare."""
+            try:
+                return operation(cb)
+            except TypeError:
+                return operation()
+
+        self._start_background(name, _run, parameters=self.params_snapshot())
 
     def _handle_result(self, result) -> None:
         if isinstance(result, float):
