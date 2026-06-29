@@ -122,8 +122,11 @@ class VirtualDetectorService:
 
     def _detector_preview(self, source: Any) -> np.ndarray:
         if hasattr(source, "get_dp_mean"):
-            result = source.get_dp_mean()
-            return np.asarray(getattr(result, "data", result))
+            try:
+                result = source.get_dp_mean()
+                return np.asarray(getattr(result, "data", result))
+            except Exception:
+                pass  # Fall back to raw array computation (e.g. after binning)
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         if getattr(data, "ndim", None) != 4:
             raise VirtualDetectorServiceError("A 4D DataCube is required for detector preview.")
@@ -191,15 +194,21 @@ class VirtualDetectorService:
         if not mask.any():
             raise VirtualDetectorServiceError("Real-space ROI contains no scan positions.")
         if hasattr(source, "get_virtual_diffraction"):
-            result = source.get_virtual_diffraction(method="mean", mask=mask, returncalc=True)
-            return np.asarray(getattr(result, "data", result))
+            try:
+                result = source.get_virtual_diffraction(method="mean", mask=mask, returncalc=True)
+                return np.asarray(getattr(result, "data", result))
+            except Exception:
+                pass  # Fall back to masked mean (e.g. after binning or API change)
         return masked_scan_mean(data, mask)
 
     def _real_space_preview(self, source: Any) -> np.ndarray:
         data = source if isinstance(source, np.ndarray) else getattr(source, "data", source)
         if hasattr(source, "get_virtual_image"):
-            result = source.get_virtual_image(mode="all", returncalc=True)
-            return np.asarray(getattr(result, "data", result))
+            try:
+                result = source.get_virtual_image(mode="all", returncalc=True)
+                return np.asarray(getattr(result, "data", result))
+            except Exception:
+                pass  # Fall back to raw sum (e.g. after binning or API change)
         return scan_sum(data, dtype=np.float64)
 
     def _compute_with_array(self, source: Any, params: VirtualDetectorParams) -> np.ndarray:
