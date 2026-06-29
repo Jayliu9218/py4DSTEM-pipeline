@@ -5,7 +5,7 @@ import numpy as np
 from PySide6.QtWidgets import QApplication
 
 from app.controllers.route_coordinator import build_route_modules
-from app.pages.structural_phase_page import StructuralPhasePage
+from app.pages.structural_phase_page import PHASE_MATCH_PRESETS, StructuralPhasePage
 from app.services.crystal_analysis_service import CrystalAnalysisService
 from app.services.phase_mapping_service import PhaseMatchParams, PhasePlanParams
 from app.services.workflow_state import WorkflowState, WorkflowStep
@@ -84,7 +84,6 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
                 "bragg_detection",
                 "calibration",
                 "phase_setup",
-                "orientation_matching",
                 "strain_analysis",
             ],
         )
@@ -139,6 +138,7 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         )
 
         try:
+            source.phase_preset.setCurrentText("Strict")
             source.run_mode.setCurrentText("Full Dataset")
             source.roi_size.setValue(96)
             source.orientation_matches.setValue(5)
@@ -152,6 +152,7 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
 
             restored.apply_params_snapshot(source.params_snapshot())
 
+            self.assertEqual(restored.phase_preset.currentText(), "Strict")
             self.assertEqual(restored.run_mode.currentText(), "Full Dataset")
             self.assertEqual(restored.roi_size.value(), 96)
             self.assertEqual(restored.orientation_matches.value(), 5)
@@ -165,6 +166,40 @@ class CrystalAnalysisServiceTests(unittest.TestCase):
         finally:
             source.close()
             restored.close()
+
+    def test_phase_match_presets_update_runtime_controls(self):
+        page = StructuralPhasePage(
+            braggvectors_provider=lambda: None,
+            log_panel=LogPanel(),
+            workflow_state=WorkflowState(),
+            service=CrystalAnalysisService(),
+            stage_mode="library_match",
+        )
+
+        try:
+            for preset_name, preset in PHASE_MATCH_PRESETS.items():
+                with self.subTest(preset=preset_name):
+                    page.phase_preset.setCurrentText(preset_name)
+                    page.apply_phase_preset()
+                    plan = page._plan_params()
+                    match = page._match_params()
+
+                    self.assertEqual(page.run_mode.currentText(), preset["analysis_mode"])
+                    self.assertEqual(page.roi_size.value(), preset["roi_size"])
+                    self.assertEqual(plan.angle_step_zone_axis, preset["angle_step_zone_axis"])
+                    self.assertEqual(plan.angle_step_in_plane, preset["angle_step_in_plane"])
+                    self.assertEqual(match.num_matches_return, preset["match_candidates"])
+                    self.assertEqual(
+                        match.min_angle_between_matches_deg,
+                        preset["min_angle_between_matches_deg"],
+                    )
+                    self.assertEqual(match.min_number_peaks, preset["min_number_peaks"])
+                    self.assertEqual(
+                        match.low_confidence_threshold,
+                        preset["low_confidence_threshold"],
+                    )
+        finally:
+            page.close()
 
     def test_crystal_analysis_plan_changes_stale_crystal_downstream(self):
         workflow_state = WorkflowState()

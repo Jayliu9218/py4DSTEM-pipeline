@@ -32,12 +32,47 @@ from app.widgets.scientific_controls import (
 from app.widgets.worker_runner import WorkerRunner
 
 
+PHASE_MATCH_PRESETS: dict[str, dict[str, object]] = {
+    "Quick": {
+        "analysis_mode": "ROI 128x128",
+        "roi_size": 64,
+        "angle_step_zone_axis": 8.0,
+        "angle_step_in_plane": 8.0,
+        "match_candidates": 1,
+        "min_angle_between_matches_deg": 10.0,
+        "min_number_peaks": 4,
+        "low_confidence_threshold": 0.08,
+    },
+    "Medium": {
+        "analysis_mode": "ROI 128x128",
+        "roi_size": 128,
+        "angle_step_zone_axis": 4.0,
+        "angle_step_in_plane": 4.0,
+        "match_candidates": 2,
+        "min_angle_between_matches_deg": 7.5,
+        "min_number_peaks": 3,
+        "low_confidence_threshold": 0.1,
+    },
+    "Strict": {
+        "analysis_mode": "Full Dataset",
+        "roi_size": 128,
+        "angle_step_zone_axis": 2.0,
+        "angle_step_in_plane": 2.0,
+        "match_candidates": 2,
+        "min_angle_between_matches_deg": 5.0,
+        "min_number_peaks": 3,
+        "low_confidence_threshold": 0.1,
+    },
+}
+
+
 class StructuralPhasePage(QWidget, WorkerRunner):
     phase_result_ready = Signal(object)
 
     STAGE_STEPS = {
         "library": WorkflowStep.STRUCTURAL_PHASE_PLAN,
         "library_match": WorkflowStep.CRYSTAL_PHASE,
+        "library_match_orientation": WorkflowStep.CRYSTAL_ORIENTATION,
         "match": WorkflowStep.STRUCTURAL_PHASE_MATCH,
         "results": WorkflowStep.STRUCTURAL_PHASE,
         "structure": WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
@@ -86,13 +121,18 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         self.run_mode = QComboBox()
         self.run_mode.addItems(["ROI 128x128", "Full Dataset"])
         self.roi_size = self._int(16, 100000, 128, unit="px")
+        self.phase_preset = QComboBox()
+        self.phase_preset.addItems(["Quick", "Medium", "Strict"])
+        self.phase_preset.setCurrentText("Medium")
+        self.apply_preset_button = QPushButton("Apply Preset")
+        self.apply_preset_button.clicked.connect(self.apply_phase_preset)
 
         self.mode = QComboBox()
         self.mode.addItems(["General 3D", "Fiber"])
         self.voltage = self._float(1000, 1_000_000, 300_000, 0, unit="V")
         self.k_max = self._float(0.1, 10, 1.5, 3, unit="A^-1")
-        self.zone_step = self._float(0.1, 30, 2, 2, unit="deg")
-        self.plane_step = self._float(0.1, 30, 2, 2, unit="deg")
+        self.zone_step = self._float(0.1, 30, 4, 2, unit="deg")
+        self.plane_step = self._float(0.1, 30, 4, 2, unit="deg")
         self.corr_kernel_size = self._float(0.001, 10, 0.08, 4, unit="A^-1")
         self.sigma = self._float(0.001, 10, 0.02, 4, unit="A^-1")
         self.fiber_x = self._float(-100, 100, 0, 3)
@@ -124,7 +164,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         )
 
         self.match_matches = self._int(1, 20, 2, unit="matches")
-        self.match_min_angle = self._float(0, 180, 5, 2, unit="deg")
+        self.match_min_angle = self._float(0, 180, 7.5, 2, unit="deg")
         self.match_min_peaks = self._int(1, 1000, 3, unit="peaks")
         self.match_inversion = QCheckBox("Use inversion symmetry")
         self.match_inversion.setChecked(True)
@@ -189,6 +229,8 @@ class StructuralPhasePage(QWidget, WorkerRunner):
     def _build_layout(self) -> None:
         self.groups: dict[str, QWidget] = {}
         self.groups["library"] = section("Crystal Library", [
+            ("Preset", self.phase_preset),
+            ("", action_row(self.apply_preset_button)),
             ("Analysis mode", self.run_mode),
             ("ROI size", self.roi_size),
             ("Loaded crystals", self.crystal_list),
@@ -258,6 +300,9 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         visible = {
             "library": {"library", "plan"},
             "library_match": {"library", "plan", "structure", "simulated", "match"},
+            "library_match_orientation": {
+                "library", "plan", "structure", "simulated", "match", "orientation", "grain"
+            },
             "structure": {"library", "structure"},
             "simulated": {"library", "simulated"},
             "match": {"match"},
@@ -332,11 +377,13 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             except TypeError:
                 return operation()
 
-        self._start_background(name, _run, parameters=self.params_snapshot())
+        if self._start_background(name, _run, parameters=self.params_snapshot()):
+            self.log_panel.log(f"{name} started.")
 
     def _handle_result(self, result) -> None:
         if isinstance(result, float):
             self._notify(f"{self.pending_name} complete in {result:.2f}s.", "success")
+            self.log_panel.log(f"{self.pending_name} complete in {result:.2f}s.")
             self.log_panel.process_finished(self.pending_name, self.status_label.text())
             self.workflow_state.mark_completed(WorkflowStep.STRUCTURAL_PHASE_PLAN)
             self.refresh_stage()
@@ -354,11 +401,13 @@ class StructuralPhasePage(QWidget, WorkerRunner):
                 f"{self.pending_name} complete in {result.elapsed_seconds:.2f}s. {detail} {warning}".strip(),
                 "warning" if result.warnings else "success",
             )
+            self.log_panel.log(self.status_label.text())
             self.log_panel.process_finished(self.pending_name, self.status_label.text())
             step = {
                 "structure": WorkflowStep.CRYSTAL_STRUCTURE_FACTORS,
                 "simulated": WorkflowStep.CRYSTAL_SIMULATED_DIFFRACTION,
                 "orientation_grain": WorkflowStep.CRYSTAL_ORIENTATION,
+                "library_match_orientation": WorkflowStep.CRYSTAL_ORIENTATION,
                 "orientation": WorkflowStep.CRYSTAL_ORIENTATION,
                 "grain": WorkflowStep.CRYSTAL_GRAIN,
                 "strain": WorkflowStep.CRYSTAL_STRAIN,
@@ -388,6 +437,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
             f"{self.pending_name} complete in {result.elapsed_seconds:.2f}s. Phase fraction: {fraction} {warning}".strip(),
             "warning" if result.warnings else "success",
         )
+        self.log_panel.log(self.status_label.text())
         self.log_panel.process_finished(self.pending_name, self.status_label.text())
         self.workflow_state.mark_completed(WorkflowStep.STRUCTURAL_PHASE_MATCH)
         if isinstance(self.service, CrystalAnalysisService):
@@ -414,6 +464,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def _failed(self, message: str) -> None:
         self._notify(f"Failed: {message}", "error")
+        self.log_panel.log(f"{self.pending_name or 'Phase Mapping'} failed: {message}")
         self.log_panel.process_failed(self.pending_name or "Phase Mapping", message)
         QMessageBox.warning(self, "Phase Mapping", message)
 
@@ -422,6 +473,23 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def set_cuda_enabled(self, enabled: bool) -> None:
         self.cuda_enabled = enabled
+
+    def apply_phase_preset(self) -> None:
+        preset = PHASE_MATCH_PRESETS.get(self.phase_preset.currentText())
+        if preset is None:
+            return
+        self.run_mode.setCurrentText(str(preset["analysis_mode"]))
+        self.roi_size.setValue(float(preset["roi_size"]))
+        self.zone_step.setValue(float(preset["angle_step_zone_axis"]))
+        self.plane_step.setValue(float(preset["angle_step_in_plane"]))
+        self.match_matches.setValue(float(preset["match_candidates"]))
+        self.match_min_angle.setValue(float(preset["min_angle_between_matches_deg"]))
+        self.match_min_peaks.setValue(float(preset["min_number_peaks"]))
+        self.low_confidence.setValue(float(preset["low_confidence_threshold"]))
+        self._sync_run_config()
+        self._invalidate_plan()
+        self._invalidate_result()
+        self.refresh_stage()
 
     def _plan_params(self) -> PhasePlanParams:
         return PhasePlanParams(
@@ -487,6 +555,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
         orientation = self._orientation_params()
         strain = self._strain_params()
         return {
+            "phase_match_preset": self.phase_preset.currentText(),
             "mode": plan.mode, "accelerating_voltage": plan.accelerating_voltage, "k_max": plan.k_max,
             "analysis_mode": self.run_mode.currentText(),
             "roi_size": int(self.roi_size.value()),
@@ -515,6 +584,7 @@ class StructuralPhasePage(QWidget, WorkerRunner):
 
     def apply_params_snapshot(self, params: dict[str, object]) -> None:
         combo_keys = [
+            ("phase_match_preset", self.phase_preset),
             ("analysis_mode", self.run_mode),
             ("mode", self.mode),
         ]

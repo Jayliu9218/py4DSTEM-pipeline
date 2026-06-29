@@ -161,7 +161,7 @@ class CrystalPixelParams:
 class OriginCalibrationParams:
     center_guess_x: float | None = None
     center_guess_y: float | None = None
-    center_guess_only: bool = True
+    center_guess_only: bool = False
     score_method: str | None = None
     find_center: str = "max"
     fit_function: str = "plane"

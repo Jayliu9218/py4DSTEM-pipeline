@@ -280,16 +280,20 @@ class QualityResultTests(unittest.TestCase):
             list(comparison.images),
             ["raw Bragg vector map", "origin-centered Bragg vector map"],
         )
-        self.assertFalse(source.measured)
+        self.assertTrue(source.measured)
+        self.assertGreater(np.max(np.abs(process.images["qx residual"])), 0)
+        self.assertGreater(np.max(np.abs(process.images["qy residual"])), 0)
         self.assertEqual(source.calstate, previous)
 
-    def test_origin_calibration_can_opt_into_full_py4dstem_measurement(self) -> None:
+    def test_origin_calibration_can_opt_into_center_guess_only_shortcut(self) -> None:
         service = BraggStrainService()
         source = _BraggVectorsForOrigin()
 
-        service.calibrate_origin(source, OriginCalibrationParams(center_guess_only=False))
+        result = service.calibrate_origin(source, OriginCalibrationParams(center_guess_only=True))
 
-        self.assertTrue(source.measured)
+        self.assertFalse(source.measured)
+        self.assertTrue(np.all(result.images["qx residual"] == 0))
+        self.assertTrue(np.all(result.images["qy residual"] == 0))
 
     def test_setting_qr_rotation_leaves_rotation_applied(self) -> None:
         service = BraggStrainService()

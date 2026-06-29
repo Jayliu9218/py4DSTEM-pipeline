@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QTableWidget,
     QTabWidget,
 )
@@ -67,14 +68,13 @@ class PipelineShellTests(unittest.TestCase):
                 "Preprocess",
                 "Bragg",
                 "Calibration",
-                "Phases",
-                "Orientation",
+                "Phases / Orientation",
                 "Strain",
             ],
         )
         self.assertFalse(any(title.startswith("Step") for title in titles))
         strain = next(module for module in self.window.route_modules if module.key == "strain_analysis")
-        self.assertEqual(strain.prerequisite, "orientation_matching")
+        self.assertEqual(strain.prerequisite, "phase_setup")
         self.assertIn("Phase masks", strain.requirements)
 
     def test_orientation_and_results_use_canonical_shared_workspaces(self) -> None:
@@ -388,18 +388,31 @@ class PipelineShellTests(unittest.TestCase):
 
     def test_calibration_uses_scientific_sections(self) -> None:
         page = self.window.calibration_page
-        expected = [
-            "Existing Calibration",
-            "Origin Calibration",
-            "Ellipse Calibration",
-            "Q Pixel Size",
-            "QR Rotation",
-            "Transfer",
-        ]
+        expected = ["Existing Calibration", "Origin", "Ellipse", "Q", "QR", "Transfer / Validate"]
         self.assertEqual(page.controls_panel.objectName(), SCI_CONTROLS_PANEL)
         self.assertEqual(
             [page.calibration_forms[title].objectName() for title in expected],
             [SCI_SECTION] * len(expected),
+        )
+
+    def test_calibration_option_buttons_switch_stacked_group(self) -> None:
+        page = self.window.calibration_page
+
+        self.assertIsInstance(page.calibration_option_stack, QStackedWidget)
+        self.assertEqual(page.calibration_option_stack.count(), 4)
+        self.assertNotIn("Transfer / Validate", page.calibration_option_buttons)
+        self.assertTrue(page.calibration_option_buttons["Origin"].isChecked())
+        self.assertIs(
+            page.calibration_option_stack.currentWidget(),
+            page.calibration_forms["Origin"],
+        )
+
+        page.calibration_option_buttons["QR"].click()
+
+        self.assertTrue(page.calibration_option_buttons["QR"].isChecked())
+        self.assertIs(
+            page.calibration_option_stack.currentWidget(),
+            page.calibration_forms["QR"],
         )
 
     def test_calibration_uses_one_width_following_scroll_area(self) -> None:
@@ -563,6 +576,7 @@ class PipelineShellTests(unittest.TestCase):
         self.assertTrue(page.ellipse_label.wordWrap())
         self.assertTrue(page.ellipse_measurement_label.wordWrap())
         self.assertEqual(page.apply_ellipse_button.text(), "Accept && Apply Ellipse")
+        self.assertFalse(page.origin_guess_only.isChecked())
 
     def test_calibration_origin_process_maps_use_signed_colormap(self) -> None:
         page = self.window.calibration_page
@@ -743,19 +757,17 @@ class PipelineShellTests(unittest.TestCase):
     def test_crystal_analysis_workspace_exposes_default_grid_controls(self) -> None:
         self.window.project_toolbar.structure.setCurrentText("Crystalline")
 
-        for key in ("phase_setup", "orientation_matching"):
-            with self.subTest(route=key):
-                self.window._select_route_module(key)
-                workspace = self.window.viewer_stack.currentWidget().workspace
-                self.assertEqual(workspace.layout_choice.currentText(), "4")
-                self.assertIs(workspace.parent(), self.window.viewer_stack.currentWidget())
-                self.assertIs(self.window.viewer_stack.currentWidget().layout().itemAt(0).widget(), workspace)
-                self.assertFalse(workspace.layout_choice.isHidden())
-                self.assertFalse(workspace.reset_button.isHidden())
-                self.assertEqual(
-                    [workspace.layout_choice.itemText(index) for index in range(workspace.layout_choice.count())],
-                    ["Auto", "1", "2", "4", "6"],
-                )
+        self.window._select_route_module("phase_setup")
+        workspace = self.window.viewer_stack.currentWidget().workspace
+        self.assertEqual(workspace.layout_choice.currentText(), "4")
+        self.assertIs(workspace.parent(), self.window.viewer_stack.currentWidget())
+        self.assertIs(self.window.viewer_stack.currentWidget().layout().itemAt(0).widget(), workspace)
+        self.assertFalse(workspace.layout_choice.isHidden())
+        self.assertFalse(workspace.reset_button.isHidden())
+        self.assertEqual(
+            [workspace.layout_choice.itemText(index) for index in range(workspace.layout_choice.count())],
+            ["Auto", "1", "2", "4", "6"],
+        )
 
     def test_crystal_analysis_grid_state_restore_overrides_default(self) -> None:
         self.window.project_coordinator.restore_grid_states(

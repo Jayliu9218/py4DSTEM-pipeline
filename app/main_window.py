@@ -670,8 +670,12 @@ class MainWindow(QMainWindow):
             "fem": self.fem_page,
             "amorphous_strain": self.amorphous_strain_page,
         }
+        added_pages = set()
         for page in self.viewer_pages.values():
+            if page in added_pages:
+                continue
             self.viewer_stack.addWidget(page)
+            added_pages.add(page)
 
         self.module_panel = ModuleControlPanel()
         self.module_panel.setMinimumWidth(300)
@@ -903,14 +907,9 @@ class MainWindow(QMainWindow):
         self.binning_apply_button = QPushButton("Apply Binning")
         self.binning_apply_button.clicked.connect(self._apply_binning_to_current_datacube)
         self.binning_apply_button.setEnabled(False)
-        binning_rows = [
-            property_row("Binning level", self.binning_combo),
-            property_row("", action_row(self.binning_apply_button)),
-        ]
         panel = ScientificControlsPanel([
             self.preprocessing_page.controls_panel,
-            section("Dataset Roles / Sources", role_rows, number=2),
-            section("4D Binning (Downsampling)", binning_rows, number=3),
+            section("Dataset Roles", role_rows, number=2),
             self.virtual_detector_page.controls_panel,
         ])
         return panel

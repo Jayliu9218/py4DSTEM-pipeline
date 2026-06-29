@@ -145,8 +145,7 @@ class OrientationWorkflowTests(unittest.TestCase):
         modules = build_route_modules("Crystalline", "Crystal Analysis")
         self.assertEqual(
             [module.key for module in modules],
-            ["data_setup", "bragg_detection", "calibration", "phase_setup",
-             "orientation_matching", "strain_analysis"],
+            ["data_setup", "bragg_detection", "calibration", "phase_setup", "strain_analysis"],
         )
         state = WorkflowState()
         state.mark_completed_many({

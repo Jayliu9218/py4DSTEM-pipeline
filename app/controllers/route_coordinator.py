@@ -74,18 +74,14 @@ def _crystalline_modules(common: RouteModule, goal: str) -> list[RouteModule]:
             WorkflowStep.CALIBRATION_APPLY, "bragg_detection"),
     ]
     return shared + [
-        RouteModule("phase_setup", "Phases", "crystal_cif",
-            "Calibrated BraggVectors; add CIF crystal structures, calculate structure factors, build libraries, and match phases.",
-            "Enabled phase candidates, simulated diffraction libraries, phase ID map, confidence gap map, and masks.",
-            WorkflowStep.CRYSTAL_PHASE, "calibration"),
-        RouteModule("orientation_matching", "Orientation", "crystal_orientation",
-            "Phase-matching result and winning phase masks.",
-            "Phase-conditioned orientation maps, orientation quality review, and optional grain labels.",
-            WorkflowStep.CRYSTAL_ORIENTATION, "phase_setup"),
+        RouteModule("phase_setup", "Phases / Orientation", "crystal_cif",
+            "Calibrated BraggVectors; add CIF crystal structures, calculate structure factors, build libraries, match phases, and review orientation.",
+            "Enabled phase candidates, phase ID map, confidence gap map, phase-conditioned orientation maps, and optional grain labels.",
+            WorkflowStep.CRYSTAL_ORIENTATION, "calibration"),
         RouteModule("strain_analysis", "Strain", "crystal_strain",
             "Phase masks, orientation outputs, and calibrated BraggVectors.",
             "Phase-masked strain maps and final crystal-analysis quality figures.",
-            WorkflowStep.CRYSTAL_STRAIN, "orientation_matching"),
+            WorkflowStep.CRYSTAL_STRAIN, "phase_setup"),
     ]
 
 

@@ -49,6 +49,19 @@ class ScientificControlsTests(unittest.TestCase):
         self.assertEqual(scientific_section.grid.columnMinimumWidth(0), 190)
         self.assertEqual(scientific_section.grid.columnStretch(1), 1)
 
+    def test_constructor_sections_keep_input_order_before_stretch(self) -> None:
+        panel = ScientificControlsPanel([
+            section("First", []),
+            section("Second", []),
+            section("Third", []),
+        ])
+
+        layout = panel.layout()
+        self.assertEqual(layout.itemAt(0).widget().title(), "First")
+        self.assertEqual(layout.itemAt(1).widget().title(), "Second")
+        self.assertEqual(layout.itemAt(2).widget().title(), "Third")
+        self.assertIsNone(layout.itemAt(3).widget())
+
     def test_action_row_and_status_row_expose_shared_hooks(self) -> None:
         primary = QPushButton("Run")
         secondary = QPushButton("Cancel")

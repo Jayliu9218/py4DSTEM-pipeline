@@ -45,10 +45,10 @@ class ScientificControlsPanel(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(GROUP_SPACING)
+        self._layout.addStretch(1)
         if sections is not None:
             for section in sections:
                 self.add_section(section)
-        self._layout.addStretch(1)
 
     def add_section(self, section: QWidget) -> None:
         insert_at = max(self._layout.count() - 1, 0)

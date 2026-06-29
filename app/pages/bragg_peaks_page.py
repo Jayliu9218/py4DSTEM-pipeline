@@ -266,7 +266,7 @@ class BraggPeaksPage(QWidget, WorkerRunner):
 
     def _build_layout(self) -> None:
         self.controls_panel = ScientificControlsPanel([
-            section("Probe / Kernel Preparation", [
+            section("Probe Kernel", [
                 property_row("ROI rx start", self.roi_rx_start),
                 property_row("ROI rx end", self.roi_rx_end),
                 property_row("ROI ry start", self.roi_ry_start),
@@ -289,15 +289,13 @@ class BraggPeaksPage(QWidget, WorkerRunner):
                 property_row("Gaussian fallback", self.gaussian_fallback_check),
                 property_row("subpixel", self.subpixel_combo),
             ], number=2),
-            section("Diagnostics", [
+            section("Diagnostics / Full BraggVectors", [
                 property_row("rx", self.rx_spin),
                 property_row("ry", self.ry_spin),
                 property_row("six-points", self.selection_mode),
                 property_row("", action_row(self.run_current_button, self.run_selected_button)),
-            ], number=3),
-            section("Full BraggVectors", [
                 property_row("", action_row(self.run_full_button)),
-            ], number=4),
+            ], number=3),
             section("Status", [
                 property_row("", status_row(self.status_label)),
                 property_row("", status_row(self.count_label)),

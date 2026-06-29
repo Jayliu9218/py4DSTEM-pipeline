@@ -22,8 +22,8 @@ class PhaseMappingServiceError(Exception):
 class PhasePlanParams:
     accelerating_voltage: float = 300000
     k_max: float = 1.5
-    angle_step_zone_axis: float = 2
-    angle_step_in_plane: float = 2
+    angle_step_zone_axis: float = 4
+    angle_step_in_plane: float = 4
     corr_kernel_size: float = 0.08
     sigma_excitation_error: float = 0.02
     mode: str = "General 3D"
@@ -36,7 +36,7 @@ class PhasePlanParams:
 @dataclass(frozen=True)
 class PhaseMatchParams:
     num_matches_return: int = 2
-    min_angle_between_matches_deg: float = 5
+    min_angle_between_matches_deg: float = 7.5
     min_number_peaks: int = 3
     inversion_symmetry: bool = True
     corr_normalize: bool = True

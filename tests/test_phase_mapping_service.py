@@ -112,7 +112,8 @@ class PhaseMappingServiceTests(unittest.TestCase):
         modules = build_route_modules("Crystalline", "Crystal Analysis")
         keys = [module.key for module in modules]
         self.assertIn("phase_setup", keys)
-        self.assertIn("orientation_matching", keys)
+        phase_module = next(module for module in modules if module.key == "phase_setup")
+        self.assertEqual(phase_module.state_step, WorkflowStep.CRYSTAL_ORIENTATION)
         state = WorkflowState()
         state.mark_completed(WorkflowStep.STRUCTURAL_PHASE_PLAN)
         state.parameters_updated(WorkflowStep.CALIBRATION_APPLY)

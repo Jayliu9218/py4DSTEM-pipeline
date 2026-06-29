@@ -5,6 +5,7 @@ from typing import Callable
 import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -13,6 +14,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -93,7 +96,7 @@ class CalibrationPage(QWidget, WorkerRunner):
         self.origin_use_guess = QCheckBox("Use center guess")
         self.origin_use_guess.setChecked(True)
         self.origin_guess_only = QCheckBox("Use guess only")
-        self.origin_guess_only.setChecked(True)
+        self.origin_guess_only.setChecked(False)
         self.origin_score = QComboBox()
         self.origin_score.addItems(["automatic", "distance", "intensity", "intensity weighted distance"])
         self.origin_find_center = QComboBox()
@@ -352,31 +355,31 @@ class CalibrationPage(QWidget, WorkerRunner):
             property_row("", action_row(self.rotation_button)),
             property_row("", action_row(self.apply_rotation_button)),
         ])
-        transfer_group = section("Transfer", [
+        transfer_group = section("Transfer / Validate", [
             property_row("correction", self.transfer_correction),
             property_row("target DataCube", self.transfer_target),
             property_row("", action_row(self.transfer_button)),
+            property_row("", action_row(self.validate_button)),
         ])
         self.calibration_forms = {
             "Existing Calibration": status_group,
-            "Origin Calibration": origin_group,
-            "Ellipse Calibration": ellipse_group,
-            "Q Pixel Size": pixel_group,
-            "QR Rotation": rotation_group,
-            "Transfer": transfer_group,
+            "Origin": origin_group,
+            "Ellipse": ellipse_group,
+            "Q": pixel_group,
+            "QR": rotation_group,
+            "Transfer / Validate": transfer_group,
         }
 
-        validate_group = section("Validate", [
-            property_row("", action_row(self.validate_button)),
-        ])
+        calibration_options = self._calibration_option_group({
+            "Origin": origin_group,
+            "Ellipse": ellipse_group,
+            "Q": pixel_group,
+            "QR": rotation_group,
+        })
         self.controls_panel = ScientificControlsPanel([
             status_group,
-            origin_group,
-            ellipse_group,
-            pixel_group,
-            rotation_group,
+            calibration_options,
             transfer_group,
-            validate_group,
             section("Status", [
                 property_row("", status_row(self.status_label)),
             ]),
@@ -405,6 +408,45 @@ class CalibrationPage(QWidget, WorkerRunner):
         ]:
             label.setWordWrap(True)
             label.setMinimumWidth(0)
+
+    def _calibration_option_group(self, groups: dict[str, QWidget]) -> QWidget:
+        container = QWidget()
+        container.setObjectName("CalibrationOptionGroup")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        button_row = QWidget()
+        button_layout = QHBoxLayout(button_row)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(6)
+
+        self.calibration_option_buttons: dict[str, QPushButton] = {}
+        self.calibration_option_button_group = QButtonGroup(self)
+        self.calibration_option_button_group.setExclusive(True)
+        self.calibration_option_stack = QStackedWidget()
+
+        for index, (label, group) in enumerate(groups.items()):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setMinimumHeight(28)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.calibration_option_buttons[label] = button
+            self.calibration_option_button_group.addButton(button, index)
+            button_layout.addWidget(button)
+            self.calibration_option_stack.addWidget(group)
+
+        self.calibration_option_button_group.idClicked.connect(
+            self.calibration_option_stack.setCurrentIndex
+        )
+        if self.calibration_option_buttons:
+            first_button = next(iter(self.calibration_option_buttons.values()))
+            first_button.setChecked(True)
+            self.calibration_option_stack.setCurrentIndex(0)
+
+        layout.addWidget(button_row)
+        layout.addWidget(self.calibration_option_stack)
+        return container
 
     def _origin_params(self) -> OriginCalibrationParams:
         use_guess = self.origin_use_guess.isChecked()

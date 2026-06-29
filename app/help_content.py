@@ -49,7 +49,7 @@ apply corrections explicitly before downstream analysis.</p>
 <h3>Crystalline</h3>
 <p><b>Crystal Analysis:</b> the unified Bragg-based route for crystalline
 materials. Open MIB with MEMMAP and scan shape, tune on an ROI, then continue
-through Preprocess, Bragg, Calibration, Phases, Orientation, and Strain.
+through Preprocess, Bragg, Calibration, Phases / Orientation, and Strain.
 Use the top Export action for registered results and project outputs.</p>
 <h3>Phase Retrieval</h3>
 <p><b>DPC / CoM:</b> preview BF/DF contrast, inspect segmented DPC, preprocess

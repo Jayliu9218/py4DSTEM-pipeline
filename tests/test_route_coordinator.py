@@ -47,8 +47,7 @@ class RouteDefinitionTests(unittest.TestCase):
         )
         self.assertEqual(
             [module.key for module in crystal],
-            ["data_setup", "bragg_detection", "calibration", "phase_setup",
-             "orientation_matching", "strain_analysis"],
+            ["data_setup", "bragg_detection", "calibration", "phase_setup", "strain_analysis"],
         )
 
 if __name__ == "__main__":
