@@ -922,12 +922,16 @@ class MainWindow(QMainWindow):
         export_button.clicked.connect(self.export_registered_result)
         csv_button = QPushButton("Export Data to CSV")
         csv_button.clicked.connect(self.export_results_to_csv)
+        self.export_binned_button = QPushButton("Export Binned DataCube (.h5)")
+        self.export_binned_button.clicked.connect(self._export_binned_datacube)
+        self.export_binned_button.setEnabled(False)
         save_button = QPushButton("Save Project")
         save_button.clicked.connect(self.save_project)
         report_button = QPushButton("Generate Report")
         report_button.clicked.connect(self.generate_report)
         layout.addWidget(export_button)
         layout.addWidget(csv_button)
+        layout.addWidget(self.export_binned_button)
         layout.addWidget(save_button)
         layout.addWidget(report_button)
         layout.addStretch(1)
@@ -1195,13 +1199,42 @@ class MainWindow(QMainWindow):
                 parts.append(f"{label}={metadata[key]}")
         return ", ".join(parts)
 
+    def _export_binned_datacube(self) -> None:
+        """Export the current (binned) DataCube to an HDF5/EMD file."""
+        if self.py4dstem_service.datacube is None:
+            QMessageBox.information(self, "Export DataCube", "No DataCube is loaded.")
+            return
+
+        start_dir = str(self.recent_export_dir or self._default_output_dir())
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Binned DataCube",
+            start_dir,
+            "HDF5/EMD files (*.h5 *.hdf5 *.emd);;All files (*.*)",
+        )
+        if not file_path:
+            return
+
+        try:
+            self.log_panel.process_started("Export Binned DataCube", str(file_path))
+            saved_path = self.py4dstem_service.export_binned_datacube(file_path)
+            self.recent_export_dir = saved_path.parent
+            info = self.py4dstem_service.datacube_info
+            shape_str = str(info.shape) if info else "?"
+            self.log_panel.process_finished("Export Binned DataCube", f"{saved_path}  shape={shape_str}")
+            self.log_panel.log(f"Exported binned DataCube ({shape_str}) → {saved_path}")
+        except Exception as exc:
+            self.log_panel.process_failed("Export Binned DataCube", str(exc))
+            QMessageBox.critical(self, "Export DataCube", str(exc))
+
     def _update_binning_button(self) -> None:
-        """Enable the binning button when a py4DSTEM DataCube is available."""
+        """Enable the binning and export buttons when a py4DSTEM DataCube is available."""
         has_datacube = (
             self.py4dstem_service.datacube is not None
             and self.py4dstem_service.datacube_info is not None
         )
         self.binning_apply_button.setEnabled(has_datacube)
+        self.export_binned_button.setEnabled(has_datacube)
 
     def _apply_binning_to_current_datacube(self) -> None:
         """Apply the currently selected binning level to the loaded DataCube."""

@@ -550,6 +550,53 @@ class Py4DSTEMService:
         self.datacube_info = info
         return info
 
+    def export_binned_datacube(self, output_path: str | Path) -> Path:
+        """Save the current (binned) DataCube as an EMD/HDF5 file via py4DSTEM.
+
+        Writes a standards-compliant EMD 1.0 file that can be reopened with
+        ``py4DSTEM.read()`` or browsed in the HDF5 tree, avoiding repeated
+        MIB import + binning cycles.
+
+        Parameters
+        ----------
+        output_path : Path for the output ``.h5`` / ``.emd`` file.
+
+        Returns
+        -------
+        Path
+            The resolved output path (may differ from *output_path* if a
+            suffix was appended).
+
+        Raises
+        ------
+        Py4DSTEMServiceError
+            If no DataCube is loaded, the DataCube has no data, or saving fails.
+        """
+        if self.datacube is None:
+            raise Py4DSTEMServiceError("No DataCube is loaded — nothing to export.")
+
+        raw_data = self.datacube
+        if not isinstance(raw_data, np.ndarray) and hasattr(raw_data, "data"):
+            raw_data = raw_data.data
+        if getattr(raw_data, "size", 0) == 0:
+            raise Py4DSTEMServiceError("DataCube has no data — nothing to export.")
+
+        path = Path(output_path)
+        if path.suffix.lower() not in {".h5", ".hdf5", ".emd", ".hspy"}:
+            path = path.with_suffix(".h5")
+
+        py4DSTEM = self._py4dstem()
+        try:
+            py4DSTEM.save(str(path), self.datacube, mode="o")
+        except (TypeError, ValueError, OSError, RuntimeError) as exc:
+            raise Py4DSTEMServiceError(f"Could not save DataCube to {path}: {exc}") from exc
+        except Exception as exc:
+            logger.exception("Unexpected error saving DataCube")
+            raise Py4DSTEMServiceError(f"Could not save DataCube to {path}: {exc}") from exc
+
+        logger.info("Exported binned DataCube (%s) to %s", self.datacube_info.shape if self.datacube_info else "?", path)
+        return path
+
     def _shape_is_4d(self, shape: Any) -> bool:
         return shape is not None and len(tuple(shape)) == 4
 
