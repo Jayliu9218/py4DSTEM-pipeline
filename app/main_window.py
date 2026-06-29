@@ -1131,6 +1131,7 @@ class MainWindow(QMainWindow):
                     ),
                 )
                 info = bin_info
+                self.current_dataset_shape = info.shape
                 self.log_panel.log(
                     f"Binned DataCube: {info.shape} (R_BIN={options.r_bin}, Q_BIN={options.q_bin})"
                 )
