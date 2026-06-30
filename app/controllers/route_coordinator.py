@@ -43,12 +43,13 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
         modules = _phase_retrieval_modules(common, goal)
     else:
         return [common]
-    dedicated_export_page = {
-        "Parallax": "parallax_export",
-        "Ptychography": "ptychography_export",
+    dedicated_export = {
+        "Parallax": ("parallax_export", WorkflowStep.PARALLAX_EXPORT, "parallax_review"),
+        "Ptychography": ("ptychography_export", WorkflowStep.PTYCHOGRAPHY_EXPORT, "ptychography_advanced"),
     }.get(goal)
-    if dedicated_export_page is None:
+    if dedicated_export is None:
         return modules
+    dedicated_export_page, export_step, prerequisite = dedicated_export
     return modules + [
         RouteModule(
             "export",
@@ -56,7 +57,8 @@ def build_route_modules(structure: str, goal: str) -> list[RouteModule]:
             dedicated_export_page,
             "Workflow-specific export package settings.",
             "Saved workflow-specific export package.",
-            prerequisite=modules[-1].key,
+            export_step,
+            prerequisite=prerequisite,
         )
     ]
 

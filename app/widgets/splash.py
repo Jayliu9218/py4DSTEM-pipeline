@@ -32,7 +32,7 @@ class SplashScreen(QSplashScreen):
     def __init__(self, logo_path: Path | None = None) -> None:
         if logo_path is None:
             # app/widgets/splash.py -> project root holds images/
-            logo_path = Path(__file__).resolve().parents[2] / "images" / "py4DSTEM_logo.png"
+            logo_path = Path(__file__).resolve().parents[2] / "docs" / "py4DSTEM_logo.png"
         self._logo = QPixmap(str(logo_path))
         self._background = QPixmap(self._compose_pixmap())
         super().__init__(self._background)

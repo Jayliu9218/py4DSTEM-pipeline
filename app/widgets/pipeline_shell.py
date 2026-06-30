@@ -26,6 +26,7 @@ from app.theme import (
     GROUP_SPACING,
     PANEL_MARGIN,
     PANEL_MARGIN_TIGHT,
+    PARAM_ROW_HEIGHT,
     PARAM_TABLE_HEIGHT,
 )
 from app.widgets.adaptive_image_workspace import AdaptiveImageWorkspace, FigureResult
@@ -172,6 +173,8 @@ class MultiViewWorkspace(QWidget):
 
 
 class ModuleControlPanel(QWidget):
+    PARAM_VISIBLE_ROWS = 5
+
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("moduleControlPanel")
@@ -250,16 +253,23 @@ class ModuleControlPanel(QWidget):
         intact and page-specific form policies remain unchanged.
         """
         # Apply table-like layout policies to every QFormLayout in this box.
-        for form in group.findChildren(QFormLayout):
+        for form in list(group.findChildren(QFormLayout)):
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
             form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
             form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             form.setContentsMargins(PANEL_MARGIN, PANEL_MARGIN_TIGHT, PANEL_MARGIN, PANEL_MARGIN_TIGHT)
-            if ModuleControlPanel._labeled_parameter_count(form) > 4:
+            parameter_count = ModuleControlPanel._labeled_parameter_count(form)
+            if parameter_count > 4:
                 form.setContentsMargins(0, 0, 0, 0)
                 form.setVerticalSpacing(0)
                 form.setHorizontalSpacing(0)
                 ModuleControlPanel._apply_property_grid_rows(form)
+                if (
+                    parameter_count > ModuleControlPanel.PARAM_VISIBLE_ROWS
+                    and not form.property("parameterScrollWrapped")
+                    and not form.property("parameterScrollContent")
+                ):
+                    ModuleControlPanel._wrap_excess_parameter_rows(form)
             else:
                 form.setVerticalSpacing(6)
                 form.setHorizontalSpacing(10)
@@ -281,11 +291,76 @@ class ModuleControlPanel(QWidget):
     def _labeled_parameter_count(form: QFormLayout) -> int:
         total = 0
         for row in range(form.rowCount()):
-            label = ModuleControlPanel._form_widget(form, row, QFormLayout.LabelRole)
-            field = ModuleControlPanel._form_widget(form, row, QFormLayout.FieldRole)
-            if isinstance(label, QLabel) and label.text().strip() and field is not None:
+            if ModuleControlPanel._is_labeled_parameter_row(form, row):
                 total += 1
         return total
+
+    @staticmethod
+    def _is_labeled_parameter_row(form: QFormLayout, row: int) -> bool:
+        label = ModuleControlPanel._form_widget(form, row, QFormLayout.LabelRole)
+        field = ModuleControlPanel._form_widget(form, row, QFormLayout.FieldRole)
+        return isinstance(label, QLabel) and bool(label.text().strip()) and field is not None
+
+    @staticmethod
+    def _wrap_excess_parameter_rows(form: QFormLayout) -> None:
+        parameter_rows: list[int] = []
+        for row in range(form.rowCount()):
+            if not ModuleControlPanel._is_labeled_parameter_row(form, row):
+                continue
+            parameter_rows.append(row)
+        if len(parameter_rows) <= ModuleControlPanel.PARAM_VISIBLE_ROWS:
+            return
+
+        moved_rows = []
+        for row in reversed(parameter_rows):
+            moved_rows.insert(0, form.takeRow(row))
+
+        content = QWidget()
+        content.setObjectName("parameterRowsScrollContent")
+        scroll_form = QFormLayout(content)
+        scroll_form.setProperty("parameterScrollContent", True)
+        scroll_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        scroll_form.setFormAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        scroll_form.setContentsMargins(0, 0, 0, 0)
+        scroll_form.setVerticalSpacing(0)
+        scroll_form.setHorizontalSpacing(0)
+        for row in moved_rows:
+            ModuleControlPanel._append_taken_form_row(scroll_form, row)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("parameterRowsScroll")
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setMaximumHeight(PARAM_ROW_HEIGHT * ModuleControlPanel.PARAM_VISIBLE_ROWS)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        form.insertRow(parameter_rows[0], scroll)
+        form.setProperty("parameterScrollWrapped", True)
+
+    @staticmethod
+    def _append_taken_form_row(form: QFormLayout, row) -> None:
+        label = ModuleControlPanel._item_widget_or_layout(row.labelItem)
+        field = ModuleControlPanel._item_widget_or_layout(row.fieldItem)
+        if label is None and field is None:
+            return
+        if label is None:
+            form.addRow(field)
+        elif field is None:
+            form.addRow(label)
+        else:
+            form.addRow(label, field)
+
+    @staticmethod
+    def _item_widget_or_layout(item):
+        if item is None:
+            return None
+        widget = item.widget()
+        if widget is not None:
+            return widget
+        return item.layout()
 
     @staticmethod
     def _apply_property_grid_rows(form: QFormLayout) -> None:

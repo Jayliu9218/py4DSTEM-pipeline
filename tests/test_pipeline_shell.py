@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -24,12 +25,14 @@ from app.theme import (
     GROUP_SPACING,
     PANEL_MARGIN,
     PANEL_MARGIN_TIGHT,
+    PARAM_ROW_HEIGHT,
     PARAM_TABLE_HEIGHT,
 )
 from app.services.bragg_strain_service import CalibrationActionResult
 from app.services.phase_contrast_service import DPCStageResult, PhaseContrastResult
 from app.services.workflow_state import WorkflowStep
 from app.widgets.adaptive_image_workspace import FigureResult
+from app.widgets.pipeline_shell import ModuleControlPanel
 from app.widgets.scientific_controls import (
     SCI_CONTROLS_PANEL,
     SCI_PROPERTY_LABEL,
@@ -428,7 +431,10 @@ class PipelineShellTests(unittest.TestCase):
         self.assertIsInstance(active_scroll, QScrollArea)
         self.assertEqual(active_scroll.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
         self.assertEqual(active_scroll.frameShape(), QFrame.NoFrame)
-        self.assertEqual(len(page.controls_panel.findChildren(QScrollArea)), 0)
+        inner_scrolls = page.controls_panel.findChildren(QScrollArea)
+        self.assertTrue(all(scroll.objectName() == "ScientificParameterScroll" for scroll in inner_scrolls))
+        self.assertTrue(all(scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff for scroll in inner_scrolls))
+        self.assertTrue(all(scroll.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded for scroll in inner_scrolls))
         self.assertLessEqual(page.controls_panel.minimumWidth(), active_scroll.viewport().width())
         self.assertEqual(active_scroll.horizontalScrollBar().maximum(), 0)
         self.assertEqual(page.controls_panel.width(), active_scroll.viewport().width())
@@ -705,6 +711,31 @@ class PipelineShellTests(unittest.TestCase):
         self.assertEqual(panel.title(), "BF / DF Preview")
         self.assertEqual(panel.objectName(), "paramForm")
         self.assertTrue(panel.findChildren(QFormLayout))
+
+    def test_long_parameter_forms_scroll_with_five_visible_rows(self) -> None:
+        group = QGroupBox("Long Parameters")
+        form = QFormLayout(group)
+        for index in range(7):
+            form.addRow(f"Parameter {index + 1}", QLineEdit())
+        form.addRow(QPushButton("Run"))
+
+        ModuleControlPanel._prepare_controls_layout(group)
+
+        scroll = group.findChild(QScrollArea, "parameterRowsScroll")
+        self.assertIsNotNone(scroll)
+        self.assertEqual(scroll.maximumHeight(), 5 * PARAM_ROW_HEIGHT)
+        main_labels = [
+            form.itemAt(row, QFormLayout.LabelRole).widget().text()
+            for row in range(form.rowCount())
+            if form.itemAt(row, QFormLayout.LabelRole) is not None
+        ]
+        self.assertEqual(main_labels, [])
+        scroll_form = scroll.widget().layout()
+        scrolled_labels = [
+            scroll_form.itemAt(row, QFormLayout.LabelRole).widget().text()
+            for row in range(scroll_form.rowCount())
+        ]
+        self.assertEqual(scrolled_labels, [f"Parameter {index}" for index in range(1, 8)])
 
     def test_checkbox_checked_indicator_uses_green_accent(self) -> None:
         from pathlib import Path

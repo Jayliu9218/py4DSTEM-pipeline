@@ -26,7 +26,7 @@ def _load_stylesheet() -> str:
 
 def _application_icon_path() -> Path:
     # main.py lives at the project root; the logo is in images/.
-    return Path(__file__).parent / "images" / "py4DSTEM_logo.png"
+    return Path(__file__).parent / "docs" / "py4DSTEM_logo.png"
 
 
 def main() -> int:

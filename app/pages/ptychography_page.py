@@ -378,6 +378,7 @@ class PtychographyPage(QWidget, WorkerRunner):
             self._failed(str(exc))
             return
         self.workflow_state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_OPTIMIZATION)
+        self.workflow_state.parameters_updated(WorkflowStep.PTYCHOGRAPHY_ADVANCED)
         self.status_label.setText(
             f"Applied {parameter}: {value:.6g}. Advanced Reconstruction is ready."
         )

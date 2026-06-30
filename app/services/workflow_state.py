@@ -52,6 +52,7 @@ class WorkflowStep:
     PARALLAX_REVIEW = "parallax_review"
     PARALLAX_ADVANCED = "parallax_advanced"
     PARALLAX = "parallax"
+    PARALLAX_EXPORT = "parallax_export"
     PTYCHOGRAPHY = "ptychography"
     PTYCHOGRAPHY_DATA = "ptychography_data"
     PTYCHOGRAPHY_GEOMETRY = "ptychography_geometry"
@@ -135,6 +136,7 @@ class WorkflowState(QObject):
             WorkflowStep.PARALLAX_ALIGNMENT,
             WorkflowStep.PARALLAX_REVIEW,
             WorkflowStep.PARALLAX_ADVANCED,
+            WorkflowStep.PARALLAX_EXPORT,
             WorkflowStep.PTYCHOGRAPHY,
             WorkflowStep.PTYCHOGRAPHY_DATA,
             WorkflowStep.PTYCHOGRAPHY_GEOMETRY,
@@ -183,6 +185,7 @@ class WorkflowState(QObject):
             WorkflowStep.PARALLAX_ALIGNMENT,
             WorkflowStep.PARALLAX_REVIEW,
             WorkflowStep.PARALLAX_ADVANCED,
+            WorkflowStep.PARALLAX_EXPORT,
             WorkflowStep.PTYCHOGRAPHY,
             WorkflowStep.PTYCHOGRAPHY_DATA,
             WorkflowStep.PTYCHOGRAPHY_GEOMETRY,
@@ -289,7 +292,7 @@ class WorkflowState(QObject):
         WorkflowStep.PARALLAX_BF_ACCEPT: {WorkflowStep.PARALLAX_ALIGNMENT},
         WorkflowStep.PARALLAX_ALIGNMENT: {WorkflowStep.PARALLAX_REVIEW},
         WorkflowStep.PARALLAX_REVIEW: {WorkflowStep.PARALLAX_ADVANCED, WorkflowStep.PARALLAX},
-        WorkflowStep.PARALLAX: {WorkflowStep.PTYCHOGRAPHY},
+        WorkflowStep.PARALLAX: {WorkflowStep.PARALLAX_EXPORT, WorkflowStep.PTYCHOGRAPHY},
         WorkflowStep.PTYCHOGRAPHY_DATA: {WorkflowStep.PTYCHOGRAPHY_GEOMETRY},
         WorkflowStep.PTYCHOGRAPHY_GEOMETRY: {WorkflowStep.PTYCHOGRAPHY_PREPROCESS},
         WorkflowStep.PTYCHOGRAPHY_PREPROCESS: {WorkflowStep.PTYCHOGRAPHY_PREPROCESS_ACCEPT},

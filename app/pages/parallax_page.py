@@ -353,6 +353,7 @@ class ParallaxPage(QWidget, WorkerRunner):
         except Exception as exc:
             self._failed(str(exc))
             return
+        self.workflow_state.mark_completed(WorkflowStep.PARALLAX_EXPORT)
         self.status_label.setText(f"Saved {len(saved)} package file(s).")
         self.log_panel.process_progress("Export 100%")
 

@@ -1,9 +1,9 @@
 import unittest
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea
 from PySide6.QtWidgets import QSizePolicy
 
-from app.theme import ACTION_BUTTON_MIN_HEIGHT
+from app.theme import ACTION_BUTTON_MIN_HEIGHT, PARAM_ROW_HEIGHT
 from app.widgets.numeric_line_edit import NumericLineEdit
 from app.widgets.scientific_controls import (
     SCI_ACTION_ROW,
@@ -98,6 +98,27 @@ class ScientificControlsTests(unittest.TestCase):
         self.assertEqual(unit_cell.objectName(), SCI_PROPERTY_UNIT)
         self.assertEqual(scientific_section.grid.columnMinimumWidth(1), 90)
         self.assertEqual(scientific_section.grid.columnMinimumWidth(2), 48)
+
+    def test_long_scientific_sections_scroll_parameters_after_five_visible_rows(self) -> None:
+        run = QPushButton("Run")
+        scientific_section = section("Many Parameters", [
+            *(property_row(f"Parameter {index}", QLabel(str(index))) for index in range(1, 8)),
+            property_row("", action_row(run)),
+        ])
+
+        scroll = scientific_section.findChild(QScrollArea, "ScientificParameterScroll")
+
+        self.assertIsNotNone(scroll)
+        self.assertEqual(scroll.maximumHeight(), 5 * PARAM_ROW_HEIGHT)
+        self.assertIsNone(scroll.widget().findChild(QPushButton))
+        scroll_grid = scroll.widget().layout()
+        scrolled_labels = [
+            item.widget().text()
+            for row in range(scroll_grid.rowCount())
+            if (item := scroll_grid.itemAtPosition(row, 0)) is not None
+        ]
+        self.assertEqual(scrolled_labels[:5], [f"Parameter {index}" for index in range(1, 6)])
+        self.assertEqual(scrolled_labels[5:], ["Parameter 6", "Parameter 7"])
 
 
 if __name__ == "__main__":
