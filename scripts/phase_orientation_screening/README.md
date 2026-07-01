@@ -50,12 +50,10 @@ negative controls, and single-pattern overlays are all physically consistent.
 ## Layout
 
 - `main.py` is the stable CLI wrapper.
-- `modules/pipeline.py` contains the procedural workflow.
-- `modules/reporting.py` writes the final Markdown and HTML
-  reports.
-- `modules/cli.py`, `config.py`, `bragg_qc.py`,
-  `orientation.py`, `plotting.py`, `aggregation.py`, and `outputs.py` hold
-  focused helpers for configuration, QC, plotting, aggregation, and summaries.
+- `modules/pipeline.py` contains the procedural workflow (single, self-contained
+  workflow file; all helpers are local to keep the script readable end-to-end).
+- `modules/reporting.py` writes the final Markdown and HTML reports from a
+  saved `phase_summary_v6_optimized.json`.
 - `merge_orientation_phase_maps.bat` is the existing batch helper.
 
 ## Common Runs
@@ -128,7 +126,7 @@ conda run -n 4dstem python scripts\phase_orientation_screening\main.py --data-fi
 Runs write into:
 
 ```text
-D:\Workspace\large-4dstem-analysis\data\0617-4d\<data-file-stem>\<output-tag>\
+<analysis-root>\<data-file-stem>\<output-tag>\
 ```
 
 Important outputs include:
@@ -272,6 +270,4 @@ detected and calibrated with the old (wrong) pixel size.
   console encoding issues. Use `--quiet-progress` for log-only batch runs.
 - Existing CLI options and output filenames are intentionally preserved for
   compatibility with older runs and downstream scripts.
-- This folder is ignored by the repository-level `.gitignore` rule `scripts/*`,
-  so Git will not show these script changes unless the ignore rule is adjusted or
-  files are force-added.
+- This folder is tracked by Git (the old `scripts/*` ignore rule was removed).

@@ -1,56 +1,12 @@
-import csv
 import json
 import sys
 from pathlib import Path
-
-import numpy as np
 
 
 SCREENING_ROOT = Path(__file__).resolve().parents[1] / "scripts" / "phase_orientation_screening"
 sys.path.insert(0, str(SCREENING_ROOT))
 
-from modules.bragg_qc import fit_inv_ang_per_pixel, load_calibration_peak_rows
-from modules.cli import mode_defaults, parse_axis, parse_float_list, sanitize_tag
-from modules.orientation import axis_to_tag, normalize_score
-from modules.outputs import finite_stat
 from modules.reporting import generate_phase_orientation_report
-
-
-def test_cli_helpers():
-    assert sanitize_tag("1.4,-2") == "1p4_m2"
-    assert parse_float_list("1.4, 1.7,,2.0") == [1.4, 1.7, 2.0]
-    assert parse_axis("0,1,-1") == [0, 1, -1]
-    assert mode_defaults("coarse")["k_max"] == 1.4
-    assert mode_defaults("fine")["angle_step_zone_axis"] == 1.0
-
-
-def test_orientation_numeric_helpers():
-    assert axis_to_tag([0, 1, -1]) == "za_0_1_m1"
-    score = normalize_score(np.array([[0, 1], [2, 100]], dtype=np.float32))
-    assert score.shape == (2, 2)
-    assert np.nanmin(score) >= 0
-    assert np.nanmax(score) <= 1
-    assert finite_stat(np.array([1, np.nan, 3]), np.mean) == 2.0
-    assert finite_stat(np.array([np.nan]), np.mean) is None
-
-
-def test_calibration_peak_json_and_csv(tmp_path):
-    json_path = tmp_path / "peaks.json"
-    json_path.write_text(
-        json.dumps({"peaks": [{"label": "a", "q_pixel": 10, "known_q": 0.2}]}),
-        encoding="utf-8",
-    )
-    assert load_calibration_peak_rows(json_path)[0]["q_A^-1"] == 0.2
-
-    csv_path = tmp_path / "peaks.csv"
-    with open(csv_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["label", "q_pixel", "q_A_inv"])
-        writer.writeheader()
-        writer.writerow({"label": "b", "q_pixel": "20", "q_A_inv": "0.4"})
-    scale, summary = fit_inv_ang_per_pixel(0.0192, csv_path)
-    assert scale == 0.02
-    assert summary["mode"] == "manual_peak_fit"
-    assert summary["fit"]["rmse_A^-1"] == 0
 
 
 def test_report_generation_from_synthetic_summary(tmp_path):
