@@ -1,8 +1,9 @@
 # Phase/Orientation Screening
 
 This folder contains the py4DSTEM Ti phase/orientation screening workflow with
-WS2 negative-control QC. The original long script has been split into a local
-Python package while keeping the same command-line entrypoint:
+WS2 negative-control QC. The entrypoint is `main.py`, which delegates to a
+self-contained `modules/pipeline.py` workflow plus a small
+`modules/reporting.py` report builder:
 
 ```powershell
 conda activate 4dstem
@@ -16,11 +17,11 @@ wrapping it in `conda run`; this streams status messages more reliably:
 python scripts\phase_orientation_screening\main.py --data-file D:\Data\4dstem\exp\0617-4d\crop\1_0_64_0_64.h5 --mode coarse
 ```
 
-If you prefer `conda run`, add `--live-stream` so long py4DSTEM steps print
-heartbeat messages while they are running:
+For long py4DSTEM steps, pass `--status-interval 30` so the script writes
+heartbeat messages to stdout and `run_status.log` while it works:
 
 ```powershell
-conda run --live-stream -n 4dstem python scripts\phase_orientation_screening\main.py --data-file D:\Data\4dstem\exp\0617-4d\crop\1_0_64_0_64.h5 --mode coarse
+conda run -n 4dstem python scripts\phase_orientation_screening\main.py --data-file D:\Data\4dstem\exp\0617-4d\crop\1_0_64_0_64.h5 --mode coarse --status-interval 30
 ```
 
 Every run also writes a status log immediately after path resolution:

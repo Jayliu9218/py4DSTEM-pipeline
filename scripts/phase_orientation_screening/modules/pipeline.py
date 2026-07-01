@@ -1,4 +1,4 @@
-﻿"""
+"""
 Optimized procedural multi-axis phase/orientation screening for py4DSTEM.
 Version: v7 conservative Bragg QC + Ti-only phase/orientation screening, no display.
 
@@ -349,6 +349,99 @@ def main(argv=None):
         print(f"Status log: {status_log_path}", flush=True)
         return 0
 
+    # -----------------------------------------------------------------------------
+    # Real candidate phases: these participate in the final phase map.
+    # -----------------------------------------------------------------------------
+    REAL_CANDIDATE_PHASES = [
+        {
+            "name": "Ti-bcc",
+            "cif": CIF_DIR / "Ti-bcc.cif",
+            "symmetry_order": 4,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [0, 1, 1],  # strongest bcc branch in your previous test
+                [0, 0, 1],
+                [1, 1, 1],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "Ti-hcp",
+            "cif": CIF_DIR / "Ti-hcp.cif",
+            "symmetry_order": 6,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [1, 0, 0],  # strongest hcp branch in your previous test
+                [0, 0, 1],
+                [1, 1, 0],
+            ],
+            "fiber_angles": [0, 360],
+        },
+    ]
+
+    # -----------------------------------------------------------------------------
+    # Control phases: these do NOT participate in the final phase map.
+    # They are used only to test whether a physically unrelated phase can spuriously
+    # beat the real candidates.
+    # -----------------------------------------------------------------------------
+    CONTROL_PHASES = [
+        {
+            "name": "WS2-control",
+            "cif": CIF_DIR / "WS2.cif",
+            "symmetry_order": 6,
+            "zone_axis_range": "fiber",
+            # Keep the control conservative. Your previous test showed WS2 [100]
+            # can spuriously win; do not include it in the default control map.
+            "fiber_axes": [
+                [0, 0, 1],
+            ],
+            "fiber_angles": [0, 360],
+        },
+    ]
+
+    # Bragg disk detection parameters. If you change these, set USE_CACHED_BRAGG_PEAKS=False.
+    DETECT_PARAMS = {
+        "corrPower": 1,
+        "sigma": 0,
+        "edgeBoundary": 8,
+        "minRelativeIntensity": float(args.detect_min_relative_intensity),
+        "minAbsoluteIntensity": float(args.detect_min_absolute_intensity),
+        "minPeakSpacing": int(args.detect_min_peak_spacing),
+        "subpixel": "poly",
+        "upsample_factor": 8,
+        "maxNumPeaks": int(args.detect_max_num_peaks),
+        # "CUDA": True,
+    }
+
+    # Peak-set QC for diffuse/non-zone-axis patterns. Matching still uses py4DSTEM's
+    # BraggVectors, while these masks keep the final map in screening mode.
+    Q_MIN_FOR_QC = float(args.q_min_for_qc)  # A^-1; excludes central beam / central diffuse region
+    Q_MAX_FOR_QC = float(args.q_max_for_qc)  # A^-1; excludes outer noisy detections
+    STRONG_PEAK_PERCENTILE = 70      # per-pattern intensity percentile for strong peaks
+    MIN_STRONG_PEAKS_FOR_MATCH = int(args.min_strong_peaks_for_match)
+    TOP_CANDIDATES_TO_SAVE = 5
+    MATCH_RADIUS_Q = float(args.match_radius_q)
+
+    # Diffraction calibration / matching settings.
+    YMAX_RADIAL_PROFILE = 30
+
+    # Orientation-search resolution is supplied by CLI/mode presets.
+
+    # QC test pixels.
+    TEST_RXS = (0, 3, 5)
+    TEST_RYS = (0, 3, 5)
+    SINGLE_TEST_PIXEL = (3, 3)
+
+    # Confidence screening. Thresholds are empirical on this score scale.
+    MIN_BEST_SCORE = 0.0             # optionally set to e.g. 0.5 or 1.0
+    PEAK_COUNT_THRESHOLD = int(args.peak_count_threshold) if args.peak_count_threshold is not None else MIN_STRONG_PEAKS_FOR_MATCH
+    CONTROL_FAIL_MARGIN = 0.0        # control score > real best score + this value => control failure
+
+    # Runtime behavior.
+    SKIP_MISSING_CIFS = True
+    USE_CACHED_BRAGG_PEAKS = not args.force_recompute_bragg
+    BRAGG_CACHE_TAG = "conservative_v7"
+    RUN_STRAIN_FOR_GLOBALLY_BEST_REAL_BRANCH = False
     if args.k_max_sweep:
         sweep_values = parse_float_list(args.k_max_sweep)
         sweep_results = []
@@ -447,100 +540,6 @@ def main(argv=None):
             title="K_MAX Sweep Phase/Orientation Screening Report",
         )
         raise SystemExit(0)
-
-    # -----------------------------------------------------------------------------
-    # Real candidate phases: these participate in the final phase map.
-    # -----------------------------------------------------------------------------
-    REAL_CANDIDATE_PHASES = [
-        {
-            "name": "Ti-bcc",
-            "cif": CIF_DIR / "Ti-bcc.cif",
-            "symmetry_order": 4,
-            "zone_axis_range": "fiber",
-            "fiber_axes": [
-                [0, 1, 1],  # strongest bcc branch in your previous test
-                [0, 0, 1],
-                [1, 1, 1],
-            ],
-            "fiber_angles": [0, 360],
-        },
-        {
-            "name": "Ti-hcp",
-            "cif": CIF_DIR / "Ti-hcp.cif",
-            "symmetry_order": 6,
-            "zone_axis_range": "fiber",
-            "fiber_axes": [
-                [1, 0, 0],  # strongest hcp branch in your previous test
-                [0, 0, 1],
-                [1, 1, 0],
-            ],
-            "fiber_angles": [0, 360],
-        },
-    ]
-
-    # -----------------------------------------------------------------------------
-    # Control phases: these do NOT participate in the final phase map.
-    # They are used only to test whether a physically unrelated phase can spuriously
-    # beat the real candidates.
-    # -----------------------------------------------------------------------------
-    CONTROL_PHASES = [
-        {
-            "name": "WS2-control",
-            "cif": CIF_DIR / "WS2.cif",
-            "symmetry_order": 6,
-            "zone_axis_range": "fiber",
-            # Keep the control conservative. Your previous test showed WS2 [100]
-            # can spuriously win; do not include it in the default control map.
-            "fiber_axes": [
-                [0, 0, 1],
-            ],
-            "fiber_angles": [0, 360],
-        },
-    ]
-
-    # Bragg disk detection parameters. If you change these, set USE_CACHED_BRAGG_PEAKS=False.
-    DETECT_PARAMS = {
-        "corrPower": 1,
-        "sigma": 0,
-        "edgeBoundary": 8,
-        "minRelativeIntensity": float(args.detect_min_relative_intensity),
-        "minAbsoluteIntensity": float(args.detect_min_absolute_intensity),
-        "minPeakSpacing": int(args.detect_min_peak_spacing),
-        "subpixel": "poly",
-        "upsample_factor": 8,
-        "maxNumPeaks": int(args.detect_max_num_peaks),
-        # "CUDA": True,
-    }
-
-    # Peak-set QC for diffuse/non-zone-axis patterns. Matching still uses py4DSTEM's
-    # BraggVectors, while these masks keep the final map in screening mode.
-    Q_MIN_FOR_QC = float(args.q_min_for_qc)  # A^-1; excludes central beam / central diffuse region
-    Q_MAX_FOR_QC = float(args.q_max_for_qc)  # A^-1; excludes outer noisy detections
-    STRONG_PEAK_PERCENTILE = 70      # per-pattern intensity percentile for strong peaks
-    MIN_STRONG_PEAKS_FOR_MATCH = int(args.min_strong_peaks_for_match)
-    TOP_CANDIDATES_TO_SAVE = 5
-    MATCH_RADIUS_Q = float(args.match_radius_q)
-
-    # Diffraction calibration / matching settings.
-    YMAX_RADIAL_PROFILE = 30
-
-    # Orientation-search resolution is supplied by CLI/mode presets.
-
-    # QC test pixels.
-    TEST_RXS = (0, 3, 5)
-    TEST_RYS = (0, 3, 5)
-    SINGLE_TEST_PIXEL = (3, 3)
-
-    # Confidence screening. Thresholds are empirical on this score scale.
-    MIN_BEST_SCORE = 0.0             # optionally set to e.g. 0.5 or 1.0
-    PEAK_COUNT_THRESHOLD = int(args.peak_count_threshold) if args.peak_count_threshold is not None else MIN_STRONG_PEAKS_FOR_MATCH
-    CONTROL_FAIL_MARGIN = 0.0        # control score > real best score + this value => control failure
-
-    # Runtime behavior.
-    SKIP_MISSING_CIFS = True
-    USE_CACHED_BRAGG_PEAKS = not args.force_recompute_bragg
-    BRAGG_CACHE_TAG = "conservative_v7"
-    RUN_STRAIN_FOR_GLOBALLY_BEST_REAL_BRANCH = False
 
     warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
     warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive.*")
