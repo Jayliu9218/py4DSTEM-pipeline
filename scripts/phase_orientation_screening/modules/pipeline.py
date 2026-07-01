@@ -1799,30 +1799,14 @@ def main(argv=None):
                         item.get("matched_peak_count") or 0,
                         item.get("n_clean_peaks_test") or 0,
                     ),
-                    default={},
+default={},
                 )
 
                 if not single_test_valid:
-                    branch_results.append({
-                        "group": group_name,
-                        "branch": branch_name,
-                        "phase": phase_name,
-                        "fiber_axis": fiber_axis,
-                        "cif": str(cif_path),
-                        **template_diagnostics,
-                        "branch_status": "FAILED_NO_VALID_MATCH",
-                        "failure_reason": "single-pattern tests returned no valid match",
-                        "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
-                        "single_pattern_test_diagnostics": single_test_diagnostics,
-                        **best_test_diag,
-                        "score_mean": None,
-                        "score_median": None,
-                        "score_p95": None,
-                        "score_max": None,
-                        "matched_peak_count_single_pixel": best_test_diag.get("matched_peak_count"),
-                    })
-                    print(f"[warning] Branch {branch_name} failed before full-map matching: no valid single-pattern match.")
-                    continue
+                    print(
+                        f"[warning] Branch {branch_name}: single-pattern QC found no valid match; "
+                        "continuing to full-map matching in screening mode."
+                    )
 
                 print("Matching orientations for all probe positions...")
                 with status_step(f"Matching orientations for {branch_name}", STATUS_INTERVAL):
@@ -1841,10 +1825,11 @@ def main(argv=None):
                         "branch": branch_name,
                         "phase": phase_name,
                         "fiber_axis": fiber_axis,
-                        "cif": str(cif_path),
+"cif": str(cif_path),
                         **template_diagnostics,
                         "branch_status": "FAILED_NO_VALID_MATCH",
                         "failure_reason": "full-map score max is non-finite or <= 0",
+                        "single_pattern_qc_passed": bool(single_test_valid),
                         "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
                         "single_pattern_test_diagnostics": single_test_diagnostics,
                         **best_test_diag,
@@ -1886,8 +1871,9 @@ def main(argv=None):
                     "fiber_axis": fiber_axis,
                     "cif": str(cif_path),
                     **template_diagnostics,
-                    "branch_status": "RUN",
+"branch_status": "RUN",
                     "failure_reason": None,
+                    "single_pattern_qc_passed": bool(single_test_valid),
                     "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
                     "single_pattern_test_diagnostics": single_test_diagnostics,
                     **best_test_diag,
