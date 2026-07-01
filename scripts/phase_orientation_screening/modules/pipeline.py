@@ -2039,7 +2039,7 @@ default={},
                 "match_radius_q": MATCH_RADIUS_Q,
                 "bragg_cache_status": bragg_cache_status,
                 "bragg_cache_path": str(bragg_cache),
-                "calibration_status": calibration_summary,
+                "calibration_status": CALIBRATION_SUMMARY,
                 "peak_detection_diagnostics": peak_detection_diagnostics,
             },
             "confidence_summary": {
