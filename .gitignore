@@ -26,11 +26,6 @@ notebooks/
 target.md
 TARGET.md
 
-
-scripts/*
-!scripts/check_py4dstem_source.py
-!scripts/setup_dev_env.ps1
-
 docs/*
 !docs/workflows.md
 !docs/*.png
