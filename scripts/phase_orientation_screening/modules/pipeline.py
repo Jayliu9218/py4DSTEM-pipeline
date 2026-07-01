@@ -2023,7 +2023,7 @@ default={},
             "settings": {
                 "data_file": str(DATA_FILE),
                 "out_dir": str(OUT_DIR),
-                "output_tag": OUTPUT_TAG,
+                "output_tag": args.output_tag,
                 "mode": args.mode,
                 "screening_mode": "failed_before_phase_aggregation",
                 "orientation_mode": ORIENTATION_MODE,
