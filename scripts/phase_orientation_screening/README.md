@@ -135,7 +135,7 @@ Important outputs include:
 
 - `phase_summary_v6_optimized.json`: machine-readable settings, QC, branch, and
   phase summaries, including calibration status, control status, top-5 candidate
-  summary, and Ti-bcc/Ti-hcp distinguishability.
+  summary, invalid-score fractions, and Ti-bcc/Ti-hcp distinguishability.
 - `phase_orientation_scores_v6_optimized.npz`: score maps, masks, phase labels,
   branch labels, top branch arrays, and top orientation candidate arrays.
 - `phase_orientation_report.md`: human-readable run report.
@@ -150,6 +150,74 @@ Important outputs include:
   `qc_dp_mean_detected_peak_overlay.png`: raw/processed/detected peak diagnostics
   for peak finding. Matching single-frame diagnostics are saved with
   `qc_single_x*_y*_*` names.
+
+## Debugging All-Zero Scores
+
+The workflow now blocks all-zero scores from becoming a fake phase assignment.
+Pixels with non-finite or all-zero phase scores are reported as:
+
+```text
+NO_VALID_MATCH / FAILED_NO_VALID_SCORE
+```
+
+The JSON/report include:
+
+- `no_valid_score_fraction`
+- `all_zero_score_fraction`
+- `argmax_tie_fraction`
+- `failure_reason_fraction`
+
+If scores are all zero or `low_peak_fraction = 1.000`, debug one branch before
+running the full map:
+
+```powershell
+python scripts\phase_orientation_screening\main.py `
+  --data-file D:\Data\4dstem\exp\0617-4d\crop\1_0_64_0_64.h5 `
+  --mode coarse `
+  --branch-only `
+  --phase Ti-bcc `
+  --fiber-axis 0,1,1 `
+  --min-strong-peaks-for-match 3 `
+  --peak-count-threshold 3 `
+  --max-clean-peaks-for-single 100 `
+  --direct-beam-mask-radius 15 `
+  --detect-min-relative-intensity 0.02 `
+  --detect-min-peak-spacing 8 `
+  --detect-max-num-peaks 100
+```
+
+First inspect:
+
+```text
+qc_dp_mean_raw.png
+qc_dp_mean_processed.png
+qc_dp_mean_detected_peak_overlay.png
+qc_single_x*_y*_detected_peak_overlay.png
+```
+
+Then check branch diagnostics in `phase_summary_v6_optimized.json`:
+
+- `branch_status`
+- `failure_reason`
+- `single_pattern_test_pixels`
+- `n_exp_peaks_test`
+- `n_clean_peaks_test`
+- `n_template_reflections_before_filter`
+- `n_template_reflections_after_kmax`
+- `n_template_reflections`
+- `q_min_template`, `q_median_template`, `q_max_template`
+- `exp_q_min`, `exp_q_max`
+- `template_q_min`, `template_q_max`
+- `q_min_exp`, `q_median_exp`, `q_max_exp`
+- `match_radius_q`
+- `nearest_template_distance_min`, `nearest_template_distance_median`
+- `matched_peak_count`
+- `score_numerator`, `score_denominator`
+- `score_max`
+
+Branches with `branch_status = FAILED_NO_VALID_MATCH` are not aggregated into
+phase maps. This is intentional: an all-zero or non-finite branch score is a
+matching failure, not evidence for the first phase returned by `argmax`.
 
 ## Notes
 

@@ -144,6 +144,50 @@ def _top_candidate_section(summary):
     ])
 
 
+def _branch_diagnostics_section(summary):
+    rows = []
+    for item in summary.get("real_branch_results", []) + summary.get("control_branch_results", []):
+        rows.append([
+            item.get("branch"),
+            item.get("branch_status", "RUN"),
+            item.get("failure_reason"),
+            item.get("n_template_reflections_before_filter"),
+            item.get("n_template_reflections_after_kmax"),
+            item.get("n_template_reflections"),
+            item.get("q_median_template"),
+            item.get("q_median_exp"),
+            item.get("match_radius_q"),
+            item.get("n_exp_peaks_test"),
+            item.get("n_clean_peaks_test"),
+            item.get("matched_peak_count"),
+            item.get("nearest_template_distance_median"),
+            item.get("score_median"),
+        ])
+    return "\n".join([
+        "## Template and q-Space Diagnostics",
+        "",
+        _markdown_table(
+            [
+                "Branch",
+                "Status",
+                "Failure reason",
+                "Template n raw",
+                "Template n <= K_MAX",
+                "Template n test",
+                "Template q median",
+                "Experimental q median",
+                "Match radius q",
+                "Test exp peaks",
+                "Test clean peaks",
+                "Matched test peaks",
+                "Nearest template distance median",
+                "Median score",
+            ],
+            rows,
+        ),
+    ])
+
+
 def _phase_section(summary):
     real_rows = []
     for item in summary.get("real_phase_results_aggregated_over_axes", []):
@@ -330,6 +374,8 @@ def generate_phase_orientation_report(out_dir, summary_path=None, title=DEFAULT_
             _confidence_section(summary),
             "",
             _top_candidate_section(summary),
+            "",
+            _branch_diagnostics_section(summary),
             "",
             _figure_section(out_dir),
             "",

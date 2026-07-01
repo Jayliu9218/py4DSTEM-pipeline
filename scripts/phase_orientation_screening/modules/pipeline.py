@@ -198,6 +198,16 @@ def main(argv=None):
     )
     parser.add_argument("--margin-threshold", type=float, default=0.20, help="Best-real minus second-real score threshold.")
     parser.add_argument("--max-clean-peaks-for-single", type=int, default=50, help="Diffuse/mixed peak-count threshold.")
+    parser.add_argument("--min-strong-peaks-for-match", type=int, default=6, help="Minimum strong QC peaks required for orientation matching/QC.")
+    parser.add_argument("--peak-count-threshold", type=int, default=None, help="Low-peak QC threshold. Defaults to --min-strong-peaks-for-match.")
+    parser.add_argument("--q-min-for-qc", type=float, default=0.12, help="Minimum q in A^-1 for clean peak QC.")
+    parser.add_argument("--q-max-for-qc", type=float, default=1.4, help="Maximum q in A^-1 for clean peak QC.")
+    parser.add_argument("--direct-beam-mask-radius", type=float, default=None, help="Direct-beam mask radius in pixels for diagnostic preprocessing.")
+    parser.add_argument("--detect-min-relative-intensity", type=float, default=0.03, help="py4DSTEM Bragg detection minRelativeIntensity.")
+    parser.add_argument("--detect-min-absolute-intensity", type=float, default=0.0, help="py4DSTEM Bragg detection minAbsoluteIntensity.")
+    parser.add_argument("--detect-min-peak-spacing", type=int, default=8, help="py4DSTEM Bragg detection minPeakSpacing in pixels.")
+    parser.add_argument("--detect-max-num-peaks", type=int, default=80, help="py4DSTEM Bragg detection maxNumPeaks.")
+    parser.add_argument("--match-radius-q", type=float, default=0.08, help="Orientation matching correlation kernel size in A^-1.")
     parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run WS2 negative-control branch(es).")
     parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip WS2 negative-control branch(es).")
     parser.set_defaults(run_control=True)
@@ -367,9 +377,33 @@ def main(argv=None):
                 str(MARGIN_THRESHOLD),
                 "--max-clean-peaks-for-single",
                 str(MAX_CLEAN_PEAKS_FOR_SINGLE),
+                "--min-strong-peaks-for-match",
+                str(MIN_STRONG_PEAKS_FOR_MATCH),
+                "--peak-count-threshold",
+                str(PEAK_COUNT_THRESHOLD),
+                "--q-min-for-qc",
+                str(Q_MIN_FOR_QC),
+                "--q-max-for-qc",
+                str(Q_MAX_FOR_QC),
+                "--detect-min-relative-intensity",
+                str(DETECT_PARAMS["minRelativeIntensity"]),
+                "--detect-min-absolute-intensity",
+                str(DETECT_PARAMS["minAbsoluteIntensity"]),
+                "--detect-min-peak-spacing",
+                str(DETECT_PARAMS["minPeakSpacing"]),
+                "--detect-max-num-peaks",
+                str(DETECT_PARAMS["maxNumPeaks"]),
+                "--match-radius-q",
+                str(MATCH_RADIUS_Q),
                 "--output-tag",
                 child_tag,
             ]
+            if args.direct_beam_mask_radius is not None:
+                child_cmd.extend(["--direct-beam-mask-radius", str(args.direct_beam_mask_radius)])
+            if args.quiet_progress:
+                child_cmd.append("--quiet-progress")
+            if STATUS_INTERVAL:
+                child_cmd.extend(["--status-interval", str(STATUS_INTERVAL)])
             child_cmd.extend(["--analysis-root", str(ROOT)])
             child_cmd.extend(["--cif-dir", str(CIF_DIR)])
             child_cmd.append("--run-control" if args.run_control else "--skip-control")
@@ -469,22 +503,23 @@ def main(argv=None):
         "corrPower": 1,
         "sigma": 0,
         "edgeBoundary": 8,
-        "minRelativeIntensity": 0.03,
-        "minAbsoluteIntensity": 0,
-        "minPeakSpacing": 8,
+        "minRelativeIntensity": float(args.detect_min_relative_intensity),
+        "minAbsoluteIntensity": float(args.detect_min_absolute_intensity),
+        "minPeakSpacing": int(args.detect_min_peak_spacing),
         "subpixel": "poly",
         "upsample_factor": 8,
-        "maxNumPeaks": 80,
+        "maxNumPeaks": int(args.detect_max_num_peaks),
         # "CUDA": True,
     }
 
     # Peak-set QC for diffuse/non-zone-axis patterns. Matching still uses py4DSTEM's
     # BraggVectors, while these masks keep the final map in screening mode.
-    Q_MIN_FOR_QC = 0.12              # A^-1; excludes central beam / central diffuse region
-    Q_MAX_FOR_QC = 1.4               # A^-1; excludes outer noisy detections
+    Q_MIN_FOR_QC = float(args.q_min_for_qc)  # A^-1; excludes central beam / central diffuse region
+    Q_MAX_FOR_QC = float(args.q_max_for_qc)  # A^-1; excludes outer noisy detections
     STRONG_PEAK_PERCENTILE = 70      # per-pattern intensity percentile for strong peaks
-    MIN_STRONG_PEAKS_FOR_MATCH = 6   # enough low-order geometry to attempt indexing
+    MIN_STRONG_PEAKS_FOR_MATCH = int(args.min_strong_peaks_for_match)
     TOP_CANDIDATES_TO_SAVE = 5
+    MATCH_RADIUS_Q = float(args.match_radius_q)
 
     # Diffraction calibration / matching settings.
     YMAX_RADIAL_PROFILE = 30
@@ -498,7 +533,7 @@ def main(argv=None):
 
     # Confidence screening. Thresholds are empirical on this score scale.
     MIN_BEST_SCORE = 0.0             # optionally set to e.g. 0.5 or 1.0
-    PEAK_COUNT_THRESHOLD = MIN_STRONG_PEAKS_FOR_MATCH
+    PEAK_COUNT_THRESHOLD = int(args.peak_count_threshold) if args.peak_count_threshold is not None else MIN_STRONG_PEAKS_FOR_MATCH
     CONTROL_FAIL_MARGIN = 0.0        # control score > real best score + this value => control failure
 
     # Runtime behavior.
@@ -561,9 +596,12 @@ def main(argv=None):
         out = np.zeros_like(score, dtype=np.float32)
         finite = np.isfinite(score)
         if np.any(finite):
-            lo, hi = np.nanpercentile(score[finite], [1, 99])
-            if hi > lo:
-                out = np.clip((score - lo) / (hi - lo), 0, 1)
+            lo = np.nanmin(score[finite])
+            hi = np.nanmax(score[finite])
+            denom = hi - lo
+            if np.isfinite(denom) and denom > 0:
+                np.divide(score - lo, denom, out=out, where=finite)
+                out = np.clip(out, 0, 1)
         return out
 
 
@@ -692,20 +730,25 @@ def main(argv=None):
             print(f"[saved clean] {clean_filename}")
 
 
-    def plot_phase_map_with_masks(best_phase_index, phase_names, invalid_mask, mixed_mask, ambiguous_mask, control_fail_mask, filename):
-        """Phase map labels: real phases + LOW_PEAK + MIXED + AMBIGUOUS + CONTROL_FAIL."""
+    def plot_phase_map_with_masks(best_phase_index, phase_names, invalid_mask, mixed_mask, ambiguous_mask, control_fail_mask, filename, no_valid_mask=None):
+        """Phase map labels: real phases + NO_VALID_MATCH + LOW_PEAK + MIXED + AMBIGUOUS + CONTROL_FAIL."""
         display = np.asarray(best_phase_index, dtype=np.int32).copy()
         labels = list(phase_names)
+        no_valid_label = len(labels); labels.append("NO_VALID_MATCH")
         low_label = len(labels); labels.append("LOW_PEAK / WEAK")
         mixed_label = len(labels); labels.append("MIXED / DIFFUSE")
         amb_label = len(labels); labels.append("AMBIGUOUS")
         ctrl_label = len(labels); labels.append("CONTROL_FAIL")
 
-        # Priority: control failure > low peak/weak > mixed/diffuse > ambiguous > phase.
+        if no_valid_mask is None:
+            no_valid_mask = np.zeros_like(display, dtype=bool)
+
+        # Priority: no valid match > control failure > low peak/weak > mixed/diffuse > ambiguous > phase.
         display[ambiguous_mask] = amb_label
         display[mixed_mask] = mixed_label
         display[invalid_mask] = low_label
         display[control_fail_mask] = ctrl_label
+        display[no_valid_mask] = no_valid_label
         plot_index_map(display, labels, "QC-masked real phase map", filename)
 
 
@@ -957,6 +1000,92 @@ def main(argv=None):
         savefig(filename)
 
 
+    def select_representative_test_pixels(clean_peak_count, fallback, max_points=5):
+        """Pick high-quality, spatially separated pixels for single-pattern diagnostics."""
+        fallback = tuple(int(v) for v in fallback)
+        if clean_peak_count is None or np.size(clean_peak_count) == 0:
+            return [fallback]
+
+        arr = np.asarray(clean_peak_count)
+        if arr.ndim != 2:
+            return [fallback]
+
+        coords = np.argwhere(np.isfinite(arr) & (arr > 0))
+        if coords.size == 0:
+            return [fallback]
+
+        values = arr[coords[:, 0], coords[:, 1]]
+        order = np.argsort(values)[::-1]
+        min_spacing = max(1, min(arr.shape) // 4)
+        selected = []
+        for idx in order:
+            xind, yind = (int(coords[idx, 0]), int(coords[idx, 1]))
+            if all((xind - sx) ** 2 + (yind - sy) ** 2 >= min_spacing ** 2 for sx, sy in selected):
+                selected.append((xind, yind))
+            if len(selected) >= max_points:
+                break
+
+        if not selected:
+            selected = [fallback]
+        return selected
+
+
+    def summarize_single_pattern_match_inputs(bragg_peaks, xind, yind, template_q_after):
+        """Record enough q-space information to explain a failed single-pattern match."""
+        source = getattr(bragg_peaks, "cal", None) or bragg_peaks
+        qx = qy = intensity = None
+        try:
+            qx, qy, intensity = peaklist_arrays(source[xind, yind])
+        except Exception:
+            pass
+
+        if qx is None:
+            q = np.array([], dtype=np.float32)
+            intensity = np.array([], dtype=np.float32)
+        else:
+            q = np.sqrt(qx * qx + qy * qy)
+            intensity = np.ones_like(q, dtype=np.float32) if intensity is None else intensity
+
+        finite_q = np.isfinite(q)
+        clean = finite_q & (q >= Q_MIN_FOR_QC) & (q <= Q_MAX_FOR_QC)
+        q_clean = q[clean]
+        template_q_after = np.asarray(template_q_after, dtype=np.float64)
+        template_q_after = template_q_after[np.isfinite(template_q_after)]
+
+        nearest = np.array([], dtype=np.float64)
+        matched_peak_count = 0
+        if q_clean.size and template_q_after.size:
+            nearest = np.min(np.abs(q_clean[:, None] - template_q_after[None, :]), axis=1)
+            matched_peak_count = int(np.sum(nearest <= MATCH_RADIUS_Q))
+
+        clean_map_value = None
+        strong_map_value = None
+        if np.size(clean_peak_count_map) and xind < clean_peak_count_map.shape[0] and yind < clean_peak_count_map.shape[1]:
+            clean_map_value = int(clean_peak_count_map[xind, yind])
+        if np.size(strong_peak_count_map) and xind < strong_peak_count_map.shape[0] and yind < strong_peak_count_map.shape[1]:
+            strong_map_value = int(strong_peak_count_map[xind, yind])
+
+        denominator = max(int(q_clean.size), int(template_q_after.size), 1)
+        return {
+            "test_pixel": [int(xind), int(yind)],
+            "n_exp_peaks_test": int(q.size),
+            "n_clean_peaks_test": int(q_clean.size),
+            "n_clean_peaks_test_map": clean_map_value,
+            "n_strong_peaks_test_map": strong_map_value,
+            "n_template_reflections": int(template_q_after.size),
+            "exp_q_min": None if q_clean.size == 0 else float(np.nanmin(q_clean)),
+            "exp_q_max": None if q_clean.size == 0 else float(np.nanmax(q_clean)),
+            "template_q_min": None if template_q_after.size == 0 else float(np.nanmin(template_q_after)),
+            "template_q_max": None if template_q_after.size == 0 else float(np.nanmax(template_q_after)),
+            "match_radius_q": MATCH_RADIUS_Q,
+            "nearest_template_distance_min": None if nearest.size == 0 else float(np.nanmin(nearest)),
+            "nearest_template_distance_median": None if nearest.size == 0 else float(np.nanmedian(nearest)),
+            "matched_peak_count": matched_peak_count,
+            "score_numerator": float(matched_peak_count),
+            "score_denominator": float(denominator),
+        }
+
+
     def save_json(path, obj):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2, ensure_ascii=False)
@@ -1041,13 +1170,16 @@ def main(argv=None):
         for path in sorted(Path(branch_dir).glob("metadata_branch_*.json")):
             with open(path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-            score_path = Path(meta.get("score_path", ""))
-            if not score_path.is_absolute():
-                score_path = Path(branch_dir) / score_path
-            if not score_path.exists():
-                fallback = path.with_name(path.name.replace("metadata_branch_", "score_branch_").replace(".json", ".npy"))
-                score_path = fallback
-            meta["score_path"] = str(score_path)
+            score_value = meta.get("score_path")
+            score_path = None
+            if score_value:
+                score_path = Path(score_value)
+                if not score_path.is_absolute():
+                    score_path = Path(branch_dir) / score_path
+                if not score_path.exists():
+                    fallback = path.with_name(path.name.replace("metadata_branch_", "score_branch_").replace(".json", ".npy"))
+                    score_path = fallback
+            meta["score_path"] = None if score_path is None else str(score_path)
             metas.append(meta)
         return metas
 
@@ -1059,12 +1191,22 @@ def main(argv=None):
         if not metas:
             raise RuntimeError(f"No metadata_branch_*.json files found in {branch_dir}")
 
-        real_metas = [m for m in metas if m.get("group") == "real"]
-        control_metas = [m for m in metas if m.get("group") == "control"]
+        failed_metas = [
+            m for m in metas
+            if m.get("branch_status") not in (None, "RUN") or not m.get("score_path") or not Path(m["score_path"]).exists()
+        ]
+        for meta in failed_metas:
+            print(
+                f"[warning] Skipping failed branch metadata during aggregation: "
+                f"{meta.get('branch')} status={meta.get('branch_status')} reason={meta.get('failure_reason')}"
+            )
+        valid_metas = [m for m in metas if m not in failed_metas]
+        real_metas = [m for m in valid_metas if m.get("group") == "real"]
+        control_metas = [m for m in valid_metas if m.get("group") == "control"]
         if not real_metas:
-            raise RuntimeError("Aggregation requires at least one real Ti branch.")
+            raise RuntimeError("Aggregation requires at least one real Ti branch with branch_status=RUN and an existing score file.")
 
-        branch_score_maps = {m["branch"]: np.load(m["score_path"]) for m in metas}
+        branch_score_maps = {m["branch"]: np.load(m["score_path"]) for m in valid_metas}
         phase_to_branch_names = {}
         for meta in real_metas:
             phase_to_branch_names.setdefault(meta["phase"], []).append(meta["branch"])
@@ -1084,11 +1226,21 @@ def main(argv=None):
         real_phase_stack = np.stack([phase_score_maps[name] for name in real_phase_names], axis=0)
         real_best_phase_index = np.nanargmax(real_phase_stack, axis=0)
         real_best_score = np.nanmax(real_phase_stack, axis=0)
+        real_phase_max_score = np.nanmax(real_phase_stack, axis=0)
+        all_zero_score_mask = np.nan_to_num(real_phase_max_score, nan=-np.inf) <= 0
+        no_valid_score_mask = all_zero_score_mask | (~np.isfinite(real_phase_max_score))
+        argmax_tie_mask = np.sum(
+            np.isclose(real_phase_stack, real_phase_max_score[None, :, :], rtol=1e-6, atol=1e-12)
+            & np.isfinite(real_phase_stack),
+            axis=0,
+        ) > 1
+        valid_score_mask = ~no_valid_score_mask
         if real_phase_stack.shape[0] >= 2:
             sorted_real_scores = np.sort(real_phase_stack, axis=0)
             real_score_margin = sorted_real_scores[-1] - sorted_real_scores[-2]
         else:
             real_score_margin = np.full_like(real_best_score, np.nan, dtype=np.float32)
+        real_score_margin[no_valid_score_mask] = np.nan
 
         if control_metas:
             control_status = "RUN"
@@ -1103,10 +1255,10 @@ def main(argv=None):
             control_best_score = np.full_like(real_best_score, np.nan, dtype=np.float32)
             control_minus_real = np.full_like(real_best_score, np.nan, dtype=np.float32)
 
-        ambiguous_mask = real_score_margin < MARGIN_THRESHOLD
+        ambiguous_mask = (real_score_margin < MARGIN_THRESHOLD) & valid_score_mask
         control_failure_mask = np.isfinite(control_best_score) & (control_best_score > (real_best_score + CONTROL_FAIL_MARGIN))
         empty_mask = np.zeros_like(real_best_phase_index, dtype=bool)
-        high_confidence_mask = (~ambiguous_mask) & (~control_failure_mask)
+        high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~control_failure_mask)
 
         plot_index_map(real_best_phase_index, real_phase_names, "Aggregated Ti-only best phase", "phase_map_real_ti_only_best_candidate.png", save_clean=True)
         plot_scalar_map(real_best_score, "Aggregated Ti-only best score", "phase_map_real_best_score.png")
@@ -1119,6 +1271,7 @@ def main(argv=None):
             ambiguous_mask=ambiguous_mask,
             control_fail_mask=control_failure_mask,
             filename="phase_map_real_ti_only_qc_masked.png",
+            no_valid_mask=no_valid_score_mask,
         )
 
         np.savez_compressed(
@@ -1130,6 +1283,9 @@ def main(argv=None):
             real_best_phase_index=real_best_phase_index,
             real_best_score=real_best_score,
             real_score_margin=real_score_margin,
+            no_valid_score_mask=no_valid_score_mask,
+            all_zero_score_mask=all_zero_score_mask,
+            argmax_tie_mask=argmax_tie_mask,
             control_branch_names=np.array(control_names),
             control_branch_score_stack=control_stack,
             control_best_score=control_best_score,
@@ -1161,6 +1317,15 @@ def main(argv=None):
                 "ambiguous_fraction_real_margin_or_score": float(np.sum(ambiguous_mask) / total_pixels),
                 "control_failure_fraction": float(np.sum(control_failure_mask) / total_pixels),
                 "final_high_confidence_fraction": float(np.sum(high_confidence_mask) / total_pixels),
+                "no_valid_score_fraction": float(np.sum(no_valid_score_mask) / total_pixels),
+                "all_zero_score_fraction": float(np.sum(all_zero_score_mask) / total_pixels),
+                "argmax_tie_fraction": float(np.sum(argmax_tie_mask) / total_pixels),
+                "failure_reason_fraction": {
+                    "FAILED_NO_VALID_SCORE": float(np.sum(no_valid_score_mask) / total_pixels),
+                    "AMBIGUOUS_LOW_MARGIN": float(np.sum(ambiguous_mask) / total_pixels),
+                    "FAILED_CONTROL": float(np.sum(control_failure_mask) / total_pixels),
+                    "PASS": float(np.sum(high_confidence_mask) / total_pixels),
+                },
                 "real_score_margin_median": finite_stat(real_score_margin, np.median),
                 "control_minus_real_median": finite_stat(control_minus_real, np.median),
             },
@@ -1234,7 +1399,7 @@ def main(argv=None):
     if not np.isfinite(probe_qx0) or not np.isfinite(probe_qy0) or probe_semiangle <= 0:
         raise RuntimeError("Beam center/probe radius estimation failed; cannot continue safely.")
 
-    direct_beam_mask_radius = float(max(probe_semiangle * 1.25, 4.0))
+    direct_beam_mask_radius = float(args.direct_beam_mask_radius) if args.direct_beam_mask_radius is not None else float(max(probe_semiangle * 1.25, 4.0))
     peak_detection_diagnostics = [
         save_diffraction_qc_images(
             "dp_mean",
@@ -1429,6 +1594,17 @@ def main(argv=None):
 
         low_peak_mask_base = strong_peak_count_map < MIN_STRONG_PEAKS_FOR_MATCH
         mixed_peak_mask_base = clean_peak_count_map > MAX_CLEAN_PEAKS_FOR_SINGLE
+        finite_q_median = q_median_map[np.isfinite(q_median_map)]
+        finite_q_p90 = q_p90_map[np.isfinite(q_p90_map)]
+        EXP_Q_SUMMARY = {
+            "q_min_exp": float(np.nanmin(finite_q_median)) if finite_q_median.size else None,
+            "q_median_exp": float(np.nanmedian(finite_q_median)) if finite_q_median.size else None,
+            "q_max_exp": float(np.nanmax(finite_q_p90)) if finite_q_p90.size else None,
+            "n_clean_peaks_p50": float(np.nanmedian(clean_peak_count_map)),
+            "n_clean_peaks_p95": float(np.nanpercentile(clean_peak_count_map, 95)),
+            "n_strong_peaks_p50": float(np.nanmedian(strong_peak_count_map)),
+            "n_strong_peaks_p95": float(np.nanpercentile(strong_peak_count_map, 95)),
+        }
     else:
         clean_peak_count_map = np.array([])
         strong_peak_count_map = np.array([])
@@ -1436,7 +1612,22 @@ def main(argv=None):
         q_p90_map = np.array([])
         low_peak_mask_base = peak_count_map < PEAK_COUNT_THRESHOLD if peak_count_map is not None else None
         mixed_peak_mask_base = None
+        EXP_Q_SUMMARY = {
+            "q_min_exp": None,
+            "q_median_exp": None,
+            "q_max_exp": None,
+            "n_clean_peaks_p50": None,
+            "n_clean_peaks_p95": None,
+            "n_strong_peaks_p50": None,
+            "n_strong_peaks_p95": None,
+        }
 
+    TEST_MATCH_PIXELS = select_representative_test_pixels(
+        clean_peak_count_map,
+        fallback=SINGLE_TEST_PIXEL,
+        max_points=5,
+    )
+    print(f"[info] Representative single-pattern test pixels: {TEST_MATCH_PIXELS}")
 
     # =============================================================================
     # 5. Multi-axis orientation matching for real candidates and controls
@@ -1477,6 +1668,18 @@ def main(argv=None):
             with status_step(f"Loading CIF and calculating structure factors for {phase_name}", STATUS_INTERVAL):
                 crystal = py4DSTEM.process.diffraction.Crystal.from_CIF(cif_path)
                 crystal.calculate_structure_factors(K_MAX)
+            template_q = np.asarray(getattr(crystal, "g_vec_leng", []), dtype=np.float64)
+            template_q = template_q[np.isfinite(template_q)]
+            template_q_after = template_q[template_q <= K_MAX] if template_q.size else np.array([], dtype=np.float64)
+            template_diagnostics = {
+                "n_template_reflections_before_filter": int(template_q.size),
+                "n_template_reflections_after_kmax": int(template_q_after.size),
+                "q_min_template": None if template_q_after.size == 0 else float(np.nanmin(template_q_after)),
+                "q_median_template": None if template_q_after.size == 0 else float(np.nanmedian(template_q_after)),
+                "q_max_template": None if template_q_after.size == 0 else float(np.nanmax(template_q_after)),
+                "match_radius_q": MATCH_RADIUS_Q,
+                **EXP_Q_SUMMARY,
+            }
 
             # Rough [001]-like structure-factor overlay. Useful only as QC, not proof.
             try:
@@ -1531,7 +1734,6 @@ def main(argv=None):
                 fiber_axis = branch_spec["axis"]
                 axis_tag = branch_spec["axis_tag"]
                 branch_name = f"{phase_name}_{axis_tag}"
-                phase_to_branch_names[phase_name].append(branch_name)
 
                 print("\n" + "-" * 80)
                 print(f"Orientation branch: {branch_name} [{group_name}]")
@@ -1544,6 +1746,7 @@ def main(argv=None):
                     "angle_step_in_plane": ANGLE_STEP_IN_PLANE,
                     "zone_axis_range": branch_spec["zone_axis_range"],
                     "progress_bar": not args.quiet_progress,
+                    "corr_kernel_size": MATCH_RADIUS_Q,
                 }
                 if branch_spec["fiber_axis"] is not None:
                     orientation_kwargs["fiber_axis"] = branch_spec["fiber_axis"]
@@ -1551,31 +1754,75 @@ def main(argv=None):
                 with status_step(f"Building orientation library for {branch_name}", STATUS_INTERVAL):
                     crystal.orientation_plan(**orientation_kwargs)
 
-                xind, yind = SINGLE_TEST_PIXEL
-                print(f"Testing single-pattern match at ({xind}, {yind})...")
-                try:
-                    orientation = crystal.match_single_pattern(
-                        bragg_peaks.cal[xind, yind],
-                        num_matches_return=min(NUM_MATCHES_RETURN, TOP_CANDIDATES_TO_SAVE),
-                        verbose=True,
+                single_test_diagnostics = []
+                single_test_valid = False
+                for xind, yind in TEST_MATCH_PIXELS:
+                    diag = summarize_single_pattern_match_inputs(bragg_peaks, xind, yind, template_q_after)
+                    print(
+                        f"Testing single-pattern match at ({xind}, {yind}) "
+                        f"with n_clean={diag['n_clean_peaks_test']} "
+                        f"template_n={diag['n_template_reflections']}..."
                     )
-                    bragg_peaks_fit = crystal.generate_diffraction_pattern(
-                        orientation,
-                        ind_orientation=0,
-                        sigma_excitation_error=0.03,
-                    )
-                    py4DSTEM.process.diffraction.plot_diffraction_pattern(
-                        bragg_peaks_fit,
-                        bragg_peaks_compare=bragg_peaks.cal[xind, yind],
-                        scale_markers=1000,
-                        scale_markers_compare=4e4,
-                        plot_range_kx_ky=np.array([K_MAX + 0.1, K_MAX + 0.1]),
-                        min_marker_size=1,
-                        figsize=(5, 5),
-                    )
-                    savefig(f"qc_single_match_{group_name}_{branch_name}.png")
-                except Exception as exc:
-                    print(f"[warning] Single-pattern QC failed for {branch_name}: {exc}")
+                    try:
+                        orientation = crystal.match_single_pattern(
+                            bragg_peaks.cal[xind, yind],
+                            num_matches_return=min(NUM_MATCHES_RETURN, TOP_CANDIDATES_TO_SAVE),
+                            verbose=True,
+                        )
+                        diag["single_pattern_match_returned"] = orientation is not None
+                        bragg_peaks_fit = crystal.generate_diffraction_pattern(
+                            orientation,
+                            ind_orientation=0,
+                            sigma_excitation_error=0.03,
+                        )
+                        py4DSTEM.process.diffraction.plot_diffraction_pattern(
+                            bragg_peaks_fit,
+                            bragg_peaks_compare=bragg_peaks.cal[xind, yind],
+                            scale_markers=1000,
+                            scale_markers_compare=4e4,
+                            plot_range_kx_ky=np.array([K_MAX + 0.1, K_MAX + 0.1]),
+                            min_marker_size=1,
+                            figsize=(5, 5),
+                        )
+                        savefig(f"qc_single_match_{group_name}_{branch_name}_x{xind}_y{yind}.png")
+                        if orientation is not None and diag["matched_peak_count"] > 0:
+                            single_test_valid = True
+                    except Exception as exc:
+                        diag["single_pattern_match_returned"] = False
+                        diag["single_pattern_error"] = str(exc)
+                        print(f"[warning] Single-pattern QC failed for {branch_name} at ({xind}, {yind}): {exc}")
+                    single_test_diagnostics.append(diag)
+
+                best_test_diag = max(
+                    single_test_diagnostics,
+                    key=lambda item: (
+                        item.get("matched_peak_count") or 0,
+                        item.get("n_clean_peaks_test") or 0,
+                    ),
+                    default={},
+                )
+
+                if not single_test_valid:
+                    branch_results.append({
+                        "group": group_name,
+                        "branch": branch_name,
+                        "phase": phase_name,
+                        "fiber_axis": fiber_axis,
+                        "cif": str(cif_path),
+                        **template_diagnostics,
+                        "branch_status": "FAILED_NO_VALID_MATCH",
+                        "failure_reason": "single-pattern tests returned no valid match",
+                        "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
+                        "single_pattern_test_diagnostics": single_test_diagnostics,
+                        **best_test_diag,
+                        "score_mean": None,
+                        "score_median": None,
+                        "score_p95": None,
+                        "score_max": None,
+                        "matched_peak_count_single_pixel": best_test_diag.get("matched_peak_count"),
+                    })
+                    print(f"[warning] Branch {branch_name} failed before full-map matching: no valid single-pattern match.")
+                    continue
 
                 print("Matching orientations for all probe positions...")
                 with status_step(f"Matching orientations for {branch_name}", STATUS_INTERVAL):
@@ -1587,7 +1834,30 @@ def main(argv=None):
                     )
                 score_stack = get_orientation_score_stack(orientation_map)
                 score = score_stack[:, :, 0]
+                score_max = finite_stat(score, np.nanmax)
+                if score_max is None or score_max <= 0:
+                    branch_results.append({
+                        "group": group_name,
+                        "branch": branch_name,
+                        "phase": phase_name,
+                        "fiber_axis": fiber_axis,
+                        "cif": str(cif_path),
+                        **template_diagnostics,
+                        "branch_status": "FAILED_NO_VALID_MATCH",
+                        "failure_reason": "full-map score max is non-finite or <= 0",
+                        "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
+                        "single_pattern_test_diagnostics": single_test_diagnostics,
+                        **best_test_diag,
+                        "score_mean": finite_stat(score, np.nanmean),
+                        "score_median": finite_stat(score, np.nanmedian),
+                        "score_p95": finite_stat(score, lambda vals: np.nanpercentile(vals, 95)),
+                        "score_max": score_max,
+                        "matched_peak_count_single_pixel": best_test_diag.get("matched_peak_count"),
+                    })
+                    print(f"[warning] Branch {branch_name} produced no valid full-map score and will not enter phase aggregation.")
+                    continue
 
+                phase_to_branch_names[phase_name].append(branch_name)
                 branch_score_maps[branch_name] = score
                 branch_score_stacks[branch_name] = score_stack
                 branch_orientation_maps[branch_name] = orientation_map
@@ -1615,9 +1885,17 @@ def main(argv=None):
                     "phase": phase_name,
                     "fiber_axis": fiber_axis,
                     "cif": str(cif_path),
+                    **template_diagnostics,
+                    "branch_status": "RUN",
+                    "failure_reason": None,
+                    "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
+                    "single_pattern_test_diagnostics": single_test_diagnostics,
+                    **best_test_diag,
                     "score_mean": float(np.nanmean(score)),
                     "score_median": float(np.nanmedian(score)),
                     "score_p95": float(np.nanpercentile(score, 95)),
+                    "score_max": score_max,
+                    "matched_peak_count_single_pixel": best_test_diag.get("matched_peak_count"),
                 })
 
         phase_score_maps = {}
@@ -1680,21 +1958,28 @@ def main(argv=None):
         selected_axis = parse_axis(args.fiber_axis)
         selected_phase, selected_group = select_branch_phase(args.phase, selected_axis)
         branch_run = run_phase_group([selected_phase], selected_group)
-        if len(branch_run["branch_score_maps"]) != 1:
-            raise RuntimeError("Branch-only run did not produce exactly one branch score map.")
-        branch_name = next(iter(branch_run["branch_score_maps"].keys()))
+        branch_result = branch_run["branch_results"][0] if branch_run["branch_results"] else {}
+        branch_name = branch_result.get("branch") or f"{selected_phase['name']}_{axis_to_tag(selected_axis)}"
         score_path = OUT_DIR / f"score_branch_{branch_name}.npy"
-        np.save(score_path, branch_run["branch_score_maps"][branch_name])
+        score_path_name = None
+        if branch_name in branch_run["branch_score_maps"]:
+            np.save(score_path, branch_run["branch_score_maps"][branch_name])
+            score_path_name = score_path.name
+        else:
+            print(f"[warning] Branch-only run did not produce a valid score map for {branch_name}.")
         metadata = {
             "data_file": str(DATA_FILE),
             "out_dir": str(OUT_DIR),
             "screening_mode": "fiber_axis_only",
             "group": selected_group,
-            "phase": branch_run["branch_phase_names"][branch_name],
-            "fiber_axis": branch_run["branch_axes"][branch_name],
-            "axis_tag": axis_to_tag(branch_run["branch_axes"][branch_name]),
+            "phase": branch_result.get("phase", selected_phase["name"]),
+            "fiber_axis": branch_result.get("fiber_axis", selected_axis),
+            "axis_tag": axis_to_tag(branch_result.get("fiber_axis", selected_axis)),
             "branch": branch_name,
-            "score_path": score_path.name,
+            "score_path": score_path_name,
+            "branch_status": branch_result.get("branch_status", "FAILED_NO_VALID_MATCH"),
+            "failure_reason": branch_result.get("failure_reason"),
+            "branch_diagnostics": branch_result,
             "orientation_mode": ORIENTATION_MODE,
             "num_matches_return": NUM_MATCHES_RETURN,
             "k_max": K_MAX,
@@ -1707,7 +1992,7 @@ def main(argv=None):
         }
         save_json(OUT_DIR / f"metadata_branch_{branch_name}.json", metadata)
         print("Done.")
-        raise SystemExit(0)
+        raise SystemExit(0 if score_path_name else 2)
 
 
     real = run_phase_group(REAL_CANDIDATE_PHASES, "real")
@@ -1736,19 +2021,83 @@ def main(argv=None):
     # 6. Build Ti-only phase map and QC masks
     # =============================================================================
 
+    control_status = "RUN" if args.run_control else "NOT_RUN"
+
+    def format_summary_stat(value):
+        if value is None:
+            return "NA"
+        try:
+            if not np.isfinite(value):
+                return "NA"
+            return f"{float(value):.4g}"
+        except Exception:
+            return str(value)
+
     if len(real["phase_names"]) == 0:
-        raise RuntimeError("No real candidate phase was successfully processed.")
+        failure_summary = {
+            "settings": {
+                "data_file": str(DATA_FILE),
+                "out_dir": str(OUT_DIR),
+                "output_tag": OUTPUT_TAG,
+                "mode": args.mode,
+                "screening_mode": "failed_before_phase_aggregation",
+                "orientation_mode": ORIENTATION_MODE,
+                "num_matches_return": NUM_MATCHES_RETURN,
+                "run_control": args.run_control,
+                "control_status": control_status,
+                "k_max": K_MAX,
+                "inv_ang_per_pixel": INV_ANG_PER_PIXEL,
+                "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
+                "angle_step_in_plane": ANGLE_STEP_IN_PLANE,
+                "detect_params": DETECT_PARAMS,
+                "q_space_diagnostics": EXP_Q_SUMMARY,
+                "match_radius_q": MATCH_RADIUS_Q,
+                "bragg_cache_status": bragg_cache_status,
+                "bragg_cache_path": str(bragg_cache),
+                "calibration_status": calibration_summary,
+                "peak_detection_diagnostics": peak_detection_diagnostics,
+            },
+            "confidence_summary": {
+                "no_valid_score_fraction": 1.0,
+                "all_zero_score_fraction": 1.0,
+                "argmax_tie_fraction": 0.0,
+                "failure_reason_fraction": {"FAILED_NO_VALID_BRANCH": 1.0},
+                "high_confidence_fraction": 0.0,
+            },
+            "top_orientation_candidate_summary": {},
+            "distinguishability_summary": {
+                "conclusion": "INSUFFICIENT_QC",
+                "reason": "No real Ti branch reached branch_status=RUN.",
+            },
+            "real_branch_results": real["branch_results"],
+            "control_branch_results": control["branch_results"],
+            "real_phase_results_aggregated_over_axes": [],
+            "control_phase_results_aggregated_over_axes": [],
+        }
+        summary_path = OUT_DIR / "phase_summary_v6_optimized.json"
+        save_json(summary_path, failure_summary)
+        generate_phase_orientation_report(OUT_DIR, summary_path=summary_path)
+        raise RuntimeError("No real candidate phase was successfully processed; see phase_summary_v6_optimized.json for branch failure diagnostics.")
 
     real_phase_names = real["phase_names"]
     real_phase_stack = np.stack([real["phase_score_maps"][name] for name in real_phase_names], axis=0)
+    total_pixels = int(np.prod(real_phase_stack.shape[1:]))
     real_best_phase_index = np.nanargmax(real_phase_stack, axis=0)
     real_best_score = np.nanmax(real_phase_stack, axis=0)
+    real_score_finite = np.isfinite(real_phase_stack)
+    real_phase_max_score = np.nanmax(real_phase_stack, axis=0)
+    all_zero_score_mask = np.nan_to_num(real_phase_max_score, nan=-np.inf) <= 0
+    no_valid_score_mask = all_zero_score_mask | (~np.isfinite(real_phase_max_score))
+    max_score_expanded = real_phase_max_score[None, :, :]
+    argmax_tie_mask = (np.sum(np.isclose(real_phase_stack, max_score_expanded, rtol=1e-6, atol=1e-12) & real_score_finite, axis=0) > 1)
+    valid_score_mask = ~no_valid_score_mask
 
     if real_phase_stack.shape[0] >= 2:
         sorted_real_scores = np.sort(real_phase_stack, axis=0)
         real_score_margin = sorted_real_scores[-1] - sorted_real_scores[-2]
     else:
         real_score_margin = np.full_like(real_best_score, np.nan, dtype=np.float32)
+    real_score_margin[no_valid_score_mask] = np.nan
 
     plot_index_map(real_best_phase_index, real_phase_names, "Ti-only best candidate phase", "phase_map_real_ti_only_best_candidate.png",save_clean=True)
     plot_scalar_map(real_best_score, "Ti-only best phase score", "phase_map_real_best_score.png")
@@ -1761,7 +2110,7 @@ def main(argv=None):
     winning_axis_labels = []
     label_to_global = {}
     for pidx, phase_name in enumerate(real_phase_names):
-        mask = real_best_phase_index == pidx
+        mask = (real_best_phase_index == pidx) & valid_score_mask
         local_axis_map = real["phase_best_axis_index_maps"][phase_name]
         local_labels = real["phase_axis_labels"][phase_name]
         for local_idx, axis_label in enumerate(local_labels):
@@ -1770,6 +2119,10 @@ def main(argv=None):
                 label_to_global[label] = len(winning_axis_labels)
                 winning_axis_labels.append(label)
             winning_axis_global_index[mask & (local_axis_map == local_idx)] = label_to_global[label]
+    if np.any(no_valid_score_mask):
+        label_to_global["NO_VALID_MATCH"] = len(winning_axis_labels)
+        winning_axis_labels.append("NO_VALID_MATCH")
+        winning_axis_global_index[no_valid_score_mask] = label_to_global["NO_VALID_MATCH"]
     plot_index_map(winning_axis_global_index, winning_axis_labels, "Winning Ti phase and fiber axis", "phase_map_real_winning_axis.png")
 
     # Control score map: controls do not enter the final phase map.
@@ -1793,7 +2146,7 @@ def main(argv=None):
         control_failure_mask = np.zeros_like(real_best_phase_index, dtype=bool)
 
     # Confidence masks.
-    ambiguous_mask = (real_score_margin < MARGIN_THRESHOLD) | (real_best_score < MIN_BEST_SCORE)
+    ambiguous_mask = ((real_score_margin < MARGIN_THRESHOLD) | (real_best_score < MIN_BEST_SCORE)) & valid_score_mask
     if low_peak_mask_base is not None:
         low_peak_mask = low_peak_mask_base.copy()
     else:
@@ -1804,7 +2157,23 @@ def main(argv=None):
         mixed_peak_mask = np.zeros_like(real_best_phase_index, dtype=bool)
 
     # High confidence means: real phase has margin, sufficient clean peaks, not diffuse/mixed, and control does not beat it.
-    high_confidence_mask = (~ambiguous_mask) & (~low_peak_mask) & (~mixed_peak_mask) & (~control_failure_mask)
+    high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~low_peak_mask) & (~mixed_peak_mask) & (~control_failure_mask)
+
+    failure_reason_map = np.full(real_best_phase_index.shape, "PASS", dtype=object)
+    failure_reason_map[ambiguous_mask] = "AMBIGUOUS_LOW_MARGIN"
+    failure_reason_map[mixed_peak_mask] = "FAILED_MIXED_DIFFUSE"
+    failure_reason_map[low_peak_mask] = "FAILED_LOW_PEAK"
+    failure_reason_map[control_failure_mask] = "FAILED_CONTROL"
+    failure_reason_map[no_valid_score_mask] = "FAILED_NO_VALID_SCORE"
+
+    def mask_fraction(mask):
+        return float(np.sum(mask) / total_pixels)
+
+
+    failure_reason_fraction = {
+        reason: float(np.sum(failure_reason_map == reason) / total_pixels)
+        for reason in ["PASS", "FAILED_NO_VALID_SCORE", "FAILED_LOW_PEAK", "FAILED_MIXED_DIFFUSE", "FAILED_CONTROL", "AMBIGUOUS_LOW_MARGIN"]
+    }
 
     plot_scalar_map(ambiguous_mask.astype(np.float32), f"Ambiguous real Ti mask, margin < {MARGIN_THRESHOLD}", "phase_map_ambiguous_mask.png", cmap="gray")
     plot_scalar_map(low_peak_mask.astype(np.float32), f"Low peak count mask, n < {PEAK_COUNT_THRESHOLD}", "phase_map_low_peak_mask.png", cmap="gray")
@@ -1819,6 +2188,7 @@ def main(argv=None):
         ambiguous_mask=ambiguous_mask,
         control_fail_mask=control_failure_mask,
         filename="phase_map_real_ti_only_qc_masked.png",
+        no_valid_mask=no_valid_score_mask,
     )
 
 
@@ -1843,9 +2213,13 @@ def main(argv=None):
                     continue
                 seen.add(key)
                 pidx = int(real_best_phase_index[x, y])
-                phase = real_phase_names[pidx] if 0 <= pidx < len(real_phase_names) else ""
-                axis_idx = int(winning_axis_global_index[x, y]) if winning_axis_global_index.size else -1
-                axis_label = winning_axis_labels[axis_idx] if 0 <= axis_idx < len(winning_axis_labels) else ""
+                if no_valid_score_mask[x, y]:
+                    phase = "NO_VALID_MATCH"
+                    axis_label = "NO_VALID_MATCH"
+                else:
+                    phase = real_phase_names[pidx] if 0 <= pidx < len(real_phase_names) else ""
+                    axis_idx = int(winning_axis_global_index[x, y]) if winning_axis_global_index.size else -1
+                    axis_label = winning_axis_labels[axis_idx] if 0 <= axis_idx < len(winning_axis_labels) else ""
                 rows.append({
                     "category": category,
                     "scan_x": int(x),
@@ -1864,6 +2238,7 @@ def main(argv=None):
                     "mixed_diffuse": bool(mixed_peak_mask[x, y]),
                     "control_failure": bool(control_failure_mask[x, y]),
                     "high_confidence": bool(high_confidence_mask[x, y]),
+                    "failure_reason": str(failure_reason_map[x, y]),
                 })
 
         for pidx, phase_name in enumerate(real_phase_names):
@@ -1876,6 +2251,7 @@ def main(argv=None):
             )
 
         add_points("low_margin", ambiguous_mask, sort_arr=real_score_margin, descending=False)
+        add_points("no_valid_match", no_valid_score_mask, sort_arr=real_best_score, descending=False)
         if "Ti-hcp" in real_phase_names:
             hcp_idx = real_phase_names.index("Ti-hcp")
             add_points(
@@ -1892,7 +2268,7 @@ def main(argv=None):
             "category", "scan_x", "scan_y", "best_phase", "winning_axis", "best_score",
             "score_margin", "control_minus_real", "control_status", "raw_peak_count", "clean_peak_count",
             "strong_peak_count", "ambiguous", "low_peak", "mixed_diffuse",
-            "control_failure", "high_confidence",
+            "control_failure", "high_confidence", "failure_reason",
         ]
         with open(csv_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -1963,9 +2339,12 @@ def main(argv=None):
             return {}
         top0 = top_candidates["indices"][0]
         labels = top_candidates["phase_labels"]
-        total = top0.size
+        valid = valid_score_mask
+        total = int(np.sum(valid))
+        if total == 0:
+            return {phase: 0.0 for phase in phase_names}
         return {
-            phase: float(np.sum(labels[top0] == phase) / total)
+            phase: float(np.sum(labels[top0[valid]] == phase) / total)
             for phase in phase_names
         }
 
@@ -1983,7 +2362,8 @@ def main(argv=None):
             hcp_idx = real_phase_names.index("Ti-hcp")
             hcp_high = float(np.sum(high_confidence_mask & (real_best_phase_index == hcp_idx)) / total_pixels)
 
-        if high_fraction < 0.05:
+        no_valid_fraction = float(np.sum(no_valid_score_mask) / total_pixels)
+        if high_fraction < 0.05 or no_valid_fraction > 0.5:
             conclusion = "INSUFFICIENT_QC"
         elif median_margin is None or median_margin < MARGIN_THRESHOLD:
             conclusion = "AMBIGUOUS"
@@ -2001,6 +2381,8 @@ def main(argv=None):
             "high_confidence_fraction_ti_hcp": hcp_high,
             "control_status": control_status,
             "control_failure_fraction": float(np.sum(control_failure_mask) / total_pixels),
+            "no_valid_score_fraction": no_valid_fraction,
+            "all_zero_score_fraction": float(np.sum(all_zero_score_mask) / total_pixels),
         }
 
     real_branch_names = list(real["branch_score_maps"].keys())
@@ -2039,6 +2421,10 @@ def main(argv=None):
         real_best_phase_index=real_best_phase_index,
         real_best_score=real_best_score,
         real_score_margin=real_score_margin,
+        no_valid_score_mask=no_valid_score_mask,
+        all_zero_score_mask=all_zero_score_mask,
+        argmax_tie_mask=argmax_tie_mask,
+        failure_reason_map=failure_reason_map.astype(str),
         winning_axis_labels=np.array(winning_axis_labels),
         winning_axis_global_index=winning_axis_global_index,
         control_branch_names=np.array(control_branch_names),
@@ -2074,7 +2460,7 @@ def main(argv=None):
     real_phase_results = []
     for pidx, phase_name in enumerate(real_phase_names):
         score = real["phase_score_maps"][phase_name]
-        raw_win = real_best_phase_index == pidx
+        raw_win = (real_best_phase_index == pidx) & valid_score_mask
         high_conf_win = raw_win & high_confidence_mask
         real_phase_results.append({
             "phase": phase_name,
@@ -2083,6 +2469,7 @@ def main(argv=None):
             "score_median": float(np.nanmedian(score)),
             "score_p95": float(np.nanpercentile(score, 95)),
             "winning_fraction_raw_ti_only": float(np.sum(raw_win) / total_pixels),
+            "winning_fraction_raw_ti_only_valid_scores_only": float(np.sum(raw_win) / max(int(np.sum(valid_score_mask)), 1)),
             "winning_fraction_after_all_qc_masks": float(np.sum(high_conf_win) / total_pixels),
         })
 
@@ -2120,14 +2507,17 @@ def main(argv=None):
             "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
             "angle_step_in_plane": ANGLE_STEP_IN_PLANE,
             "detect_params": DETECT_PARAMS,
+            "q_space_diagnostics": EXP_Q_SUMMARY,
             "q_min_for_qc": Q_MIN_FOR_QC,
             "q_max_for_qc": Q_MAX_FOR_QC,
+            "direct_beam_mask_radius": direct_beam_mask_radius,
             "strong_peak_percentile": STRONG_PEAK_PERCENTILE,
             "margin_threshold": MARGIN_THRESHOLD,
             "min_best_score": MIN_BEST_SCORE,
             "peak_count_threshold": PEAK_COUNT_THRESHOLD,
             "min_strong_peaks_for_match": MIN_STRONG_PEAKS_FOR_MATCH,
             "max_clean_peaks_for_single": MAX_CLEAN_PEAKS_FOR_SINGLE,
+            "match_radius_q": MATCH_RADIUS_Q,
             "control_fail_margin": CONTROL_FAIL_MARGIN,
             "bragg_cache_tag": BRAGG_CACHE_TAG,
             "bragg_cache_path": str(bragg_cache),
@@ -2150,6 +2540,10 @@ def main(argv=None):
             "strong_peak_count_median": None if np.size(strong_peak_count_map) == 0 else float(np.nanmedian(strong_peak_count_map)),
             "control_minus_real_mean": finite_stat(control_minus_real, np.mean),
             "control_minus_real_median": finite_stat(control_minus_real, np.median),
+            "no_valid_score_fraction": mask_fraction(no_valid_score_mask),
+            "all_zero_score_fraction": mask_fraction(all_zero_score_mask),
+            "argmax_tie_fraction": mask_fraction(argmax_tie_mask),
+            "failure_reason_fraction": failure_reason_fraction,
         "roi_review_candidate_count": int(len(roi_review_candidates)),
     },
     "top_orientation_candidate_summary": {
@@ -2170,11 +2564,27 @@ def main(argv=None):
 
     print("\nReal branch score summary:")
     for r in real["branch_results"]:
-        print(f"  {r['branch']}: mean={r['score_mean']:.4g}, median={r['score_median']:.4g}, p95={r['score_p95']:.4g}")
+        status = r.get("branch_status", "RUN")
+        reason = r.get("failure_reason")
+        print(
+            f"  {r['branch']}: status={status}, "
+            f"mean={format_summary_stat(r.get('score_mean'))}, "
+            f"median={format_summary_stat(r.get('score_median'))}, "
+            f"p95={format_summary_stat(r.get('score_p95'))}"
+            + (f", reason={reason}" if reason else "")
+        )
 
     print("\nControl branch score summary:")
     for r in control["branch_results"]:
-        print(f"  {r['branch']}: mean={r['score_mean']:.4g}, median={r['score_median']:.4g}, p95={r['score_p95']:.4g}")
+        status = r.get("branch_status", "RUN")
+        reason = r.get("failure_reason")
+        print(
+            f"  {r['branch']}: status={status}, "
+            f"mean={format_summary_stat(r.get('score_mean'))}, "
+            f"median={format_summary_stat(r.get('score_median'))}, "
+            f"p95={format_summary_stat(r.get('score_p95'))}"
+            + (f", reason={reason}" if reason else "")
+        )
 
     print("\nReal Ti-only aggregated phase summary:")
     for r in real_phase_results:
