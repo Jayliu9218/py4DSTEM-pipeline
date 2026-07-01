@@ -114,7 +114,7 @@ conda run -n 4dstem python scripts\phase_orientation_screening\main.py --data-fi
 Single branch run:
 
 ```powershell
-conda run -n 4dstem python scripts\phase_orientation_screening\main.py --data-file 1_0_64_0_64.h5 --branch-only --phase Ti-bcc --fiber-axis 0,1,1
+conda run -n 4dstem python scripts\phase_orientation_screening\main.py --data-file 1_0_64_0_64.h5 --branch-only --phase Ti-bcc --fiber-axis "0,1,1"
 ```
 
 Aggregate branch outputs:
@@ -151,9 +151,9 @@ Important outputs include:
   for peak finding. Matching single-frame diagnostics are saved with
   `qc_single_x*_y*_*` names.
 
-## Debugging All-Zero Scores
+## Debugging All-Zero or No-Match Branches
 
-The workflow now blocks all-zero scores from becoming a fake phase assignment.
+The workflow blocks all-zero scores from becoming a fake phase assignment.
 Pixels with non-finite or all-zero phase scores are reported as:
 
 ```text
@@ -167,8 +167,37 @@ The JSON/report include:
 - `argmax_tie_fraction`
 - `failure_reason_fraction`
 
-If scores are all zero or `low_peak_fraction = 1.000`, debug one branch before
-running the full map:
+### Single-pattern QC gate (softened)
+
+The single-pattern QC test runs on a few representative probe positions before
+the full-map match. If none of these test pixels produce a valid orientation
+match, the branch **no longer aborts**. Instead it prints a warning and
+continues to full-map matching in screening mode. The full-map `score_max <= 0`
+check still aborts genuinely dead branches with `branch_status =
+FAILED_NO_VALID_MATCH` and `failure_reason = "full-map score max is
+non-finite or <= 0"`.
+
+Each branch result records:
+
+- `single_pattern_qc_passed`: `true` if at least one test pixel matched.
+- `single_pattern_test_pixels`, `single_pattern_test_diagnostics`: per-pixel
+  diagnostics (see field list below).
+
+### Root cause: q-calibration mismatch
+
+The most common reason every test pixel fails is a q-calibration mismatch:
+detected Bragg peaks land far outside the QC window `[q_min_for_qc,
+q_max_for_qc]` and the template reflection range. Even with `calstate['pixel']
+= True`, the calibrated vector getter may return pixel-unit coordinates when
+the `--inv-ang-per-pixel` value is wrong for the dataset, so every peak sits at
+q ~3-6 A^-1 while the template only reaches q ~1.4 A^-1.
+
+Quick check: load the Bragg cache and inspect the q range of all detected
+peaks. If `n_clean_peaks_test = 0` and `q_min_exp`/`q_max_exp` are `null` while
+the raw peak q values are in the hundreds, the `inv_ang_per_pixel` value is
+wrong by roughly that factor.
+
+### Debug one branch before running the full map
 
 ```powershell
 python scripts\phase_orientation_screening\main.py `
@@ -176,7 +205,7 @@ python scripts\phase_orientation_screening\main.py `
   --mode coarse `
   --branch-only `
   --phase Ti-bcc `
-  --fiber-axis 0,1,1 `
+  --fiber-axis "0,1,1" `
   --min-strong-peaks-for-match 3 `
   --peak-count-threshold 3 `
   --max-clean-peaks-for-single 100 `
@@ -198,8 +227,9 @@ qc_single_x*_y*_detected_peak_overlay.png
 Then check branch diagnostics in `phase_summary_v6_optimized.json`:
 
 - `branch_status`
-- `failure_reason`
-- `single_pattern_test_pixels`
+  - `failure_reason`
+  - `single_pattern_qc_passed`
+  - `single_pattern_test_pixels`
 - `n_exp_peaks_test`
 - `n_clean_peaks_test`
 - `n_template_reflections_before_filter`
@@ -219,13 +249,27 @@ Branches with `branch_status = FAILED_NO_VALID_MATCH` are not aggregated into
 phase maps. This is intentional: an all-zero or non-finite branch score is a
 matching failure, not evidence for the first phase returned by `argmax`.
 
+When the cause is a q-calibration mismatch, recompute the Bragg cache with a
+corrected `--inv-ang-per-pixel` (or supply `--calibration-peaks` to fit it
+from known Ti ring radii):
+
+```powershell
+python scripts\phase_orientation_screening\main.py `
+  --data-file D:\Data\4dstem\exp\0617-4d\crop\1_0_64_0_64.h5 `
+  --mode coarse --branch-only --phase Ti-bcc --fiber-axis "0,1,1" `
+  --inv-ang-per-pixel 0.008 --force-recompute-bragg --status-interval 30
+```
+
+`--force-recompute-bragg` is required because the cached Bragg peaks were
+detected and calibrated with the old (wrong) pixel size.
+
 ## Notes
 
 - The default real candidates are Ti-bcc and Ti-hcp.
 - WS2 is used only as a negative/control phase and does not participate in the
   final Ti phase map.
-- Progress bars are disabled by default inside the script to avoid Windows
-  console encoding issues in non-interactive batch runs.
+- Progress bars are visible by default and forced to ASCII to avoid Windows
+  console encoding issues. Use `--quiet-progress` for log-only batch runs.
 - Existing CLI options and output filenames are intentionally preserved for
   compatibility with older runs and downstream scripts.
 - This folder is ignored by the repository-level `.gitignore` rule `scripts/*`,
