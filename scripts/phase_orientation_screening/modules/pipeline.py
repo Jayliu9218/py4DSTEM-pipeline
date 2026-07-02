@@ -93,6 +93,50 @@ def apply_control_validation_gate(high_confidence_mask, failure_reason_map, cont
     return gated_mask, gated_reasons
 
 
+def match_points_to_template(experimental_xy, template_xy, radius):
+    """Mark experimental 2D peaks explained by at least one template peak."""
+    experimental_xy = _np.asarray(experimental_xy, dtype=_np.float64)
+    template_xy = _np.asarray(template_xy, dtype=_np.float64)
+    if experimental_xy.size == 0:
+        return _np.zeros(0, dtype=bool), _np.zeros(0, dtype=_np.float64)
+    if experimental_xy.ndim != 2 or experimental_xy.shape[1] != 2:
+        raise ValueError("experimental_xy must be an Nx2 array")
+    if template_xy.size == 0:
+        return _np.zeros(experimental_xy.shape[0], dtype=bool), _np.full(experimental_xy.shape[0], _np.nan)
+    if template_xy.ndim != 2 or template_xy.shape[1] != 2:
+        raise ValueError("template_xy must be an Nx2 array")
+    delta = experimental_xy[:, None, :] - template_xy[None, :, :]
+    distance = _np.sqrt(_np.sum(delta * delta, axis=2))
+    nearest = _np.nanmin(distance, axis=1)
+    return nearest <= float(radius), nearest
+
+
+def compute_two_phase_score(single_explained_count, residual_explained_count, experimental_count, single_template_count, other_template_count, complexity_penalty=0.05, template_peak_penalty_weight=0.02):
+    """Score a combined hcp+bcc explanation with a complexity penalty."""
+    experimental_count = max(int(experimental_count), 1)
+    single_explained_count = max(int(single_explained_count), 0)
+    residual_explained_count = max(int(residual_explained_count), 0)
+    single_template_count = max(int(single_template_count), 0)
+    other_template_count = max(int(other_template_count), 0)
+    combined_fraction = min(single_explained_count + residual_explained_count, experimental_count) / experimental_count
+    template_ratio = other_template_count / max(single_template_count + other_template_count, 1)
+    penalty = float(complexity_penalty) + float(template_peak_penalty_weight) * template_ratio
+    return float(combined_fraction - penalty), float(combined_fraction), float(penalty)
+
+
+def classify_mixed_hcp_bcc_candidate(qc_eligible, residual_peak_count, residual_explained_fraction, two_phase_improvement, min_residual_peaks=2, min_residual_explained_fraction=0.5, improvement_threshold=0.15):
+    """Return True when residual support and penalized improvement justify a mixed candidate label."""
+    if not bool(qc_eligible):
+        return False
+    if int(residual_peak_count) < int(min_residual_peaks):
+        return False
+    if not _np.isfinite(residual_explained_fraction) or residual_explained_fraction < float(min_residual_explained_fraction):
+        return False
+    if not _np.isfinite(two_phase_improvement) or two_phase_improvement < float(improvement_threshold):
+        return False
+    return True
+
+
 def main(argv=None):
     from modules.reporting import generate_phase_orientation_report
     from pathlib import Path
@@ -279,6 +323,15 @@ def main(argv=None):
     parser.add_argument("--peak-preflight-clean-median-min", type=float, default=10.0, help="Minimum target median clean QC peaks for automatic Bragg detection preflight.")
     parser.add_argument("--peak-preflight-clean-median-max", type=float, default=20.0, help="Maximum target median clean QC peaks for automatic Bragg detection preflight.")
     parser.add_argument("--match-radius-q", type=float, default=0.08, help="Orientation matching correlation kernel size in A^-1.")
+    parser.add_argument("--mixed-phase-analysis", dest="mixed_phase_analysis", action="store_true", help="Run residual/two-phase Ti-hcp+Ti-bcc screening.")
+    parser.add_argument("--skip-mixed-phase-analysis", dest="mixed_phase_analysis", action="store_false", help="Skip residual/two-phase Ti-hcp+Ti-bcc screening.")
+    parser.set_defaults(mixed_phase_analysis=True)
+    parser.add_argument("--mixed-peak-match-radius-q", type=float, default=0.08, help="2D q-space matching radius for residual/two-phase peak explanation.")
+    parser.add_argument("--mixed-score-improvement-threshold", type=float, default=0.15, help="Minimum penalized two-phase score improvement over the best single-phase explanation.")
+    parser.add_argument("--mixed-complexity-penalty", type=float, default=0.05, help="Fixed penalty applied to hcp+bcc two-phase scoring.")
+    parser.add_argument("--mixed-template-peak-penalty-weight", type=float, default=0.02, help="Additional hcp+bcc penalty weight based on added template peaks.")
+    parser.add_argument("--mixed-min-residual-peaks", type=int, default=2, help="Minimum residual peaks required for mixed hcp/bcc candidate labeling.")
+    parser.add_argument("--mixed-min-residual-explained-fraction", type=float, default=0.5, help="Minimum residual fraction explained by the opposite Ti phase.")
     parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run required negative-control branch(es).")
     parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip required negative-control branch(es).")
     parser.set_defaults(run_control=True)
@@ -407,6 +460,13 @@ def main(argv=None):
     PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN = float(args.peak_preflight_target_strong_median)
     PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN = float(args.peak_preflight_clean_median_min)
     PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX = float(args.peak_preflight_clean_median_max)
+    RUN_MIXED_PHASE_ANALYSIS = bool(args.mixed_phase_analysis)
+    MIXED_PEAK_MATCH_RADIUS_Q = float(args.mixed_peak_match_radius_q)
+    MIXED_SCORE_IMPROVEMENT_THRESHOLD = float(args.mixed_score_improvement_threshold)
+    MIXED_COMPLEXITY_PENALTY = float(args.mixed_complexity_penalty)
+    MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT = float(args.mixed_template_peak_penalty_weight)
+    MIXED_MIN_RESIDUAL_PEAKS = int(args.mixed_min_residual_peaks)
+    MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION = float(args.mixed_min_residual_explained_fraction)
 
     if args.output_tag is None:
         control_tag = "control" if args.run_control else "no_control"
@@ -637,9 +697,22 @@ def main(argv=None):
                 str(PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX),
                 "--match-radius-q",
                 str(MATCH_RADIUS_Q),
+                "--mixed-peak-match-radius-q",
+                str(MIXED_PEAK_MATCH_RADIUS_Q),
+                "--mixed-score-improvement-threshold",
+                str(MIXED_SCORE_IMPROVEMENT_THRESHOLD),
+                "--mixed-complexity-penalty",
+                str(MIXED_COMPLEXITY_PENALTY),
+                "--mixed-template-peak-penalty-weight",
+                str(MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT),
+                "--mixed-min-residual-peaks",
+                str(MIXED_MIN_RESIDUAL_PEAKS),
+                "--mixed-min-residual-explained-fraction",
+                str(MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION),
                 "--output-tag",
                 child_tag,
             ]
+            child_cmd.append("--mixed-phase-analysis" if RUN_MIXED_PHASE_ANALYSIS else "--skip-mixed-phase-analysis")
             if detect_cli_overridden:
                 child_cmd.extend([
                     "--detect-min-relative-intensity",
@@ -1377,6 +1450,63 @@ def main(argv=None):
             "score_numerator": float(matched_peak_count),
             "score_denominator": float(denominator),
         }
+
+
+    def clean_peak_xy_for_pixel(bragg_peaks, xind, yind):
+        """Return clean experimental peak coordinates in calibrated q units for one scan pixel."""
+        source = getattr(bragg_peaks, "cal", None) or bragg_peaks
+        qx, qy, intensity = peaklist_arrays(source[xind, yind])
+        if qx is None or qx.size == 0:
+            return np.empty((0, 2), dtype=np.float32)
+        q = np.sqrt(qx * qx + qy * qy)
+        clean = np.isfinite(q) & (q >= Q_MIN_FOR_QC) & (q <= Q_MAX_FOR_QC)
+        return np.column_stack([qx[clean], qy[clean]]).astype(np.float32)
+
+
+    def diffraction_pattern_xy(pattern):
+        """Extract predicted diffraction peak coordinates from a generated py4DSTEM pattern."""
+        qx, qy, intensity = peaklist_arrays(pattern)
+        if qx is None or qx.size == 0:
+            return np.empty((0, 2), dtype=np.float32)
+        q = np.sqrt(qx * qx + qy * qy)
+        keep = np.isfinite(q) & (q >= Q_MIN_FOR_QC) & (q <= Q_MAX_FOR_QC)
+        return np.column_stack([qx[keep], qy[keep]]).astype(np.float32)
+
+
+    def generate_predicted_peak_xy(crystal, orientation_map, xind, yind):
+        """
+        Generate predicted 2D peaks for one pixel from a stored OrientationMap.
+
+        py4DSTEM has changed OrientationMap/diffraction-pattern call signatures
+        across versions, so this intentionally tries several known shapes and
+        fails soft when none are available.
+        """
+        base_kwargs = {"ind_orientation": 0, "sigma_excitation_error": 0.03}
+        attempts = [
+            (orientation_map, {**base_kwargs, "ind_Rx": int(xind), "ind_Ry": int(yind)}),
+            (orientation_map, {**base_kwargs, "rx": int(xind), "ry": int(yind)}),
+            (orientation_map, {**base_kwargs, "x": int(xind), "y": int(yind)}),
+            (orientation_map, {**base_kwargs, "ind_position": (int(xind), int(yind))}),
+            (orientation_map, base_kwargs),
+        ]
+        for orient_obj, kwargs in attempts:
+            try:
+                pattern = crystal.generate_diffraction_pattern(orient_obj, **kwargs)
+                xy = diffraction_pattern_xy(pattern)
+                if xy.size:
+                    return xy, None
+            except Exception as exc:
+                last_error = str(exc)
+
+        try:
+            pixel_orientation = orientation_map[int(xind), int(yind)]
+            pattern = crystal.generate_diffraction_pattern(pixel_orientation, **base_kwargs)
+            xy = diffraction_pattern_xy(pattern)
+            if xy.size:
+                return xy, None
+        except Exception as exc:
+            last_error = str(exc)
+        return np.empty((0, 2), dtype=np.float32), last_error if "last_error" in locals() else "No predicted peaks generated."
 
 
     def save_json(path, obj):
@@ -2537,6 +2667,178 @@ default={},
     )
 
 
+    # Residual/two-phase hcp+bcc screening. This is additive screening evidence
+    # and does not alter the single-phase Ti winner maps.
+    mixed_shape = real_best_phase_index.shape
+    residual_peak_count_map = np.zeros(mixed_shape, dtype=np.int16)
+    residual_explained_by_other_count_map = np.zeros(mixed_shape, dtype=np.int16)
+    residual_explained_by_other_fraction_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    best_single_explained_fraction_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    two_phase_score_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    two_phase_combined_explained_fraction_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    two_phase_penalty_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    two_phase_improvement_map = np.full(mixed_shape, np.nan, dtype=np.float32)
+    mixed_hcp_bcc_candidate_mask = np.zeros(mixed_shape, dtype=bool)
+    residual_direction_map = np.full(mixed_shape, "", dtype=object)
+    mixed_analysis_errors = []
+
+    def phase_branch_name_for_pixel(phase_name, xind, yind):
+        names = [name for name in real["phase_to_branch_names"].get(phase_name, []) if name in real["branch_score_maps"]]
+        if not names:
+            return None
+        axis_map = real["phase_best_axis_index_maps"].get(phase_name)
+        if axis_map is None:
+            return names[0]
+        local_idx = int(axis_map[xind, yind])
+        if 0 <= local_idx < len(names):
+            return names[local_idx]
+        return names[0]
+
+    def run_mixed_phase_screening():
+        if not RUN_MIXED_PHASE_ANALYSIS:
+            return {
+                "status": "SKIPPED",
+                "reason": "--skip-mixed-phase-analysis was set.",
+                "candidate_fraction": 0.0,
+            }
+        if "Ti-hcp" not in real_phase_names or "Ti-bcc" not in real_phase_names:
+            return {
+                "status": "SKIPPED_MISSING_REAL_PHASE",
+                "reason": "Both Ti-hcp and Ti-bcc real phase maps are required.",
+                "candidate_fraction": 0.0,
+            }
+
+        hcp_idx = real_phase_names.index("Ti-hcp")
+        bcc_idx = real_phase_names.index("Ti-bcc")
+        qc_eligible = valid_score_mask & (~low_peak_mask) & (~mixed_peak_mask)
+        if np.size(clean_peak_count_map):
+            qc_eligible &= clean_peak_count_map >= PEAK_COUNT_THRESHOLD
+        if np.size(strong_peak_count_map):
+            qc_eligible &= strong_peak_count_map >= MIN_STRONG_PEAKS_FOR_MATCH
+        qc_eligible &= np.isin(real_best_phase_index, [hcp_idx, bcc_idx])
+
+        processed = 0
+        prediction_failures = 0
+        for xind, yind in np.argwhere(qc_eligible):
+            xind = int(xind)
+            yind = int(yind)
+            best_phase = real_phase_names[int(real_best_phase_index[xind, yind])]
+            other_phase = "Ti-bcc" if best_phase == "Ti-hcp" else "Ti-hcp"
+            direction = "hcp_residual_explained_by_bcc" if best_phase == "Ti-hcp" else "bcc_residual_explained_by_hcp"
+            best_branch = phase_branch_name_for_pixel(best_phase, xind, yind)
+            other_branch = phase_branch_name_for_pixel(other_phase, xind, yind)
+            if best_branch is None or other_branch is None:
+                continue
+
+            exp_xy = clean_peak_xy_for_pixel(bragg_peaks, xind, yind)
+            if exp_xy.shape[0] == 0:
+                continue
+
+            best_xy, best_error = generate_predicted_peak_xy(
+                real["branch_crystals"][best_branch],
+                real["branch_orientation_maps"][best_branch],
+                xind,
+                yind,
+            )
+            other_xy, other_error = generate_predicted_peak_xy(
+                real["branch_crystals"][other_branch],
+                real["branch_orientation_maps"][other_branch],
+                xind,
+                yind,
+            )
+            if best_xy.shape[0] == 0 or other_xy.shape[0] == 0:
+                prediction_failures += 1
+                if len(mixed_analysis_errors) < 5:
+                    mixed_analysis_errors.append({
+                        "pixel": [xind, yind],
+                        "best_phase": best_phase,
+                        "best_branch": best_branch,
+                        "best_error": best_error,
+                        "other_phase": other_phase,
+                        "other_branch": other_branch,
+                        "other_error": other_error,
+                    })
+                continue
+
+            best_explained, _nearest_best = match_points_to_template(exp_xy, best_xy, MIXED_PEAK_MATCH_RADIUS_Q)
+            residual_xy = exp_xy[~best_explained]
+            residual_count = int(residual_xy.shape[0])
+            residual_peak_count_map[xind, yind] = residual_count
+            residual_direction_map[xind, yind] = direction
+            single_explained_count = int(np.sum(best_explained))
+            best_single_fraction = single_explained_count / max(int(exp_xy.shape[0]), 1)
+            best_single_explained_fraction_map[xind, yind] = float(best_single_fraction)
+            if residual_count:
+                other_explained, _nearest_other = match_points_to_template(residual_xy, other_xy, MIXED_PEAK_MATCH_RADIUS_Q)
+                other_count = int(np.sum(other_explained))
+                other_fraction = other_count / max(residual_count, 1)
+            else:
+                other_count = 0
+                other_fraction = 0.0
+            residual_explained_by_other_count_map[xind, yind] = other_count
+            residual_explained_by_other_fraction_map[xind, yind] = float(other_fraction)
+
+            two_score, combined_fraction, penalty = compute_two_phase_score(
+                single_explained_count,
+                other_count,
+                exp_xy.shape[0],
+                best_xy.shape[0],
+                other_xy.shape[0],
+                complexity_penalty=MIXED_COMPLEXITY_PENALTY,
+                template_peak_penalty_weight=MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT,
+            )
+            improvement = two_score - best_single_fraction
+            two_phase_score_map[xind, yind] = float(two_score)
+            two_phase_combined_explained_fraction_map[xind, yind] = float(combined_fraction)
+            two_phase_penalty_map[xind, yind] = float(penalty)
+            two_phase_improvement_map[xind, yind] = float(improvement)
+            mixed_hcp_bcc_candidate_mask[xind, yind] = classify_mixed_hcp_bcc_candidate(
+                True,
+                residual_count,
+                other_fraction,
+                improvement,
+                min_residual_peaks=MIXED_MIN_RESIDUAL_PEAKS,
+                min_residual_explained_fraction=MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION,
+                improvement_threshold=MIXED_SCORE_IMPROVEMENT_THRESHOLD,
+            )
+            processed += 1
+
+        total_qc = int(np.sum(qc_eligible))
+        status = "RUN" if processed > 0 else "NO_PIXELS_PROCESSED"
+        if prediction_failures and processed == 0:
+            status = "FAILED_PREDICTION_GENERATION"
+        hcp_to_bcc = (real_best_phase_index == hcp_idx) & mixed_hcp_bcc_candidate_mask
+        bcc_to_hcp = (real_best_phase_index == bcc_idx) & mixed_hcp_bcc_candidate_mask
+        return {
+            "status": status,
+            "enabled": bool(RUN_MIXED_PHASE_ANALYSIS),
+            "qc_eligible_pixel_count": total_qc,
+            "processed_pixel_count": int(processed),
+            "prediction_failure_count": int(prediction_failures),
+            "prediction_errors_sample": mixed_analysis_errors,
+            "candidate_count": int(np.sum(mixed_hcp_bcc_candidate_mask)),
+            "candidate_fraction": float(np.sum(mixed_hcp_bcc_candidate_mask) / total_pixels),
+            "candidate_fraction_of_qc_eligible": float(np.sum(mixed_hcp_bcc_candidate_mask) / max(total_qc, 1)),
+            "median_residual_peak_count": finite_stat(residual_peak_count_map[qc_eligible], np.median) if total_qc else None,
+            "median_residual_explained_by_other_fraction": finite_stat(residual_explained_by_other_fraction_map, np.median),
+            "median_two_phase_improvement": finite_stat(two_phase_improvement_map, np.median),
+            "hcp_residual_explained_by_bcc_count": int(np.sum(hcp_to_bcc)),
+            "bcc_residual_explained_by_hcp_count": int(np.sum(bcc_to_hcp)),
+            "match_radius_q": MIXED_PEAK_MATCH_RADIUS_Q,
+            "score_improvement_threshold": MIXED_SCORE_IMPROVEMENT_THRESHOLD,
+            "complexity_penalty": MIXED_COMPLEXITY_PENALTY,
+            "template_peak_penalty_weight": MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT,
+            "min_residual_peaks": MIXED_MIN_RESIDUAL_PEAKS,
+            "min_residual_explained_fraction": MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION,
+        }
+
+    mixed_phase_summary = run_mixed_phase_screening()
+    plot_scalar_map(residual_peak_count_map, "Residual peak count after best single Ti phase", "mixed_residual_peak_count_map.png")
+    plot_scalar_map(residual_explained_by_other_fraction_map, "Residual fraction explained by opposite Ti phase", "mixed_residual_explained_fraction_map.png")
+    plot_scalar_map(two_phase_improvement_map, "Penalized hcp+bcc score improvement", "mixed_two_phase_improvement_map.png")
+    plot_scalar_map(mixed_hcp_bcc_candidate_mask.astype(np.float32), "Ti-hcp+Ti-bcc mixed candidate mask", "mixed_hcp_bcc_candidate_mask.png", cmap="gray")
+
+
     def save_roi_review_candidates(filename_csv, filename_json, max_per_group=100):
         """Export representative pixels for second-pass pyxem/Stage-2B review."""
         rows = []
@@ -2583,6 +2885,13 @@ default={},
                     "mixed_diffuse": bool(mixed_peak_mask[x, y]),
                     "control_failure": bool(control_failure_mask[x, y]),
                     "high_confidence": bool(high_confidence_mask[x, y]),
+                    "mixed_hcp_bcc_candidate": bool(mixed_hcp_bcc_candidate_mask[x, y]),
+                    "residual_peak_count": int(residual_peak_count_map[x, y]),
+                    "residual_explained_by_other_count": int(residual_explained_by_other_count_map[x, y]),
+                    "residual_explained_by_other_fraction": float(residual_explained_by_other_fraction_map[x, y]) if np.isfinite(residual_explained_by_other_fraction_map[x, y]) else None,
+                    "two_phase_score": float(two_phase_score_map[x, y]) if np.isfinite(two_phase_score_map[x, y]) else None,
+                    "two_phase_improvement": float(two_phase_improvement_map[x, y]) if np.isfinite(two_phase_improvement_map[x, y]) else None,
+                    "residual_direction": str(residual_direction_map[x, y]),
                     "failure_reason": str(failure_reason_map[x, y]),
                 })
 
@@ -2606,6 +2915,7 @@ default={},
                 descending=True,
             )
         add_points("control_failure", control_failure_mask, sort_arr=control_minus_real, descending=True)
+        add_points("mixed_hcp_bcc_candidate", mixed_hcp_bcc_candidate_mask, sort_arr=two_phase_improvement_map, descending=True)
 
         csv_path = OUT_DIR / filename_csv
         json_path = OUT_DIR / filename_json
@@ -2613,7 +2923,10 @@ default={},
             "category", "scan_x", "scan_y", "best_phase", "winning_axis", "best_score",
             "score_margin", "control_minus_real", "control_status", "raw_peak_count", "clean_peak_count",
             "strong_peak_count", "ambiguous", "low_peak", "mixed_diffuse",
-            "control_failure", "high_confidence", "failure_reason",
+            "control_failure", "high_confidence", "mixed_hcp_bcc_candidate",
+            "residual_peak_count", "residual_explained_by_other_count",
+            "residual_explained_by_other_fraction", "two_phase_score",
+            "two_phase_improvement", "residual_direction", "failure_reason",
         ]
         with open(csv_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -2786,6 +3099,16 @@ default={},
         mixed_peak_mask=mixed_peak_mask,
         control_failure_mask=control_failure_mask,
         high_confidence_mask=high_confidence_mask,
+        mixed_hcp_bcc_candidate_mask=mixed_hcp_bcc_candidate_mask,
+        mixed_residual_peak_count_map=residual_peak_count_map,
+        mixed_residual_explained_by_other_count_map=residual_explained_by_other_count_map,
+        mixed_residual_explained_by_other_fraction_map=residual_explained_by_other_fraction_map,
+        mixed_best_single_explained_fraction_map=best_single_explained_fraction_map,
+        mixed_two_phase_score_map=two_phase_score_map,
+        mixed_two_phase_combined_explained_fraction_map=two_phase_combined_explained_fraction_map,
+        mixed_two_phase_penalty_map=two_phase_penalty_map,
+        mixed_two_phase_improvement_map=two_phase_improvement_map,
+        mixed_residual_direction_map=residual_direction_map.astype(str),
         peak_count_map=np.array([]) if peak_count_map is None else peak_count_map,
         clean_peak_count_map=clean_peak_count_map,
         strong_peak_count_map=strong_peak_count_map,
@@ -2798,6 +3121,13 @@ default={},
         control_fail_margin=np.array(CONTROL_FAIL_MARGIN, dtype=np.float32),
         orientation_mode=np.array(ORIENTATION_MODE),
         num_matches_return=np.array(NUM_MATCHES_RETURN, dtype=np.int16),
+        mixed_phase_analysis=np.array(RUN_MIXED_PHASE_ANALYSIS),
+        mixed_peak_match_radius_q=np.array(MIXED_PEAK_MATCH_RADIUS_Q, dtype=np.float32),
+        mixed_score_improvement_threshold=np.array(MIXED_SCORE_IMPROVEMENT_THRESHOLD, dtype=np.float32),
+        mixed_complexity_penalty=np.array(MIXED_COMPLEXITY_PENALTY, dtype=np.float32),
+        mixed_template_peak_penalty_weight=np.array(MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT, dtype=np.float32),
+        mixed_min_residual_peaks=np.array(MIXED_MIN_RESIDUAL_PEAKS, dtype=np.int16),
+        mixed_min_residual_explained_fraction=np.array(MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION, dtype=np.float32),
     )
     print(f"[saved] {OUT_DIR / 'phase_orientation_scores_v6_optimized.npz'}")
 
@@ -2845,6 +3175,13 @@ default={},
             "status_interval_seconds": STATUS_INTERVAL,
             "run_control": bool(args.run_control),
             "control_status": control_status,
+            "mixed_phase_analysis": bool(RUN_MIXED_PHASE_ANALYSIS),
+            "mixed_peak_match_radius_q": MIXED_PEAK_MATCH_RADIUS_Q,
+            "mixed_score_improvement_threshold": MIXED_SCORE_IMPROVEMENT_THRESHOLD,
+            "mixed_complexity_penalty": MIXED_COMPLEXITY_PENALTY,
+            "mixed_template_peak_penalty_weight": MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT,
+            "mixed_min_residual_peaks": MIXED_MIN_RESIDUAL_PEAKS,
+            "mixed_min_residual_explained_fraction": MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION,
             "k_max": K_MAX,
             "inv_ang_per_pixel": INV_ANG_PER_PIXEL,
             "calibration": CALIBRATION_SUMMARY,
@@ -2884,6 +3221,7 @@ default={},
             "mixed_diffuse_fraction": float(np.sum(mixed_peak_mask) / total_pixels),
             "control_failure_fraction": float(np.sum(control_failure_mask) / total_pixels),
             "final_high_confidence_fraction": float(np.sum(high_confidence_mask) / total_pixels),
+            "mixed_hcp_bcc_candidate_fraction": float(np.sum(mixed_hcp_bcc_candidate_mask) / total_pixels),
             "real_score_margin_mean": float(np.nanmean(real_score_margin)),
             "real_score_margin_median": float(np.nanmedian(real_score_margin)),
             "real_score_margin_p95": float(np.nanpercentile(real_score_margin, 95)),
@@ -2904,6 +3242,7 @@ default={},
         "top_orientation_score_margin_p95": finite_stat(top_orientation_candidates["score_margin"], lambda v: np.percentile(v, 95)),
     },
     "distinguishability_summary": distinguishability_summary,
+    "mixed_phase_summary": mixed_phase_summary,
     "real_branch_results": real["branch_results"],
         "control_branch_results": control["branch_results"],
         "real_phase_results_aggregated_over_axes": real_phase_results,
@@ -2963,6 +3302,7 @@ default={},
     print(f"  mixed_diffuse_fraction = {np.sum(mixed_peak_mask) / total_pixels:.3f}")
     print(f"  control_failure_fraction = {np.sum(control_failure_mask) / total_pixels:.3f}")
     print(f"  final_high_confidence_fraction = {np.sum(high_confidence_mask) / total_pixels:.3f}")
+    print(f"  mixed_hcp_bcc_candidate_fraction = {np.sum(mixed_hcp_bcc_candidate_mask) / total_pixels:.3f}")
     print(f"  real_score_margin median = {np.nanmedian(real_score_margin):.4g}")
     control_median = finite_stat(control_minus_real, np.median)
     print(f"  control_minus_real median = {'NA' if control_median is None else f'{control_median:.4g}'}")

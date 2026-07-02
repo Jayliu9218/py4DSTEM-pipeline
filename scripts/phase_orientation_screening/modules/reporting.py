@@ -62,6 +62,10 @@ def _figure_section(out_dir):
         ("Control failure mask", "qc_control_failure_mask.png"),
         ("Control best phase", "qc_control_best_phase.png"),
         ("Control minus real score", "qc_control_minus_real_score.png"),
+        ("Mixed hcp/bcc residual peak count", "mixed_residual_peak_count_map.png"),
+        ("Mixed hcp/bcc residual explained fraction", "mixed_residual_explained_fraction_map.png"),
+        ("Mixed hcp/bcc two-phase improvement", "mixed_two_phase_improvement_map.png"),
+        ("Mixed hcp/bcc candidate mask", "mixed_hcp_bcc_candidate_mask.png"),
     ]
     lines = ["## Key Figures", ""]
     found = False
@@ -179,6 +183,25 @@ def _top_candidate_section(summary):
         "",
         _markdown_table(["Metric", "Value"], distinguishability_rows),
     ])
+
+
+def _mixed_phase_section(summary):
+    mixed = summary.get("mixed_phase_summary", {})
+    confidence = summary.get("confidence_summary", {})
+    rows = [(key, mixed.get(key)) for key in sorted(mixed)]
+    if "mixed_hcp_bcc_candidate_fraction" in confidence:
+        rows.append(("confidence_summary_mixed_hcp_bcc_candidate_fraction", confidence.get("mixed_hcp_bcc_candidate_fraction")))
+    lines = [
+        "## Residual / Two-Phase Screening",
+        "",
+        "_Mixed Ti-hcp+Ti-bcc labels are screening candidates only. Treat them as prompts for manual single-pattern overlay review, not final crystallographic proof._",
+        "",
+        _markdown_table(["Metric", "Value"], rows),
+    ]
+    if not mixed:
+        lines.append("")
+        lines.append("_No residual/two-phase summary was produced for this run._")
+    return "\n".join(lines)
 
 
 def _branch_diagnostics_section(summary):
@@ -420,6 +443,8 @@ def generate_phase_orientation_report(out_dir, summary_path=None, title=DEFAULT_
             _confidence_section(summary),
             "",
             _top_candidate_section(summary),
+            "",
+            _mixed_phase_section(summary),
             "",
             _branch_diagnostics_section(summary),
             "",

@@ -150,6 +150,11 @@ Important outputs include:
   interpretation when peak preflight and controls pass.
 - `phase_map_real_winning_axis.png`: winning Ti phase and fiber-axis map.
 - `qc_*` and `hist_*` figures: Bragg, calibration, control, and distribution QC.
+- `mixed_residual_peak_count_map.png`,
+  `mixed_residual_explained_fraction_map.png`,
+  `mixed_two_phase_improvement_map.png`, and
+  `mixed_hcp_bcc_candidate_mask.png`: residual/two-phase Ti-hcp+Ti-bcc
+  screening diagnostics.
 - `qc_dp_mean_raw.png`, `qc_dp_mean_processed.png`, and
   `qc_dp_mean_detected_peak_overlay.png`: raw/processed/detected peak diagnostics
   for peak finding. Matching single-frame diagnostics are saved with
@@ -188,6 +193,29 @@ These produce `TiO2-rutile-control`, `TiO2-anatase-control`, `TiO-control`,
 still used as an optional legacy control if present. If any required control CIF
 is missing, or if any required control phase produces no valid branch,
 `control_status` is failed and high-confidence interpretation is blocked.
+
+## Residual / Two-Phase Hcp-Bcc Screening
+
+By default, the workflow runs residual peak analysis after single-phase Ti
+matching. For QC-eligible pixels, it explains clean experimental peaks with the
+best single Ti phase, checks whether the residual peaks are explained by the
+opposite Ti phase, and computes a penalized `Ti-hcp + Ti-bcc` screening score.
+Pixels are labeled as mixed hcp/bcc candidates only when residual support and
+two-phase improvement pass the configured thresholds.
+
+Useful controls:
+
+- `--skip-mixed-phase-analysis`
+- `--mixed-peak-match-radius-q 0.08`
+- `--mixed-score-improvement-threshold 0.15`
+- `--mixed-complexity-penalty 0.05`
+- `--mixed-template-peak-penalty-weight 0.02`
+- `--mixed-min-residual-peaks 2`
+- `--mixed-min-residual-explained-fraction 0.5`
+
+Mixed hcp/bcc labels are screening candidates only. Use them to select manual
+single-pattern overlay reviews; do not treat them as final crystallographic
+proof.
 
 ## Debugging All-Zero or No-Match Branches
 

@@ -11,6 +11,9 @@ sys.path.insert(0, str(SCREENING_ROOT))
 from modules.pipeline import (
     apply_control_validation_gate,
     classify_control_validation_status,
+    classify_mixed_hcp_bcc_candidate,
+    compute_two_phase_score,
+    match_points_to_template,
     select_peak_preflight_candidate,
 )
 from modules.reporting import generate_phase_orientation_report
@@ -40,6 +43,7 @@ def test_report_generation_from_synthetic_summary(tmp_path):
         "confidence_summary": {
             "final_high_confidence_fraction": 0.5,
             "ambiguous_fraction_real_margin_or_score": 0.25,
+            "mixed_hcp_bcc_candidate_fraction": 0.125,
         },
         "real_phase_results_aggregated_over_axes": [
             {
@@ -68,6 +72,11 @@ def test_report_generation_from_synthetic_summary(tmp_path):
             "control_status": "RUN",
             "median_score_margin": 0.4,
         },
+        "mixed_phase_summary": {
+            "status": "RUN",
+            "candidate_fraction": 0.125,
+            "median_residual_explained_by_other_fraction": 0.75,
+        },
     }
     summary_path = tmp_path / "phase_summary_v6_optimized.json"
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
@@ -81,6 +90,8 @@ def test_report_generation_from_synthetic_summary(tmp_path):
     assert "Ti-bcc" in markdown
     assert "DISTINGUISHABLE" in markdown
     assert "Peak Finding and Calibration" in markdown
+    assert "Residual / Two-Phase Screening" in markdown
+    assert "candidate_fraction" in markdown
     assert "Raw Ti-only winner maps are unvalidated screening aids" in markdown
     assert "phase_map_real_ti_only_qc_masked.png" in markdown
     assert "<html" in html
@@ -160,3 +171,68 @@ def test_apply_control_validation_gate_blocks_otherwise_high_confidence_pixels()
     assert gated_reasons[0, 0] == "FAILED_CONTROL_VALIDATION"
     assert gated_reasons[0, 1] == "FAILED_LOW_PEAK"
     assert gated_reasons[1, 0] == "FAILED_CONTROL_VALIDATION"
+
+
+def test_match_points_to_template_marks_explained_and_residual_peaks():
+    experimental = np.array([[0.0, 0.0], [0.05, 0.01], [0.4, 0.0]])
+    template = np.array([[0.02, 0.0], [1.0, 1.0]])
+
+    explained, nearest = match_points_to_template(experimental, template, radius=0.08)
+
+    assert explained.tolist() == [True, True, False]
+    assert nearest[2] > 0.08
+
+
+def test_two_phase_score_applies_complexity_penalty():
+    score, combined_fraction, penalty = compute_two_phase_score(
+        single_explained_count=6,
+        residual_explained_count=2,
+        experimental_count=10,
+        single_template_count=8,
+        other_template_count=8,
+        complexity_penalty=0.05,
+        template_peak_penalty_weight=0.02,
+    )
+
+    assert np.isclose(combined_fraction, 0.8)
+    assert np.isclose(penalty, 0.06)
+    assert np.isclose(score, 0.74)
+
+
+def test_mixed_candidate_requires_qc_residual_support_and_improvement():
+    assert classify_mixed_hcp_bcc_candidate(
+        True,
+        residual_peak_count=3,
+        residual_explained_fraction=0.67,
+        two_phase_improvement=0.2,
+        min_residual_peaks=2,
+        min_residual_explained_fraction=0.5,
+        improvement_threshold=0.15,
+    )
+    assert not classify_mixed_hcp_bcc_candidate(
+        False,
+        residual_peak_count=3,
+        residual_explained_fraction=0.67,
+        two_phase_improvement=0.2,
+        min_residual_peaks=2,
+        min_residual_explained_fraction=0.5,
+        improvement_threshold=0.15,
+    )
+    assert not classify_mixed_hcp_bcc_candidate(
+        True,
+        residual_peak_count=1,
+        residual_explained_fraction=1.0,
+        two_phase_improvement=0.2,
+        min_residual_peaks=2,
+        min_residual_explained_fraction=0.5,
+        improvement_threshold=0.15,
+    )
+    assert not classify_mixed_hcp_bcc_candidate(
+        True,
+        residual_peak_count=3,
+        residual_explained_fraction=0.67,
+        two_phase_improvement=0.1,
+        min_residual_peaks=2,
+        min_residual_explained_fraction=0.5,
+        improvement_threshold=0.15,
+    )
