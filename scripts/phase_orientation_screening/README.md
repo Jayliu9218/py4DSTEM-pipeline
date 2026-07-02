@@ -1,7 +1,7 @@
 # Phase/Orientation Screening
 
 This folder contains the py4DSTEM Ti phase/orientation screening workflow with
-WS2 negative-control QC. The entrypoint is `main.py`, which delegates to a
+required negative-control QC. The entrypoint is `main.py`, which delegates to a
 self-contained `modules/pipeline.py` workflow plus a small
 `modules/reporting.py` report builder:
 
@@ -47,6 +47,8 @@ Get-Content D:\Data\4dstem\exp\0617-4d\1_0_64_0_64\coarse_k1p4_za2p0_ip8p0_contr
 The script is intended for screening, not final crystallographic proof. Treat
 phase/orientation labels as candidates unless Bragg peak QC, score margins,
 negative controls, and single-pattern overlays are all physically consistent.
+The raw Ti-only winner map is a navigation aid only; interpret only the
+QC-masked phase map and pixels in `high_confidence_mask`.
 
 ## Layout
 
@@ -134,21 +136,58 @@ Important outputs include:
 
 - `phase_summary_v6_optimized.json`: machine-readable settings, QC, branch, and
   phase summaries, including calibration status, control status, top-5 candidate
-  summary, invalid-score fractions, and Ti-bcc/Ti-hcp distinguishability.
+  summary, Bragg peak preflight status, invalid-score fractions, and
+  Ti-bcc/Ti-hcp distinguishability.
 - `phase_orientation_scores_v6_optimized.npz`: score maps, masks, phase labels,
   branch labels, top branch arrays, and top orientation candidate arrays.
 - `phase_orientation_report.md`: human-readable run report.
 - `phase_orientation_report.html`: browser-friendly report with linked figures.
 - `roi_review_candidates.csv` and `.json`: representative coordinates for
   high-confidence, ambiguous, suspicious, and control-failure review.
-- `phase_map_real_ti_only_best_candidate*.png`: Ti-only candidate phase map.
-- `phase_map_real_ti_only_qc_masked.png`: final QC-masked phase map.
+- `phase_map_real_ti_only_best_candidate*.png`: raw Ti-only winner map for
+  screening/navigation only, not scientific interpretation.
+- `phase_map_real_ti_only_qc_masked.png`: final QC-masked phase map for
+  interpretation when peak preflight and controls pass.
 - `phase_map_real_winning_axis.png`: winning Ti phase and fiber-axis map.
 - `qc_*` and `hist_*` figures: Bragg, calibration, control, and distribution QC.
 - `qc_dp_mean_raw.png`, `qc_dp_mean_processed.png`, and
   `qc_dp_mean_detected_peak_overlay.png`: raw/processed/detected peak diagnostics
   for peak finding. Matching single-frame diagnostics are saved with
   `qc_single_x*_y*_*` names.
+
+## Bragg Peak Preflight
+
+Before full-map orientation matching, the workflow runs an automatic Bragg peak
+preflight on representative probe positions unless explicit `--detect-*`
+arguments are supplied. It sweeps a small grid around the default detection
+parameters and selects the first setting that reaches:
+
+- median strong QC peak count >= `--peak-preflight-target-strong-median`
+  (default `5`)
+- median clean QC peak count between `--peak-preflight-clean-median-min`
+  (default `10`) and `--peak-preflight-clean-median-max` (default `20`)
+
+The selected parameters and all attempts are recorded under
+`settings.peak_preflight` in `phase_summary_v6_optimized.json`. If preflight status is
+`FAILED_LOW_PEAK_USABILITY`, the run continues for screening diagnostics, but
+validated high-confidence interpretation fails closed.
+
+## Required Negative Controls
+
+With `--run-control` enabled, the following required control CIFs must be
+available in `--cif-dir`:
+
+- `TiO2-rutile.cif`
+- `TiO2-anatase.cif`
+- `TiO.cif`
+- `Ti-hcp-decoy.cif`
+- `Ti-wrong-q-scale.cif`
+
+These produce `TiO2-rutile-control`, `TiO2-anatase-control`, `TiO-control`,
+`Ti-hcp-decoy-control`, and `Ti-wrong-q-scale-control` branches. `WS2.cif` is
+still used as an optional legacy control if present. If any required control CIF
+is missing, or if any required control phase produces no valid branch,
+`control_status` is failed and high-confidence interpretation is blocked.
 
 ## Debugging All-Zero or No-Match Branches
 
@@ -265,8 +304,8 @@ detected and calibrated with the old (wrong) pixel size.
 ## Notes
 
 - The default real candidates are Ti-bcc and Ti-hcp.
-- WS2 is used only as a negative/control phase and does not participate in the
-  final Ti phase map.
+- Required controls are used only as negative/control phases and do not
+  participate in the final Ti phase map.
 - Progress bars are visible by default and forced to ASCII to avoid Windows
   console encoding issues. Use `--quiet-progress` for log-only batch runs.
 - Existing CLI options and output filenames are intentionally preserved for

@@ -7,7 +7,7 @@ Design goals
 - Keep a linear, procedure-oriented workflow, close to the original tutorial script.
 - Do NOT display figures interactively; save all QC/results to disk.
 - Build a candidate phase map only from physically relevant Ti candidate phases.
-- Run WS2.cif only as a negative/control phase and report control-failure masks.
+- Run required negative/control phases and report control-failure masks.
 - Keep multi-axis fiber orientation search, but expose ambiguity instead of forcing labels.
 - Treat diffuse, non-zone-axis, mixed, or high-background patterns as screening data:
   conservative Bragg extraction, peak-count QC, top-candidate export, and ambiguity masks.
@@ -23,6 +23,74 @@ LOW_PEAK / MIXED / AMBIGUOUS instead of being forced into a Ti phase.
 """
 
 from __future__ import annotations
+
+import numpy as _np
+
+
+REQUIRED_CONTROL_PHASE_NAMES = (
+    "TiO2-rutile-control",
+    "TiO2-anatase-control",
+    "TiO-control",
+    "Ti-hcp-decoy-control",
+    "Ti-wrong-q-scale-control",
+)
+
+
+def select_peak_preflight_candidate(rows, target_strong_median=5, clean_median_min=10, clean_median_max=20):
+    """Return the first Bragg-detection preflight row that reaches usable peak targets."""
+    for row in rows:
+        strong = row.get("strong_peak_count_median")
+        clean = row.get("clean_peak_count_median")
+        if strong is None or clean is None:
+            continue
+        if strong >= target_strong_median and clean_median_min <= clean <= clean_median_max:
+            return row
+
+    viable = [
+        row for row in rows
+        if row.get("strong_peak_count_median") is not None
+        and row.get("clean_peak_count_median") is not None
+    ]
+    if not viable:
+        return None
+
+    # Fall back to the closest row so diagnostics and downstream cache names are deterministic.
+    def penalty(row):
+        strong = float(row["strong_peak_count_median"])
+        clean = float(row["clean_peak_count_median"])
+        strong_penalty = max(0.0, float(target_strong_median) - strong)
+        if clean < clean_median_min:
+            clean_penalty = float(clean_median_min) - clean
+        elif clean > clean_median_max:
+            clean_penalty = clean - float(clean_median_max)
+        else:
+            clean_penalty = 0.0
+        return (strong_penalty, clean_penalty)
+
+    return min(viable, key=penalty)
+
+
+def classify_control_validation_status(run_control, required_phase_names, available_phase_names, missing_required_cifs=None):
+    """Classify required negative-control validation before interpreting Ti phase wins."""
+    if not run_control:
+        return "NOT_RUN"
+    missing_required_cifs = list(missing_required_cifs or [])
+    if missing_required_cifs:
+        return "FAILED_MISSING_REQUIRED_CONTROL_CIF"
+    missing_outputs = [name for name in required_phase_names if name not in set(available_phase_names or [])]
+    if missing_outputs:
+        return "FAILED"
+    return "RUN"
+
+
+def apply_control_validation_gate(high_confidence_mask, failure_reason_map, control_status):
+    """Fail closed when required controls are missing or failed."""
+    if control_status in ("RUN", "NOT_RUN"):
+        return high_confidence_mask, failure_reason_map
+    gated_mask = _np.zeros_like(_np.asarray(high_confidence_mask, dtype=bool), dtype=bool)
+    gated_reasons = _np.asarray(failure_reason_map, dtype=object).copy()
+    gated_reasons[_np.asarray(high_confidence_mask, dtype=bool)] = "FAILED_CONTROL_VALIDATION"
+    return gated_mask, gated_reasons
 
 
 def main(argv=None):
@@ -139,7 +207,7 @@ def main(argv=None):
 
 
     parser = argparse.ArgumentParser(
-        description="Multi-axis Ti phase/orientation mapping with WS2 QC."
+        description="Multi-axis Ti phase/orientation mapping with required negative-control QC."
     )
     parser.add_argument(
         "--data-file",
@@ -207,9 +275,12 @@ def main(argv=None):
     parser.add_argument("--detect-min-absolute-intensity", type=float, default=0.0, help="py4DSTEM Bragg detection minAbsoluteIntensity.")
     parser.add_argument("--detect-min-peak-spacing", type=int, default=8, help="py4DSTEM Bragg detection minPeakSpacing in pixels.")
     parser.add_argument("--detect-max-num-peaks", type=int, default=80, help="py4DSTEM Bragg detection maxNumPeaks.")
+    parser.add_argument("--peak-preflight-target-strong-median", type=float, default=5.0, help="Target median strong QC peaks for automatic Bragg detection preflight.")
+    parser.add_argument("--peak-preflight-clean-median-min", type=float, default=10.0, help="Minimum target median clean QC peaks for automatic Bragg detection preflight.")
+    parser.add_argument("--peak-preflight-clean-median-max", type=float, default=20.0, help="Maximum target median clean QC peaks for automatic Bragg detection preflight.")
     parser.add_argument("--match-radius-q", type=float, default=0.08, help="Orientation matching correlation kernel size in A^-1.")
-    parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run WS2 negative-control branch(es).")
-    parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip WS2 negative-control branch(es).")
+    parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run required negative-control branch(es).")
+    parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip required negative-control branch(es).")
     parser.set_defaults(run_control=True)
     parser.add_argument("--force-recompute-bragg", action="store_true", help="Ignore cached Bragg peaks and recompute.")
     parser.add_argument(
@@ -219,7 +290,7 @@ def main(argv=None):
         help="JSON/CSV peak table with q_pixel and q_A^-1/known_q_A^-1 columns for calibration fit.",
     )
     parser.add_argument("--branch-only", action="store_true", help="Run a single phase/fiber-axis branch and save branch score outputs.")
-    parser.add_argument("--phase", type=str, default=None, help="Phase name for --branch-only, e.g. Ti-bcc or WS2-control.")
+    parser.add_argument("--phase", type=str, default=None, help="Phase name for --branch-only, e.g. Ti-bcc or TiO2-rutile-control.")
     parser.add_argument("--fiber-axis", type=str, default=None, help="Fiber axis for --branch-only, e.g. 0,1,1.")
     parser.add_argument(
         "--aggregate-branches",
@@ -247,13 +318,24 @@ def main(argv=None):
         "--cif-dir",
         type=Path,
         default=None,
-        help="Directory containing Ti-bcc.cif, Ti-hcp.cif, and optional WS2.cif.",
+        help="Directory containing Ti-bcc.cif, Ti-hcp.cif, required control CIFs, and optional WS2.cif.",
     )
     # =============================================================================
     # 0. User configuration
     # =============================================================================
 
     args = parser.parse_args(argv)
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+
+    def cli_option_was_provided(*option_names):
+        return any(arg == name or arg.startswith(name + "=") for arg in raw_argv for name in option_names)
+
+    detect_cli_overridden = cli_option_was_provided(
+        "--detect-min-relative-intensity",
+        "--detect-min-absolute-intensity",
+        "--detect-min-peak-spacing",
+        "--detect-max-num-peaks",
+    )
     if args.quiet_progress:
         os.environ.setdefault("TQDM_DISABLE", "1")
     else:
@@ -322,6 +404,9 @@ def main(argv=None):
     STATUS_INTERVAL = max(0, int(args.status_interval))
     MARGIN_THRESHOLD = float(args.margin_threshold)
     MAX_CLEAN_PEAKS_FOR_SINGLE = int(args.max_clean_peaks_for_single)
+    PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN = float(args.peak_preflight_target_strong_median)
+    PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN = float(args.peak_preflight_clean_median_min)
+    PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX = float(args.peak_preflight_clean_median_max)
 
     if args.output_tag is None:
         control_tag = "control" if args.run_control else "no_control"
@@ -386,17 +471,83 @@ def main(argv=None):
     # -----------------------------------------------------------------------------
     CONTROL_PHASES = [
         {
-            "name": "WS2-control",
-            "cif": CIF_DIR / "WS2.cif",
+            "name": "TiO2-rutile-control",
+            "cif": CIF_DIR / "TiO2-rutile.cif",
+            "required_control": True,
+            "symmetry_order": 4,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [0, 0, 1],
+                [1, 1, 0],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "TiO2-anatase-control",
+            "cif": CIF_DIR / "TiO2-anatase.cif",
+            "required_control": True,
+            "symmetry_order": 4,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [0, 0, 1],
+                [1, 0, 0],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "TiO-control",
+            "cif": CIF_DIR / "TiO.cif",
+            "required_control": True,
+            "symmetry_order": 4,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [0, 0, 1],
+                [1, 1, 1],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "Ti-hcp-decoy-control",
+            "cif": CIF_DIR / "Ti-hcp-decoy.cif",
+            "required_control": True,
             "symmetry_order": 6,
             "zone_axis_range": "fiber",
-            # Keep the control conservative. Your previous test showed WS2 [100]
-            # can spuriously win; do not include it in the default control map.
+            "fiber_axes": [
+                [1, 0, 0],
+                [0, 0, 1],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "Ti-wrong-q-scale-control",
+            "cif": CIF_DIR / "Ti-wrong-q-scale.cif",
+            "required_control": True,
+            "q_scale_factor": 1.08,
+            "symmetry_order": 4,
+            "zone_axis_range": "fiber",
+            "fiber_axes": [
+                [0, 1, 1],
+                [0, 0, 1],
+            ],
+            "fiber_angles": [0, 360],
+        },
+        {
+            "name": "WS2-control",
+            "cif": CIF_DIR / "WS2.cif",
+            "required_control": False,
+            "symmetry_order": 6,
+            "zone_axis_range": "fiber",
             "fiber_axes": [
                 [0, 0, 1],
             ],
             "fiber_angles": [0, 360],
         },
+    ]
+    REQUIRED_CONTROL_PHASES = [p for p in CONTROL_PHASES if p.get("required_control")]
+    missing_required_control_cifs = [
+        {"phase": p["name"], "cif": str(p["cif"])}
+        for p in REQUIRED_CONTROL_PHASES
+        if not Path(p["cif"]).exists()
     ]
 
     # Bragg disk detection parameters. If you change these, set USE_CACHED_BRAGG_PEAKS=False.
@@ -478,19 +629,28 @@ def main(argv=None):
                 str(Q_MIN_FOR_QC),
                 "--q-max-for-qc",
                 str(Q_MAX_FOR_QC),
-                "--detect-min-relative-intensity",
-                str(DETECT_PARAMS["minRelativeIntensity"]),
-                "--detect-min-absolute-intensity",
-                str(DETECT_PARAMS["minAbsoluteIntensity"]),
-                "--detect-min-peak-spacing",
-                str(DETECT_PARAMS["minPeakSpacing"]),
-                "--detect-max-num-peaks",
-                str(DETECT_PARAMS["maxNumPeaks"]),
+                "--peak-preflight-target-strong-median",
+                str(PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN),
+                "--peak-preflight-clean-median-min",
+                str(PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN),
+                "--peak-preflight-clean-median-max",
+                str(PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX),
                 "--match-radius-q",
                 str(MATCH_RADIUS_Q),
                 "--output-tag",
                 child_tag,
             ]
+            if detect_cli_overridden:
+                child_cmd.extend([
+                    "--detect-min-relative-intensity",
+                    str(DETECT_PARAMS["minRelativeIntensity"]),
+                    "--detect-min-absolute-intensity",
+                    str(DETECT_PARAMS["minAbsoluteIntensity"]),
+                    "--detect-min-peak-spacing",
+                    str(DETECT_PARAMS["minPeakSpacing"]),
+                    "--detect-max-num-peaks",
+                    str(DETECT_PARAMS["maxNumPeaks"]),
+                ])
             if args.direct_beam_mask_radius is not None:
                 child_cmd.extend(["--direct-beam-mask-radius", str(args.direct_beam_mask_radius)])
             if args.quiet_progress:
@@ -930,6 +1090,140 @@ def main(argv=None):
         return qx, qy, intensity
 
 
+    def summarize_preflight_disks(disks, params, center):
+        clean_counts = []
+        strong_counts = []
+        raw_counts = []
+        for peaklist in disks:
+            qx, qy, intensity = peaklist_arrays(peaklist)
+            if qx is None:
+                raw_counts.append(0)
+                clean_counts.append(0)
+                strong_counts.append(0)
+                continue
+            qx = np.asarray(qx, dtype=np.float32)
+            qy = np.asarray(qy, dtype=np.float32)
+            intensity = np.ones_like(qx, dtype=np.float32) if intensity is None else np.asarray(intensity, dtype=np.float32)
+            q_px = np.sqrt((qx - float(center[0])) ** 2 + (qy - float(center[1])) ** 2)
+            q = q_px * INV_ANG_PER_PIXEL
+            clean = np.isfinite(q) & (q >= Q_MIN_FOR_QC) & (q <= Q_MAX_FOR_QC)
+            raw_counts.append(int(q.size))
+            clean_counts.append(int(np.sum(clean)))
+            if np.any(clean):
+                i_clean = intensity[clean]
+                threshold = np.nanpercentile(i_clean, STRONG_PEAK_PERCENTILE)
+                strong_counts.append(int(np.sum(i_clean >= threshold)))
+            else:
+                strong_counts.append(0)
+
+        return {
+            "params": dict(params),
+            "raw_peak_count_median": float(np.nanmedian(raw_counts)) if raw_counts else None,
+            "clean_peak_count_median": float(np.nanmedian(clean_counts)) if clean_counts else None,
+            "strong_peak_count_median": float(np.nanmedian(strong_counts)) if strong_counts else None,
+            "raw_peak_counts": raw_counts,
+            "clean_peak_counts": clean_counts,
+            "strong_peak_counts": strong_counts,
+        }
+
+
+    def build_peak_preflight_param_grid(base_params):
+        candidates = []
+        seen = set()
+        for min_rel in [
+            base_params["minRelativeIntensity"],
+            min(base_params["minRelativeIntensity"], 0.02),
+            min(base_params["minRelativeIntensity"], 0.015),
+            min(base_params["minRelativeIntensity"], 0.01),
+        ]:
+            for max_peaks in [base_params["maxNumPeaks"], max(base_params["maxNumPeaks"], 100), max(base_params["maxNumPeaks"], 120)]:
+                for spacing in [base_params["minPeakSpacing"], max(4, min(base_params["minPeakSpacing"], 6)), max(4, min(base_params["minPeakSpacing"], 5))]:
+                    params = dict(base_params)
+                    params["minRelativeIntensity"] = float(min_rel)
+                    params["maxNumPeaks"] = int(max_peaks)
+                    params["minPeakSpacing"] = int(spacing)
+                    key = (params["minRelativeIntensity"], params["minAbsoluteIntensity"], params["minPeakSpacing"], params["maxNumPeaks"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append(params)
+        return candidates
+
+
+    def run_peak_detection_preflight(dataset, probe, center):
+        if detect_cli_overridden:
+            return {
+                "status": "SKIPPED_USER_DETECT_PARAMS",
+                "reason": "At least one --detect-* option was provided; automatic tuning did not override it.",
+                "target_strong_peak_count_median": PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN,
+                "target_clean_peak_count_median_min": PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN,
+                "target_clean_peak_count_median_max": PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX,
+                "selected_params": dict(DETECT_PARAMS),
+                "attempts": [],
+            }
+
+        attempts = []
+        grid = build_peak_preflight_param_grid(DETECT_PARAMS)
+        for params in grid:
+            try:
+                disks = dataset.find_Bragg_disks(data=(TEST_RXS, TEST_RYS), template=probe.kernel, **params)
+                row = summarize_preflight_disks(disks, params, center)
+                row["status"] = "RUN"
+            except Exception as exc:
+                row = {
+                    "params": dict(params),
+                    "status": "FAILED",
+                    "error": str(exc),
+                    "raw_peak_count_median": None,
+                    "clean_peak_count_median": None,
+                    "strong_peak_count_median": None,
+                }
+            attempts.append(row)
+            selected = select_peak_preflight_candidate(
+                attempts,
+                target_strong_median=PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN,
+                clean_median_min=PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN,
+                clean_median_max=PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX,
+            )
+            if selected is row:
+                strong = row.get("strong_peak_count_median")
+                clean = row.get("clean_peak_count_median")
+                if strong is not None and clean is not None:
+                    if strong >= PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN and PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN <= clean <= PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX:
+                        break
+
+        selected = select_peak_preflight_candidate(
+            attempts,
+            target_strong_median=PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN,
+            clean_median_min=PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN,
+            clean_median_max=PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX,
+        )
+        if selected is not None:
+            DETECT_PARAMS.update(selected["params"])
+            strong = selected.get("strong_peak_count_median")
+            clean = selected.get("clean_peak_count_median")
+            passed = (
+                strong is not None
+                and clean is not None
+                and strong >= PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN
+                and PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN <= clean <= PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX
+            )
+        else:
+            passed = False
+
+        return {
+            "status": "RUN" if passed else "FAILED_LOW_PEAK_USABILITY",
+            "reason": None if passed else "No tested detection setting reached the target median strong/clean peak counts.",
+            "target_strong_peak_count_median": PEAK_PREFLIGHT_TARGET_STRONG_MEDIAN,
+            "target_clean_peak_count_median_min": PEAK_PREFLIGHT_CLEAN_MEDIAN_MIN,
+            "target_clean_peak_count_median_max": PEAK_PREFLIGHT_CLEAN_MEDIAN_MAX,
+            "selected_params": dict(DETECT_PARAMS),
+            "selected_clean_peak_count_median": None if selected is None else selected.get("clean_peak_count_median"),
+            "selected_strong_peak_count_median": None if selected is None else selected.get("strong_peak_count_median"),
+            "attempts": attempts,
+        }
+
+
     def compute_peak_qc_maps(bragg_peaks):
         """
         Build conservative peak-set QC maps.
@@ -1201,6 +1495,7 @@ def main(argv=None):
             )
         valid_metas = [m for m in metas if m not in failed_metas]
         real_metas = [m for m in valid_metas if m.get("group") == "real"]
+        all_control_metas = [m for m in metas if m.get("group") == "control"]
         control_metas = [m for m in valid_metas if m.get("group") == "control"]
         if not real_metas:
             raise RuntimeError("Aggregation requires at least one real Ti branch with branch_status=RUN and an existing score file.")
@@ -1242,22 +1537,32 @@ def main(argv=None):
         real_score_margin[no_valid_score_mask] = np.nan
 
         if control_metas:
-            control_status = "RUN"
             control_names = [m["branch"] for m in control_metas]
             control_stack = np.stack([branch_score_maps[name] for name in control_names], axis=0)
             control_best_score = np.nanmax(control_stack, axis=0)
             control_minus_real = control_best_score - real_best_score
         else:
-            control_status = "NOT_RUN"
             control_names = []
             control_stack = np.empty((0,) + real_best_score.shape, dtype=np.float32)
             control_best_score = np.full_like(real_best_score, np.nan, dtype=np.float32)
             control_minus_real = np.full_like(real_best_score, np.nan, dtype=np.float32)
+        control_status = classify_control_validation_status(
+            bool(all_control_metas),
+            REQUIRED_CONTROL_PHASE_NAMES,
+            [m.get("phase") for m in control_metas],
+            missing_required_cifs=[
+                {"phase": m.get("phase"), "cif": m.get("cif")}
+                for m in all_control_metas
+                if m.get("required_control") and m.get("branch_status") == "FAILED_MISSING_CIF"
+            ],
+        )
 
         ambiguous_mask = (real_score_margin < MARGIN_THRESHOLD) & valid_score_mask
         control_failure_mask = np.isfinite(control_best_score) & (control_best_score > (real_best_score + CONTROL_FAIL_MARGIN))
         empty_mask = np.zeros_like(real_best_phase_index, dtype=bool)
         high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~control_failure_mask)
+        if control_status not in ("RUN", "NOT_RUN"):
+            high_confidence_mask = np.zeros_like(high_confidence_mask, dtype=bool)
 
         plot_index_map(real_best_phase_index, real_phase_names, "Aggregated Ti-only best phase", "phase_map_real_ti_only_best_candidate.png", save_clean=True)
         plot_scalar_map(real_best_score, "Aggregated Ti-only best score", "phase_map_real_best_score.png")
@@ -1304,8 +1609,9 @@ def main(argv=None):
                 "screening_mode": "fiber_axis_only",
                 "aggregation_source": str(branch_dir),
                 "branch_count": len(metas),
-                "run_control": bool(control_metas),
+                "run_control": bool(all_control_metas),
                 "control_status": control_status,
+                "required_control_phases": list(REQUIRED_CONTROL_PHASE_NAMES),
                 "k_max": K_MAX,
                 "inv_ang_per_pixel": INV_ANG_PER_PIXEL,
                 "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
@@ -1455,6 +1761,13 @@ def main(argv=None):
     # =============================================================================
     # 4. Bragg disk detection, origin fitting, q calibration
     # =============================================================================
+
+    print("Running Bragg peak detection preflight...")
+    with status_step("Running Bragg peak detection preflight", STATUS_INTERVAL):
+        peak_preflight_summary = run_peak_detection_preflight(dataset, probe, center)
+    peak_preflight_status = peak_preflight_summary.get("status")
+    print(f"[info] Peak preflight status: {peak_preflight_status}")
+    print(f"[info] Selected Bragg detection params: {DETECT_PARAMS}")
 
     print("Testing Bragg disk detection on selected probe positions...")
     with status_step("Testing Bragg disk detection on selected probe positions", STATUS_INTERVAL):
@@ -1655,6 +1968,25 @@ def main(argv=None):
             cif_path = Path(phase["cif"])
             if not cif_path.exists():
                 msg = f"[warning] CIF not found for {phase_name}: {cif_path}"
+                branch_results.append({
+                    "group": group_name,
+                    "branch": f"{phase_name}_MISSING_CIF",
+                    "phase": phase_name,
+                    "fiber_axis": None,
+                    "cif": str(cif_path),
+                    "required_control": bool(phase.get("required_control", False)),
+                    "q_scale_factor": phase.get("q_scale_factor"),
+                    "branch_status": "FAILED_MISSING_CIF",
+                    "failure_reason": f"CIF not found: {cif_path}",
+                    "single_pattern_qc_passed": False,
+                    "single_pattern_test_pixels": [],
+                    "single_pattern_test_diagnostics": [],
+                    "score_mean": None,
+                    "score_median": None,
+                    "score_p95": None,
+                    "score_max": None,
+                    "matched_peak_count_single_pixel": None,
+                })
                 if SKIP_MISSING_CIFS:
                     print(msg + " -- skipped")
                     continue
@@ -1824,7 +2156,9 @@ default={},
                         "branch": branch_name,
                         "phase": phase_name,
                         "fiber_axis": fiber_axis,
-"cif": str(cif_path),
+                        "cif": str(cif_path),
+                        "required_control": bool(phase.get("required_control", False)),
+                        "q_scale_factor": phase.get("q_scale_factor"),
                         **template_diagnostics,
                         "branch_status": "FAILED_NO_VALID_MATCH",
                         "failure_reason": "full-map score max is non-finite or <= 0",
@@ -1869,8 +2203,10 @@ default={},
                     "phase": phase_name,
                     "fiber_axis": fiber_axis,
                     "cif": str(cif_path),
+                    "required_control": bool(phase.get("required_control", False)),
+                    "q_scale_factor": phase.get("q_scale_factor"),
                     **template_diagnostics,
-"branch_status": "RUN",
+                    "branch_status": "RUN",
                     "failure_reason": None,
                     "single_pattern_qc_passed": bool(single_test_valid),
                     "single_pattern_test_pixels": [list(p) for p in TEST_MATCH_PIXELS],
@@ -1959,6 +2295,8 @@ default={},
             "group": selected_group,
             "phase": branch_result.get("phase", selected_phase["name"]),
             "fiber_axis": branch_result.get("fiber_axis", selected_axis),
+            "required_control": bool(selected_phase.get("required_control", False)),
+            "q_scale_factor": selected_phase.get("q_scale_factor"),
             "axis_tag": axis_to_tag(branch_result.get("fiber_axis", selected_axis)),
             "branch": branch_name,
             "score_path": score_path_name,
@@ -1984,7 +2322,7 @@ default={},
     if args.run_control:
         control = run_phase_group(CONTROL_PHASES, "control")
     else:
-        print("[info] Skipping WS2-control branches because --skip-control was set.")
+        print("[info] Skipping required negative-control branches because --skip-control was set.")
         control = {
             "group_name": "control",
             "branch_results": [],
@@ -2006,7 +2344,12 @@ default={},
     # 6. Build Ti-only phase map and QC masks
     # =============================================================================
 
-    control_status = "RUN" if args.run_control else "NOT_RUN"
+    control_status = classify_control_validation_status(
+        bool(args.run_control),
+        [p["name"] for p in REQUIRED_CONTROL_PHASES],
+        control.get("phase_names", []),
+        missing_required_cifs=missing_required_control_cifs,
+    )
 
     def format_summary_stat(value):
         if value is None:
@@ -2035,6 +2378,8 @@ default={},
                 "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
                 "angle_step_in_plane": ANGLE_STEP_IN_PLANE,
                 "detect_params": DETECT_PARAMS,
+                "peak_preflight": peak_preflight_summary,
+                "peak_preflight_status": peak_preflight_summary.get("status"),
                 "q_space_diagnostics": EXP_Q_SUMMARY,
                 "match_radius_q": MATCH_RADIUS_Q,
                 "bragg_cache_status": bragg_cache_status,
@@ -2042,6 +2387,7 @@ default={},
                 "calibration": CALIBRATION_SUMMARY,
                 "calibration_status": calibration_status,
                 "peak_detection_diagnostics": peak_detection_diagnostics,
+                "missing_required_control_cifs": missing_required_control_cifs,
             },
             "confidence_summary": {
                 "no_valid_score_fraction": 1.0,
@@ -2113,7 +2459,6 @@ default={},
 
     # Control score map: controls do not enter the final phase map.
     if len(control["phase_names"]) > 0:
-        control_status = "RUN"
         control_phase_names = control["phase_names"]
         control_phase_stack = np.stack([control["phase_score_maps"][name] for name in control_phase_names], axis=0)
         control_best_index = np.nanargmax(control_phase_stack, axis=0)
@@ -2125,11 +2470,16 @@ default={},
         plot_histogram(control_minus_real, "Control - real score", "hist_control_minus_real_score.png")
         control_failure_mask = control_best_score > (real_best_score + CONTROL_FAIL_MARGIN)
     else:
-        control_status = "FAILED" if args.run_control else "NOT_RUN"
         control_phase_names = []
         control_best_score = np.full_like(real_best_score, np.nan, dtype=np.float32)
         control_minus_real = np.full_like(real_best_score, np.nan, dtype=np.float32)
         control_failure_mask = np.zeros_like(real_best_phase_index, dtype=bool)
+    control_status = classify_control_validation_status(
+        bool(args.run_control),
+        [p["name"] for p in REQUIRED_CONTROL_PHASES],
+        control_phase_names,
+        missing_required_cifs=missing_required_control_cifs,
+    )
 
     # Confidence masks.
     ambiguous_mask = ((real_score_margin < MARGIN_THRESHOLD) | (real_best_score < MIN_BEST_SCORE)) & valid_score_mask
@@ -2151,6 +2501,15 @@ default={},
     failure_reason_map[low_peak_mask] = "FAILED_LOW_PEAK"
     failure_reason_map[control_failure_mask] = "FAILED_CONTROL"
     failure_reason_map[no_valid_score_mask] = "FAILED_NO_VALID_SCORE"
+    high_confidence_mask, failure_reason_map = apply_control_validation_gate(
+        high_confidence_mask,
+        failure_reason_map,
+        control_status,
+    )
+    if peak_preflight_status == "FAILED_LOW_PEAK_USABILITY":
+        otherwise_passed = np.asarray(high_confidence_mask, dtype=bool)
+        high_confidence_mask = np.zeros_like(otherwise_passed, dtype=bool)
+        failure_reason_map[otherwise_passed] = "FAILED_LOW_PEAK_USABILITY"
 
     def mask_fraction(mask):
         return float(np.sum(mask) / total_pixels)
@@ -2158,7 +2517,7 @@ default={},
 
     failure_reason_fraction = {
         reason: float(np.sum(failure_reason_map == reason) / total_pixels)
-        for reason in ["PASS", "FAILED_NO_VALID_SCORE", "FAILED_LOW_PEAK", "FAILED_MIXED_DIFFUSE", "FAILED_CONTROL", "AMBIGUOUS_LOW_MARGIN"]
+        for reason in ["PASS", "FAILED_NO_VALID_SCORE", "FAILED_LOW_PEAK", "FAILED_LOW_PEAK_USABILITY", "FAILED_MIXED_DIFFUSE", "FAILED_CONTROL", "FAILED_CONTROL_VALIDATION", "AMBIGUOUS_LOW_MARGIN"]
     }
 
     plot_scalar_map(ambiguous_mask.astype(np.float32), f"Ambiguous real Ti mask, margin < {MARGIN_THRESHOLD}", "phase_map_ambiguous_mask.png", cmap="gray")
@@ -2419,6 +2778,7 @@ default={},
         control_branch_score_stack=control_branch_stack,
         control_phase_names=np.array(control_phase_names),
         control_status=np.array(control_status),
+        peak_preflight_status=np.array(peak_preflight_status),
         control_best_score=control_best_score,
         control_minus_real=control_minus_real,
         ambiguous_mask=ambiguous_mask,
@@ -2490,6 +2850,8 @@ default={},
             "calibration": CALIBRATION_SUMMARY,
             "calibration_status": calibration_status,
             "peak_detection_diagnostics": peak_detection_diagnostics,
+            "peak_preflight": peak_preflight_summary,
+            "peak_preflight_status": peak_preflight_summary.get("status"),
             "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
             "angle_step_in_plane": ANGLE_STEP_IN_PLANE,
             "detect_params": DETECT_PARAMS,
@@ -2510,8 +2872,11 @@ default={},
             "bragg_cache_status": bragg_cache_status,
             "real_candidate_phases": [p["name"] for p in REAL_CANDIDATE_PHASES],
             "control_phases": [p["name"] for p in CONTROL_PHASES],
+            "required_control_phases": [p["name"] for p in REQUIRED_CONTROL_PHASES],
+            "missing_required_control_cifs": missing_required_control_cifs,
             "real_candidate_fiber_axes": {p["name"]: p.get("fiber_axes", []) for p in REAL_CANDIDATE_PHASES},
             "control_fiber_axes": {p["name"]: p.get("fiber_axes", []) for p in CONTROL_PHASES},
+            "control_q_scale_factors": {p["name"]: p.get("q_scale_factor") for p in CONTROL_PHASES if p.get("q_scale_factor") is not None},
         },
     "confidence_summary": {
             "ambiguous_fraction_real_margin_or_score": float(np.sum(ambiguous_mask) / total_pixels),

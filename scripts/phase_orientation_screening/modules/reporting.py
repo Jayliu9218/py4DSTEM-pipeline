@@ -50,7 +50,7 @@ def _figure_section(out_dir):
         ("dp_mean processed", "qc_dp_mean_processed.png"),
         ("dp_mean detected peak overlay", "qc_dp_mean_detected_peak_overlay.png"),
         ("Elliptical calibration fit", "qc_elliptical_calibration_fit.png"),
-        ("Ti-only best candidate phase", "phase_map_real_ti_only_best_candidate_clean.png"),
+        ("Raw Ti-only winner map (screening/navigation only)", "phase_map_real_ti_only_best_candidate_clean.png"),
         ("QC-masked phase map", "phase_map_real_ti_only_qc_masked.png"),
         ("Winning phase and fiber axis", "phase_map_real_winning_axis.png"),
         ("Best phase score", "phase_map_real_best_score.png"),
@@ -96,6 +96,43 @@ def _settings_section(summary):
     ]
     rows = [(key, settings.get(key)) for key in keys if key in settings]
     return "## Run Settings\n\n" + _markdown_table(["Setting", "Value"], rows)
+
+
+def _warnings_section(summary):
+    settings = summary.get("settings", {})
+    confidence = summary.get("confidence_summary", {})
+    warnings = []
+
+    peak_status = settings.get("peak_preflight_status") or settings.get("peak_preflight", {}).get("status")
+    if peak_status and peak_status not in ("RUN", "SKIPPED_USER_DETECT_PARAMS"):
+        warnings.append(
+            f"Peak preflight status is `{peak_status}`; Bragg peaks did not meet the configured usability target."
+        )
+
+    control_status = settings.get("control_status")
+    if control_status and control_status != "RUN":
+        warnings.append(
+            f"Control validation status is `{control_status}`; QC-masked phase interpretation is not validated."
+        )
+
+    high_fraction = confidence.get("final_high_confidence_fraction")
+    if isinstance(high_fraction, (int, float)) and high_fraction < 0.05:
+        warnings.append(
+            f"Final high-confidence fraction is {_format_value(float(high_fraction))}, below the 0.05 interpretation threshold."
+        )
+
+    control_rows = summary.get("control_phase_results_aggregated_over_axes", [])
+    if settings.get("run_control") and not control_rows:
+        warnings.append(
+            "No negative/control phase rows are available even though controls were requested."
+        )
+
+    warnings.append(
+        "Raw Ti-only winner maps are unvalidated screening aids; use the QC-masked map and high-confidence mask for interpretation."
+    )
+
+    rows = [[item] for item in warnings]
+    return "## Interpretation Warnings\n\n" + _markdown_table(["Warning"], rows)
 
 
 def _confidence_section(summary):
@@ -209,6 +246,8 @@ def _phase_section(summary):
     lines = [
         "## Phase and Orientation Mapping Summary",
         "",
+        "_Raw win fractions are for screening/navigation only. Scientific interpretation should use QC high-confidence fractions after peak, margin, score-validity, and control checks._",
+        "",
         "### Real Ti Candidates",
         "",
         _markdown_table(
@@ -223,6 +262,11 @@ def _phase_section(summary):
             control_rows,
         ),
     ]
+    if not control_rows and summary.get("settings", {}).get("run_control"):
+        lines.extend([
+            "",
+            "_Controls were requested, but no usable control rows were produced; validation failed closed._",
+        ])
     if summary.get("branch_metadata"):
         rows = [
             [m.get("group"), m.get("phase"), m.get("axis_tag"), m.get("branch")]
@@ -366,6 +410,8 @@ def generate_phase_orientation_report(out_dir, summary_path=None, title=DEFAULT_
     else:
         lines.extend([
             _settings_section(summary),
+            "",
+            _warnings_section(summary),
             "",
             _phase_section(summary),
             "",
