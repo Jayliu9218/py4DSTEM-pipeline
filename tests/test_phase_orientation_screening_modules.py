@@ -10,6 +10,7 @@ sys.path.insert(0, str(SCREENING_ROOT))
 
 from modules.pipeline import (
     apply_control_validation_gate,
+    classify_binary_ti_confidence,
     classify_control_validation_status,
     classify_mixed_hcp_bcc_candidate,
     compute_two_phase_score,
@@ -44,6 +45,7 @@ def test_report_generation_from_synthetic_summary(tmp_path):
             "final_high_confidence_fraction": 0.5,
             "ambiguous_fraction_real_margin_or_score": 0.25,
             "mixed_hcp_bcc_candidate_fraction": 0.125,
+            "binary_ti_confidence_fraction": 0.25,
         },
         "real_phase_results_aggregated_over_axes": [
             {
@@ -77,6 +79,17 @@ def test_report_generation_from_synthetic_summary(tmp_path):
             "candidate_fraction": 0.125,
             "median_residual_explained_by_other_fraction": 0.75,
         },
+        "binary_ti_confidence_summary": {
+            "binary_ti_confidence_fraction": 0.25,
+            "confident_ti_bcc_fraction": 0.1,
+            "confident_ti_hcp_fraction": 0.15,
+            "unassigned_classes_are_intentional": True,
+        },
+        "external_control_validation": {
+            "run_control": True,
+            "control_status": "FAILED_MISSING_REQUIRED_CONTROL_CIF",
+            "control_required_for_final_confidence": False,
+        },
     }
     summary_path = tmp_path / "phase_summary_v6_optimized.json"
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
@@ -91,6 +104,9 @@ def test_report_generation_from_synthetic_summary(tmp_path):
     assert "DISTINGUISHABLE" in markdown
     assert "Peak Finding and Calibration" in markdown
     assert "Residual / Two-Phase Screening" in markdown
+    assert "Binary Ti Confidence" in markdown
+    assert "External Control Validation" in markdown
+    assert "unassigned classes are intentional" in markdown
     assert "candidate_fraction" in markdown
     assert "Raw Ti-only winner maps are unvalidated screening aids" in markdown
     assert "phase_map_real_ti_only_qc_masked.png" in markdown
@@ -171,6 +187,48 @@ def test_apply_control_validation_gate_blocks_otherwise_high_confidence_pixels()
     assert gated_reasons[0, 0] == "FAILED_CONTROL_VALIDATION"
     assert gated_reasons[0, 1] == "FAILED_LOW_PEAK"
     assert gated_reasons[1, 0] == "FAILED_CONTROL_VALIDATION"
+
+
+def test_binary_ti_confidence_controls_are_optional_by_default():
+    label, reason, confident = classify_binary_ti_confidence(
+        "Ti-bcc",
+        control_pass=True,
+    )
+
+    assert confident
+    assert label == "Ti-bcc-confidence"
+    assert reason == "PASS"
+
+
+def test_binary_ti_confidence_can_be_blocked_by_required_control():
+    label, reason, confident = classify_binary_ti_confidence(
+        "Ti-hcp",
+        control_pass=False,
+    )
+
+    assert not confident
+    assert label == "CONTROL_WARNING"
+    assert reason == "CONTROL_WARNING"
+
+
+def test_binary_ti_confidence_reports_expected_unassigned_reasons():
+    cases = [
+        ({"peak_count_pass": False}, "LOW_PEAK"),
+        ({"score_validity_pass": False}, "NO_VALID_MATCH"),
+        ({"margin_pass": False}, "AMBIGUOUS_LOW_MARGIN"),
+        ({"matched_fraction_pass": False}, "LOW_MATCHED_FRACTION"),
+        ({"residual_pass": False}, "RESIDUAL_SUPPORTS_MIXED"),
+        ({"template_density_penalty_pass": False}, "TEMPLATE_DENSITY_PENALTY"),
+        ({"manual_overlay_pass": False}, "MANUAL_OVERLAY_REQUIRED"),
+        ({"mixed_candidate": True}, "MIXED_HCP_BCC_CANDIDATE"),
+    ]
+
+    for kwargs, expected_reason in cases:
+        label, reason, confident = classify_binary_ti_confidence("Ti-bcc", **kwargs)
+        assert not confident
+        assert reason == expected_reason
+        if kwargs.get("mixed_candidate"):
+            assert label == "Ti-hcp+Ti-bcc-mixed-candidate"
 
 
 def test_match_points_to_template_marks_explained_and_residual_peaks():

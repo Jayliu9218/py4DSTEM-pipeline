@@ -66,6 +66,9 @@ def _figure_section(out_dir):
         ("Mixed hcp/bcc residual explained fraction", "mixed_residual_explained_fraction_map.png"),
         ("Mixed hcp/bcc two-phase improvement", "mixed_two_phase_improvement_map.png"),
         ("Mixed hcp/bcc candidate mask", "mixed_hcp_bcc_candidate_mask.png"),
+        ("Binary Ti confidence map", "binary_ti_confidence_map.png"),
+        ("Binary Ti failure reason map", "binary_ti_failure_reason_map.png"),
+        ("Binary Ti pass components", "binary_ti_pass_components.png"),
     ]
     lines = ["## Key Figures", ""]
     found = False
@@ -114,9 +117,15 @@ def _warnings_section(summary):
         )
 
     control_status = settings.get("control_status")
-    if control_status and control_status != "RUN":
+    control_required = bool(settings.get("control_required_for_final_confidence"))
+    control_requested = bool(settings.get("run_control"))
+    if control_status and control_status != "RUN" and control_required:
         warnings.append(
             f"Control validation status is `{control_status}`; QC-masked phase interpretation is not validated."
+        )
+    elif control_requested and control_status and control_status != "RUN":
+        warnings.append(
+            f"External control validation status is `{control_status}`; this is reported as an optional warning and does not block binary Ti confidence by default."
         )
 
     high_fraction = confidence.get("final_high_confidence_fraction")
@@ -143,6 +152,51 @@ def _confidence_section(summary):
     confidence = summary.get("confidence_summary", {})
     rows = [(key, confidence.get(key)) for key in sorted(confidence)]
     return "## QC and Confidence Summary\n\n" + _markdown_table(["Metric", "Value"], rows)
+
+
+def _binary_ti_section(summary):
+    binary = summary.get("binary_ti_confidence_summary", {})
+    rows = [(key, binary.get(key)) for key in sorted(binary)]
+    lines = [
+        "## Binary Ti Confidence",
+        "",
+        "_This section compares only Ti-bcc and Ti-hcp. External controls are optional plausibility checks unless explicitly required. Unassigned classes are intentional._",
+        "",
+        _markdown_table(["Metric", "Value"], rows),
+    ]
+    if not binary:
+        lines.extend(["", "_No binary Ti confidence summary was produced for this run._"])
+    return "\n".join(lines)
+
+
+def _external_control_section(summary):
+    control = summary.get("external_control_validation", {})
+    rows = [(key, control.get(key)) for key in sorted(control)]
+    return "\n".join([
+        "## External Control Validation",
+        "",
+        "_External TiO2/TiO/WS2-style controls are false-positive diagnostics. They are not part of the default Ti-bcc/Ti-hcp binary confidence gate._",
+        "",
+        _markdown_table(["Metric", "Value"], rows),
+    ])
+
+
+def _workflow_section(summary):
+    settings = summary.get("settings", {})
+    orientation_mode = settings.get("orientation_mode")
+    orientation_status = "screening_fiber_mode_not_full_orientation" if orientation_mode == "fiber" else "s2_orientation_screening"
+    rows = [
+        ("q_space_calibration", "center, pixel size, ellipse, rotation status recorded"),
+        ("bragg_peak_detection_qc", "raw/processed overlays and clean/strong peak statistics"),
+        ("ti_templates", "Ti-bcc/Ti-hcp CIF templates with q range and orientation sampling"),
+        ("per_pattern_matching", "top-N orientation candidates saved"),
+        ("confidence_gating", "peak count, score validity, margin, matched fraction, residual/template penalty"),
+        ("residual_mixed_phase_check", "hcp+bcc candidate maps"),
+        ("single_pattern_overlay_review", "representative ROI table exported"),
+        ("orientation_refinement_status", orientation_status),
+        ("final_map_policy", "unassigned classes are intentional; pixels are not forced into bcc/hcp"),
+    ]
+    return "## Minimum Workflow Status\n\n" + _markdown_table(["Step", "Status"], rows)
 
 
 def _calibration_section(summary):
@@ -437,6 +491,12 @@ def generate_phase_orientation_report(out_dir, summary_path=None, title=DEFAULT_
             _warnings_section(summary),
             "",
             _phase_section(summary),
+            "",
+            _binary_ti_section(summary),
+            "",
+            _external_control_section(summary),
+            "",
+            _workflow_section(summary),
             "",
             _calibration_section(summary),
             "",

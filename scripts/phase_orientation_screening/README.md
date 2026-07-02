@@ -1,7 +1,7 @@
 # Phase/Orientation Screening
 
 This folder contains the py4DSTEM Ti phase/orientation screening workflow with
-required negative-control QC. The entrypoint is `main.py`, which delegates to a
+optional external-control QC. The entrypoint is `main.py`, which delegates to a
 self-contained `modules/pipeline.py` workflow plus a small
 `modules/reporting.py` report builder:
 
@@ -155,6 +155,9 @@ Important outputs include:
   `mixed_two_phase_improvement_map.png`, and
   `mixed_hcp_bcc_candidate_mask.png`: residual/two-phase Ti-hcp+Ti-bcc
   screening diagnostics.
+- `binary_ti_confidence_map.png`, `binary_ti_failure_reason_map.png`, and
+  `binary_ti_pass_components.png`: Ti-bcc/Ti-hcp-only confidence outputs with
+  intentional unassigned classes.
 - `qc_dp_mean_raw.png`, `qc_dp_mean_processed.png`, and
   `qc_dp_mean_detected_peak_overlay.png`: raw/processed/detected peak diagnostics
   for peak finding. Matching single-frame diagnostics are saved with
@@ -177,10 +180,12 @@ The selected parameters and all attempts are recorded under
 `FAILED_LOW_PEAK_USABILITY`, the run continues for screening diagnostics, but
 validated high-confidence interpretation fails closed.
 
-## Required Negative Controls
+## Optional External Controls
 
-With `--run-control` enabled, the following required control CIFs must be
-available in `--cif-dir`:
+External controls are optional diagnostics by default. They can be enabled with
+`--run-control`, but they do not block binary Ti-bcc/Ti-hcp confidence unless
+`--control-required-for-final-confidence` is also supplied. With
+`--run-control`, the following control CIFs are expected in `--cif-dir`:
 
 - `TiO2-rutile.cif`
 - `TiO2-anatase.cif`
@@ -192,7 +197,26 @@ These produce `TiO2-rutile-control`, `TiO2-anatase-control`, `TiO-control`,
 `Ti-hcp-decoy-control`, and `Ti-wrong-q-scale-control` branches. `WS2.cif` is
 still used as an optional legacy control if present. If any required control CIF
 is missing, or if any required control phase produces no valid branch,
-`control_status` is failed and high-confidence interpretation is blocked.
+`control_status` is failed and reported as an external-control warning.
+
+## Binary Ti Confidence
+
+`binary_ti_confidence` answers only which Ti model, Ti-bcc or Ti-hcp, explains a
+pattern better. It is independent of external TiO2/TiO/WS2 controls by default
+and uses these gates:
+
+- peak count pass
+- score validity pass
+- score margin pass
+- matched-fraction pass (`--binary-ti-min-matched-fraction`, default `0.5`)
+- residual / hcp+bcc mixed-phase pass
+- template-density penalty pass
+- manual overlay pass, which is true by default unless
+  `--require-manual-overlay-pass` is supplied
+
+The final binary map intentionally includes unassigned classes such as
+`LOW_PEAK`, `NO_VALID_MATCH`, `AMBIGUOUS_LOW_MARGIN`, and
+`Ti-hcp+Ti-bcc-mixed-candidate`; pixels are not forced into bcc or hcp.
 
 ## Residual / Two-Phase Hcp-Bcc Screening
 

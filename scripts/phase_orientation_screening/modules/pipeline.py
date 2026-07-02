@@ -7,7 +7,7 @@ Design goals
 - Keep a linear, procedure-oriented workflow, close to the original tutorial script.
 - Do NOT display figures interactively; save all QC/results to disk.
 - Build a candidate phase map only from physically relevant Ti candidate phases.
-- Run required negative/control phases and report control-failure masks.
+- Optionally run external negative/control phases and report control-failure masks.
 - Keep multi-axis fiber orientation search, but expose ambiguity instead of forcing labels.
 - Treat diffuse, non-zone-axis, mixed, or high-background patterns as screening data:
   conservative Bragg extraction, peak-count QC, top-candidate export, and ambiguity masks.
@@ -137,6 +137,30 @@ def classify_mixed_hcp_bcc_candidate(qc_eligible, residual_peak_count, residual_
     return True
 
 
+def classify_binary_ti_confidence(best_phase, peak_count_pass=True, score_validity_pass=True, margin_pass=True, matched_fraction_pass=True, residual_pass=True, template_density_penalty_pass=True, manual_overlay_pass=True, control_pass=True, mixed_candidate=False):
+    """Classify Ti-bcc/Ti-hcp binary confidence from Ti-only evidence and optional gates."""
+    if mixed_candidate:
+        return "Ti-hcp+Ti-bcc-mixed-candidate", "MIXED_HCP_BCC_CANDIDATE", False
+    checks = [
+        ("peak_count_pass", peak_count_pass, "LOW_PEAK"),
+        ("score_validity_pass", score_validity_pass, "NO_VALID_MATCH"),
+        ("margin_pass", margin_pass, "AMBIGUOUS_LOW_MARGIN"),
+        ("matched_fraction_pass", matched_fraction_pass, "LOW_MATCHED_FRACTION"),
+        ("residual_pass", residual_pass, "RESIDUAL_SUPPORTS_MIXED"),
+        ("template_density_penalty_pass", template_density_penalty_pass, "TEMPLATE_DENSITY_PENALTY"),
+        ("manual_overlay_pass", manual_overlay_pass, "MANUAL_OVERLAY_REQUIRED"),
+        ("control_pass", control_pass, "CONTROL_WARNING"),
+    ]
+    for _name, passed, reason in checks:
+        if not bool(passed):
+            return reason, reason, False
+    if best_phase == "Ti-bcc":
+        return "Ti-bcc-confidence", "PASS", True
+    if best_phase == "Ti-hcp":
+        return "Ti-hcp-confidence", "PASS", True
+    return "NO_VALID_MATCH", "NO_VALID_MATCH", False
+
+
 def main(argv=None):
     from modules.reporting import generate_phase_orientation_report
     from pathlib import Path
@@ -251,7 +275,7 @@ def main(argv=None):
 
 
     parser = argparse.ArgumentParser(
-        description="Multi-axis Ti phase/orientation mapping with required negative-control QC."
+        description="Multi-axis Ti phase/orientation mapping with optional external-control QC."
     )
     parser.add_argument(
         "--data-file",
@@ -332,9 +356,12 @@ def main(argv=None):
     parser.add_argument("--mixed-template-peak-penalty-weight", type=float, default=0.02, help="Additional hcp+bcc penalty weight based on added template peaks.")
     parser.add_argument("--mixed-min-residual-peaks", type=int, default=2, help="Minimum residual peaks required for mixed hcp/bcc candidate labeling.")
     parser.add_argument("--mixed-min-residual-explained-fraction", type=float, default=0.5, help="Minimum residual fraction explained by the opposite Ti phase.")
-    parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run required negative-control branch(es).")
-    parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip required negative-control branch(es).")
-    parser.set_defaults(run_control=True)
+    parser.add_argument("--run-control", dest="run_control", action="store_true", help="Run optional external negative-control branch(es).")
+    parser.add_argument("--skip-control", dest="run_control", action="store_false", help="Skip optional external negative-control branch(es).")
+    parser.set_defaults(run_control=False)
+    parser.add_argument("--control-required-for-final-confidence", action="store_true", help="Require external control validation before final confidence labels can pass.")
+    parser.add_argument("--require-manual-overlay-pass", action="store_true", help="Require manual overlay approval before binary Ti confidence labels can pass.")
+    parser.add_argument("--binary-ti-min-matched-fraction", type=float, default=0.5, help="Minimum best-single-phase explained peak fraction for binary Ti confidence.")
     parser.add_argument("--force-recompute-bragg", action="store_true", help="Ignore cached Bragg peaks and recompute.")
     parser.add_argument(
         "--calibration-peaks",
@@ -371,7 +398,7 @@ def main(argv=None):
         "--cif-dir",
         type=Path,
         default=None,
-        help="Directory containing Ti-bcc.cif, Ti-hcp.cif, required control CIFs, and optional WS2.cif.",
+        help="Directory containing Ti-bcc.cif, Ti-hcp.cif, optional control CIFs, and optional WS2.cif.",
     )
     # =============================================================================
     # 0. User configuration
@@ -467,6 +494,9 @@ def main(argv=None):
     MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT = float(args.mixed_template_peak_penalty_weight)
     MIXED_MIN_RESIDUAL_PEAKS = int(args.mixed_min_residual_peaks)
     MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION = float(args.mixed_min_residual_explained_fraction)
+    CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE = bool(args.control_required_for_final_confidence)
+    REQUIRE_MANUAL_OVERLAY_PASS = bool(args.require_manual_overlay_pass)
+    BINARY_TI_MIN_MATCHED_FRACTION = float(args.binary_ti_min_matched_fraction)
 
     if args.output_tag is None:
         control_tag = "control" if args.run_control else "no_control"
@@ -709,10 +739,16 @@ def main(argv=None):
                 str(MIXED_MIN_RESIDUAL_PEAKS),
                 "--mixed-min-residual-explained-fraction",
                 str(MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION),
+                "--binary-ti-min-matched-fraction",
+                str(BINARY_TI_MIN_MATCHED_FRACTION),
                 "--output-tag",
                 child_tag,
             ]
             child_cmd.append("--mixed-phase-analysis" if RUN_MIXED_PHASE_ANALYSIS else "--skip-mixed-phase-analysis")
+            if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE:
+                child_cmd.append("--control-required-for-final-confidence")
+            if REQUIRE_MANUAL_OVERLAY_PASS:
+                child_cmd.append("--require-manual-overlay-pass")
             if detect_cli_overridden:
                 child_cmd.extend([
                     "--detect-min-relative-intensity",
@@ -1690,8 +1726,10 @@ def main(argv=None):
         ambiguous_mask = (real_score_margin < MARGIN_THRESHOLD) & valid_score_mask
         control_failure_mask = np.isfinite(control_best_score) & (control_best_score > (real_best_score + CONTROL_FAIL_MARGIN))
         empty_mask = np.zeros_like(real_best_phase_index, dtype=bool)
-        high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~control_failure_mask)
-        if control_status not in ("RUN", "NOT_RUN"):
+        high_confidence_mask = valid_score_mask & (~ambiguous_mask)
+        if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE:
+            high_confidence_mask &= ~control_failure_mask
+        if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE and control_status not in ("RUN", "NOT_RUN"):
             high_confidence_mask = np.zeros_like(high_confidence_mask, dtype=bool)
 
         plot_index_map(real_best_phase_index, real_phase_names, "Aggregated Ti-only best phase", "phase_map_real_ti_only_best_candidate.png", save_clean=True)
@@ -1741,6 +1779,7 @@ def main(argv=None):
                 "branch_count": len(metas),
                 "run_control": bool(all_control_metas),
                 "control_status": control_status,
+                "control_required_for_final_confidence": CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE,
                 "required_control_phases": list(REQUIRED_CONTROL_PHASE_NAMES),
                 "k_max": K_MAX,
                 "inv_ang_per_pixel": INV_ANG_PER_PIXEL,
@@ -2452,7 +2491,7 @@ default={},
     if args.run_control:
         control = run_phase_group(CONTROL_PHASES, "control")
     else:
-        print("[info] Skipping required negative-control branches because --skip-control was set.")
+        print("[info] Skipping optional external negative-control branches because --skip-control was set.")
         control = {
             "group_name": "control",
             "branch_results": [],
@@ -2503,6 +2542,9 @@ default={},
                 "num_matches_return": NUM_MATCHES_RETURN,
                 "run_control": args.run_control,
                 "control_status": control_status,
+                "control_required_for_final_confidence": bool(CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE),
+                "require_manual_overlay_pass": bool(REQUIRE_MANUAL_OVERLAY_PASS),
+                "binary_ti_min_matched_fraction": BINARY_TI_MIN_MATCHED_FRACTION,
                 "k_max": K_MAX,
                 "inv_ang_per_pixel": INV_ANG_PER_PIXEL,
                 "angle_step_zone_axis": ANGLE_STEP_ZONE_AXIS,
@@ -2622,8 +2664,11 @@ default={},
     else:
         mixed_peak_mask = np.zeros_like(real_best_phase_index, dtype=bool)
 
-    # High confidence means: real phase has margin, sufficient clean peaks, not diffuse/mixed, and control does not beat it.
-    high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~low_peak_mask) & (~mixed_peak_mask) & (~control_failure_mask)
+    # High confidence means: real phase has margin and sufficient clean peaks.
+    # External controls are optional diagnostics unless explicitly required.
+    high_confidence_mask = valid_score_mask & (~ambiguous_mask) & (~low_peak_mask) & (~mixed_peak_mask)
+    if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE:
+        high_confidence_mask &= ~control_failure_mask
 
     failure_reason_map = np.full(real_best_phase_index.shape, "PASS", dtype=object)
     failure_reason_map[ambiguous_mask] = "AMBIGUOUS_LOW_MARGIN"
@@ -2631,11 +2676,12 @@ default={},
     failure_reason_map[low_peak_mask] = "FAILED_LOW_PEAK"
     failure_reason_map[control_failure_mask] = "FAILED_CONTROL"
     failure_reason_map[no_valid_score_mask] = "FAILED_NO_VALID_SCORE"
-    high_confidence_mask, failure_reason_map = apply_control_validation_gate(
-        high_confidence_mask,
-        failure_reason_map,
-        control_status,
-    )
+    if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE:
+        high_confidence_mask, failure_reason_map = apply_control_validation_gate(
+            high_confidence_mask,
+            failure_reason_map,
+            control_status,
+        )
     if peak_preflight_status == "FAILED_LOW_PEAK_USABILITY":
         otherwise_passed = np.asarray(high_confidence_mask, dtype=bool)
         high_confidence_mask = np.zeros_like(otherwise_passed, dtype=bool)
@@ -2838,6 +2884,110 @@ default={},
     plot_scalar_map(two_phase_improvement_map, "Penalized hcp+bcc score improvement", "mixed_two_phase_improvement_map.png")
     plot_scalar_map(mixed_hcp_bcc_candidate_mask.astype(np.float32), "Ti-hcp+Ti-bcc mixed candidate mask", "mixed_hcp_bcc_candidate_mask.png", cmap="gray")
 
+    # Binary Ti confidence answers only: between Ti-bcc and Ti-hcp, which model
+    # explains this pattern better? External controls are annotations unless
+    # CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE is true.
+    binary_ti_labels = [
+        "Ti-bcc-confidence",
+        "Ti-hcp-confidence",
+        "Ti-hcp+Ti-bcc-mixed-candidate",
+        "AMBIGUOUS_LOW_MARGIN",
+        "LOW_PEAK",
+        "NO_VALID_MATCH",
+        "LOW_MATCHED_FRACTION",
+        "RESIDUAL_SUPPORTS_MIXED",
+        "TEMPLATE_DENSITY_PENALTY",
+        "MANUAL_OVERLAY_REQUIRED",
+        "CONTROL_WARNING",
+    ]
+    binary_label_to_index = {label: idx for idx, label in enumerate(binary_ti_labels)}
+    binary_ti_label_map = np.full(real_best_phase_index.shape, binary_label_to_index["NO_VALID_MATCH"], dtype=np.int16)
+    binary_ti_confidence_mask = np.zeros(real_best_phase_index.shape, dtype=bool)
+    binary_ti_failure_reason_map = np.full(real_best_phase_index.shape, "NO_VALID_MATCH", dtype=object)
+
+    binary_peak_count_pass = (~low_peak_mask) & (~mixed_peak_mask)
+    if np.size(clean_peak_count_map):
+        binary_peak_count_pass &= clean_peak_count_map >= PEAK_COUNT_THRESHOLD
+    if np.size(strong_peak_count_map):
+        binary_peak_count_pass &= strong_peak_count_map >= MIN_STRONG_PEAKS_FOR_MATCH
+    binary_score_validity_pass = valid_score_mask.copy()
+    binary_margin_pass = (~ambiguous_mask) & valid_score_mask
+    binary_matched_fraction_pass = np.isfinite(best_single_explained_fraction_map) & (best_single_explained_fraction_map >= BINARY_TI_MIN_MATCHED_FRACTION)
+    binary_residual_pass = ~mixed_hcp_bcc_candidate_mask
+    binary_template_density_penalty_pass = np.isfinite(two_phase_improvement_map) & (two_phase_improvement_map < MIXED_SCORE_IMPROVEMENT_THRESHOLD)
+    binary_manual_overlay_pass = np.ones(real_best_phase_index.shape, dtype=bool)
+    if REQUIRE_MANUAL_OVERLAY_PASS:
+        binary_manual_overlay_pass[:] = False
+    binary_control_pass = np.ones(real_best_phase_index.shape, dtype=bool)
+    if CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE:
+        binary_control_pass &= (~control_failure_mask) & (control_status in ("RUN", "NOT_RUN"))
+
+    for xind, yind in np.ndindex(real_best_phase_index.shape):
+        if no_valid_score_mask[xind, yind]:
+            best_phase = None
+        else:
+            pidx = int(real_best_phase_index[xind, yind])
+            best_phase = real_phase_names[pidx] if 0 <= pidx < len(real_phase_names) else None
+        label, reason, is_confident = classify_binary_ti_confidence(
+            best_phase,
+            peak_count_pass=bool(binary_peak_count_pass[xind, yind]),
+            score_validity_pass=bool(binary_score_validity_pass[xind, yind]),
+            margin_pass=bool(binary_margin_pass[xind, yind]),
+            matched_fraction_pass=bool(binary_matched_fraction_pass[xind, yind]),
+            residual_pass=bool(binary_residual_pass[xind, yind]),
+            template_density_penalty_pass=bool(binary_template_density_penalty_pass[xind, yind]),
+            manual_overlay_pass=bool(binary_manual_overlay_pass[xind, yind]),
+            control_pass=bool(binary_control_pass[xind, yind]),
+            mixed_candidate=bool(mixed_hcp_bcc_candidate_mask[xind, yind]),
+        )
+        binary_ti_label_map[xind, yind] = binary_label_to_index.get(label, binary_label_to_index["NO_VALID_MATCH"])
+        binary_ti_failure_reason_map[xind, yind] = reason
+        binary_ti_confidence_mask[xind, yind] = bool(is_confident)
+
+    plot_index_map(binary_ti_label_map, binary_ti_labels, "Binary Ti confidence map", "binary_ti_confidence_map.png")
+    binary_failure_labels = sorted(set(str(v) for v in binary_ti_failure_reason_map.ravel()))
+    binary_failure_to_index = {label: idx for idx, label in enumerate(binary_failure_labels)}
+    binary_failure_index_map = np.vectorize(lambda value: binary_failure_to_index[str(value)])(binary_ti_failure_reason_map).astype(np.int16)
+    plot_index_map(binary_failure_index_map, binary_failure_labels, "Binary Ti failure reason map", "binary_ti_failure_reason_map.png")
+
+    component_maps = [
+        ("peak count", binary_peak_count_pass),
+        ("valid score", binary_score_validity_pass),
+        ("margin", binary_margin_pass),
+        ("matched fraction", binary_matched_fraction_pass),
+        ("residual", binary_residual_pass),
+        ("template penalty", binary_template_density_penalty_pass),
+        ("manual overlay", binary_manual_overlay_pass),
+        ("control", binary_control_pass),
+    ]
+    fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+    for ax, (title, mask) in zip(axes.ravel(), component_maps):
+        ax.imshow(np.asarray(mask, dtype=np.float32).T, origin="lower", cmap="gray", interpolation="nearest", vmin=0, vmax=1)
+        ax.set_title(title)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    savefig("binary_ti_pass_components.png")
+
+    binary_ti_confidence_summary = {
+        "binary_ti_confidence_fraction": float(np.sum(binary_ti_confidence_mask) / total_pixels),
+        "confident_ti_bcc_fraction": float(np.sum(binary_ti_label_map == binary_label_to_index["Ti-bcc-confidence"]) / total_pixels),
+        "confident_ti_hcp_fraction": float(np.sum(binary_ti_label_map == binary_label_to_index["Ti-hcp-confidence"]) / total_pixels),
+        "mixed_hcp_bcc_candidate_fraction": float(np.sum(binary_ti_label_map == binary_label_to_index["Ti-hcp+Ti-bcc-mixed-candidate"]) / total_pixels),
+        "ambiguous_low_margin_fraction": float(np.sum(binary_ti_failure_reason_map == "AMBIGUOUS_LOW_MARGIN") / total_pixels),
+        "low_peak_fraction": float(np.sum(binary_ti_failure_reason_map == "LOW_PEAK") / total_pixels),
+        "no_valid_match_fraction": float(np.sum(binary_ti_failure_reason_map == "NO_VALID_MATCH") / total_pixels),
+        "low_matched_fraction_fraction": float(np.sum(binary_ti_failure_reason_map == "LOW_MATCHED_FRACTION") / total_pixels),
+        "residual_supports_mixed_fraction": float(np.sum(binary_ti_failure_reason_map == "RESIDUAL_SUPPORTS_MIXED") / total_pixels),
+        "template_density_penalty_fraction": float(np.sum(binary_ti_failure_reason_map == "TEMPLATE_DENSITY_PENALTY") / total_pixels),
+        "manual_overlay_required_fraction": float(np.sum(binary_ti_failure_reason_map == "MANUAL_OVERLAY_REQUIRED") / total_pixels),
+        "control_warning_fraction": float(np.sum(binary_ti_failure_reason_map == "CONTROL_WARNING") / total_pixels),
+        "control_required_for_final_confidence": bool(CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE),
+        "require_manual_overlay_pass": bool(REQUIRE_MANUAL_OVERLAY_PASS),
+        "min_matched_fraction": BINARY_TI_MIN_MATCHED_FRACTION,
+        "orientation_refinement_status": "screening_fiber_mode_not_full_orientation" if ORIENTATION_MODE == "fiber" else "s2_orientation_screening",
+        "unassigned_classes_are_intentional": True,
+    }
+
 
     def save_roi_review_candidates(filename_csv, filename_json, max_per_group=100):
         """Export representative pixels for second-pass pyxem/Stage-2B review."""
@@ -2885,6 +3035,9 @@ default={},
                     "mixed_diffuse": bool(mixed_peak_mask[x, y]),
                     "control_failure": bool(control_failure_mask[x, y]),
                     "high_confidence": bool(high_confidence_mask[x, y]),
+                    "binary_ti_confident": bool(binary_ti_confidence_mask[x, y]),
+                    "binary_ti_label": binary_ti_labels[int(binary_ti_label_map[x, y])],
+                    "binary_ti_failure_reason": str(binary_ti_failure_reason_map[x, y]),
                     "mixed_hcp_bcc_candidate": bool(mixed_hcp_bcc_candidate_mask[x, y]),
                     "residual_peak_count": int(residual_peak_count_map[x, y]),
                     "residual_explained_by_other_count": int(residual_explained_by_other_count_map[x, y]),
@@ -2916,6 +3069,7 @@ default={},
             )
         add_points("control_failure", control_failure_mask, sort_arr=control_minus_real, descending=True)
         add_points("mixed_hcp_bcc_candidate", mixed_hcp_bcc_candidate_mask, sort_arr=two_phase_improvement_map, descending=True)
+        add_points("binary_ti_confident", binary_ti_confidence_mask, sort_arr=real_score_margin, descending=True, limit=50)
 
         csv_path = OUT_DIR / filename_csv
         json_path = OUT_DIR / filename_json
@@ -2923,7 +3077,8 @@ default={},
             "category", "scan_x", "scan_y", "best_phase", "winning_axis", "best_score",
             "score_margin", "control_minus_real", "control_status", "raw_peak_count", "clean_peak_count",
             "strong_peak_count", "ambiguous", "low_peak", "mixed_diffuse",
-            "control_failure", "high_confidence", "mixed_hcp_bcc_candidate",
+            "control_failure", "high_confidence", "binary_ti_confident", "binary_ti_label",
+            "binary_ti_failure_reason", "mixed_hcp_bcc_candidate",
             "residual_peak_count", "residual_explained_by_other_count",
             "residual_explained_by_other_fraction", "two_phase_score",
             "two_phase_improvement", "residual_direction", "failure_reason",
@@ -3099,6 +3254,18 @@ default={},
         mixed_peak_mask=mixed_peak_mask,
         control_failure_mask=control_failure_mask,
         high_confidence_mask=high_confidence_mask,
+        binary_ti_confidence_mask=binary_ti_confidence_mask,
+        binary_ti_label_map=binary_ti_label_map,
+        binary_ti_labels=np.array(binary_ti_labels),
+        binary_ti_failure_reason_map=binary_ti_failure_reason_map.astype(str),
+        binary_ti_peak_count_pass=binary_peak_count_pass,
+        binary_ti_score_validity_pass=binary_score_validity_pass,
+        binary_ti_margin_pass=binary_margin_pass,
+        binary_ti_matched_fraction_pass=binary_matched_fraction_pass,
+        binary_ti_residual_pass=binary_residual_pass,
+        binary_ti_template_density_penalty_pass=binary_template_density_penalty_pass,
+        binary_ti_manual_overlay_pass=binary_manual_overlay_pass,
+        binary_ti_control_pass=binary_control_pass,
         mixed_hcp_bcc_candidate_mask=mixed_hcp_bcc_candidate_mask,
         mixed_residual_peak_count_map=residual_peak_count_map,
         mixed_residual_explained_by_other_count_map=residual_explained_by_other_count_map,
@@ -3128,6 +3295,9 @@ default={},
         mixed_template_peak_penalty_weight=np.array(MIXED_TEMPLATE_PEAK_PENALTY_WEIGHT, dtype=np.float32),
         mixed_min_residual_peaks=np.array(MIXED_MIN_RESIDUAL_PEAKS, dtype=np.int16),
         mixed_min_residual_explained_fraction=np.array(MIXED_MIN_RESIDUAL_EXPLAINED_FRACTION, dtype=np.float32),
+        binary_ti_min_matched_fraction=np.array(BINARY_TI_MIN_MATCHED_FRACTION, dtype=np.float32),
+        control_required_for_final_confidence=np.array(CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE),
+        require_manual_overlay_pass=np.array(REQUIRE_MANUAL_OVERLAY_PASS),
     )
     print(f"[saved] {OUT_DIR / 'phase_orientation_scores_v6_optimized.npz'}")
 
@@ -3175,6 +3345,9 @@ default={},
             "status_interval_seconds": STATUS_INTERVAL,
             "run_control": bool(args.run_control),
             "control_status": control_status,
+            "control_required_for_final_confidence": bool(CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE),
+            "require_manual_overlay_pass": bool(REQUIRE_MANUAL_OVERLAY_PASS),
+            "binary_ti_min_matched_fraction": BINARY_TI_MIN_MATCHED_FRACTION,
             "mixed_phase_analysis": bool(RUN_MIXED_PHASE_ANALYSIS),
             "mixed_peak_match_radius_q": MIXED_PEAK_MATCH_RADIUS_Q,
             "mixed_score_improvement_threshold": MIXED_SCORE_IMPROVEMENT_THRESHOLD,
@@ -3221,6 +3394,7 @@ default={},
             "mixed_diffuse_fraction": float(np.sum(mixed_peak_mask) / total_pixels),
             "control_failure_fraction": float(np.sum(control_failure_mask) / total_pixels),
             "final_high_confidence_fraction": float(np.sum(high_confidence_mask) / total_pixels),
+            "binary_ti_confidence_fraction": binary_ti_confidence_summary["binary_ti_confidence_fraction"],
             "mixed_hcp_bcc_candidate_fraction": float(np.sum(mixed_hcp_bcc_candidate_mask) / total_pixels),
             "real_score_margin_mean": float(np.nanmean(real_score_margin)),
             "real_score_margin_median": float(np.nanmedian(real_score_margin)),
@@ -3242,6 +3416,14 @@ default={},
         "top_orientation_score_margin_p95": finite_stat(top_orientation_candidates["score_margin"], lambda v: np.percentile(v, 95)),
     },
     "distinguishability_summary": distinguishability_summary,
+    "binary_ti_confidence_summary": binary_ti_confidence_summary,
+    "external_control_validation": {
+        "run_control": bool(args.run_control),
+        "control_status": control_status,
+        "control_required_for_final_confidence": bool(CONTROL_REQUIRED_FOR_FINAL_CONFIDENCE),
+        "control_failure_fraction": float(np.sum(control_failure_mask) / total_pixels),
+        "missing_required_control_cifs": missing_required_control_cifs,
+    },
     "mixed_phase_summary": mixed_phase_summary,
     "real_branch_results": real["branch_results"],
         "control_branch_results": control["branch_results"],
@@ -3302,6 +3484,7 @@ default={},
     print(f"  mixed_diffuse_fraction = {np.sum(mixed_peak_mask) / total_pixels:.3f}")
     print(f"  control_failure_fraction = {np.sum(control_failure_mask) / total_pixels:.3f}")
     print(f"  final_high_confidence_fraction = {np.sum(high_confidence_mask) / total_pixels:.3f}")
+    print(f"  binary_ti_confidence_fraction = {binary_ti_confidence_summary['binary_ti_confidence_fraction']:.3f}")
     print(f"  mixed_hcp_bcc_candidate_fraction = {np.sum(mixed_hcp_bcc_candidate_mask) / total_pixels:.3f}")
     print(f"  real_score_margin median = {np.nanmedian(real_score_margin):.4g}")
     control_median = finite_stat(control_minus_real, np.median)
